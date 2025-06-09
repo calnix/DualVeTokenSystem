@@ -162,7 +162,19 @@ Verifiers will pay for verifications in full, and consequently receive $esMOCA a
 *so each pool must hold an esMOCA balance?*
 *distribute based on ecdsa signatures?*
 
-## Others 
+### Allocation of $esMOCA Subsidy Emissions
+
+- Verifiers receive X% of verification fees as $esMOCA cashback from schema-specific subsidy pools
+- If Verifier paid 10 $MOCA for verification, (assuming 50% subsidy) they receive 5 $esMOCA.
+- Unused subsidies return to treasury at epoch end
+
+## Credential Pool Setup
+
+- Issuers must be whitelisted by the protocol administrators
+- Multiple issuers can be authorized to issue credentials for the same schema
+- Verifiers must specify (in advance) which issuer's credentials they will accept for verification
+
+## Others
 
 **Can validators participate in voting?**
 
@@ -181,11 +193,5 @@ Verifiers will pay for verifications in full, and consequently receive $esMOCA a
 
 - instance of data issued to a user conforming to a credential schema
 - a user's proof of income is a credential
-
-## Credential Pool/Schema Setups
-
-- Issuers must be whitelisted by the protocol administrators
-- Multiple issuers can be authorized to issue credentials for the same schema
-- Verifiers must specify (in advance) which issuer's credentials they will accept for verification
 
 ## 
