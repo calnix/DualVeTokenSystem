@@ -4,7 +4,7 @@
 
 This document outlines the key smart contracts that will be implemented for the Moca Chain staking system. The system consists of three main components:
 
-1. **Validator Staking & Emissions [esMOCA]**
+1. **Validator Staking & Emissions**
    - Handles node operator staking and rewards
    - Manages validator registration and slashing
    - Distributes validator rewards
@@ -68,45 +68,124 @@ When updated, the new values would impact incoming validators, not current activ
 
 ### 2. Emissions Structure
 
-- Direct validator emissions in $esMOCA
-- Additional emissions from verification fees
-- Emissions can be staked for $veMOCA (1:1 conversion with $MOCA)
-- Governance power based on $veMOCA holdings
+There are 2 sources of rewards for Validators
 
-#### 3. Redemption Options
-| Option | Lockup Period | Conversion Rate | Penalty |
-|--------|---------------|-----------------|---------|
-| Standard | 60 days | 100% | None |
-| Early | 30 days | 70% | 30% |
-| Immediate | 0 days | 25% | 75% |
+1. Direct validator emissions
+2. Verification fees
 
-#### 4. Slashing Conditions
+Both rewards will be expressed in $esMOCA:
+
+- esMoca is escrowed MOCA; has vesting attached
+- *How are rewards received?*
+- *How much rewards per validator?*
+- esMOCA can be staked for $veMOCA (1:1 conversion with $MOCA)
+
+### 3. Redemption Options
+
+esMOCA can be redeemed for MOCA through three different redemption paths, each with different lockup periods and penalties.
+See esMoca.md
+
+### 4. Slashing Conditions
+
 - Malicious behavior results in loss of staked $MOCA
-- Minimum stake requirements must be maintained
+- *how much is slashed each time? can this be a global constant?*
+- *Minimum stake requirements must be maintained, so what happens when slashed?*
 
-### Target Participants
+### 5. Delegation
 
-1. **Infrastructure Partners**
-   - Token loans from Moca Foundation
-   - Guaranteed minimum revenue from emissions
-   - Additional rewards from network activity
-   - Future permissionless validator opportunities
+Delegation of $MOCA in the validators is not permitted in this model.
 
-2. **New Investors (OTC)**
-   - Discounted token purchases
-   - Liquid yield through $esMOCA
-   - Option to transfer yield to portfolio companies
-   - Flexible redemption options
+## Future Considerations
 
-3. **Existing Investors**
-   - Lock existing tokens for 18+ months
-   - Earn yield on locked tokens
-   - Governance influence through $veMOCA
-   - Emissions control through voting power
-
-### Future Considerations
 - Transition to permissionless validator onboarding
 - Implementation of delegated proof of stake
 - Dynamic adjustment of emissions based on network activity
-- Enhanced infrastructure partner opportunities
 
+---
+
+# 2. Staking Moca and Voting [veMOCA]
+
+This section describes how $MOCA can be staked to receive $veMOCA:
+
+- $veMOCA is used to vote on credential pools
+- votes influence the amount of subsidy emissions a credential pool receives for an epoch.
+- subsidies are distributed as esMOCA
+- voters receive verification fee rewards for their participation in voting.
+
+## Staking MOCA for veMOCA
+
+- Stake MOCA tokens to receive veMOCA (voting power)
+- Longer lock periods result in higher veMOCA allocation
+- veMOCA decays linearly over time, reducing voting power
+- Formula-based calculation determines veMOCA amount based on stake amount and duration
+
+### veMoca receivable formula
+
+Lock duration: {min: 7 Days,  max: 2 years}
+
+Formula
+
+```bash
+veMOCA = MOCA_staked * (lockTimeInSeconds / MAX_LOCK_TIME_IN_SECONDS)
+```
+
+Example: Lock 100 MOCA for 6 months: 100 MOCA * (6 months / 2 years) = 25 veMOCA
+
+### Decay: decay linearly every second
+
+- lock for 2 years: your veMOCA starts at full power and gradually reduces to 0 over 2 years.
+- If you **extend the lock**, you maintain your veMOCA.
+- smlj extend your lock - what happens to veMOCA?
+
+## Voting with veMOCA
+
+- 28-day voting epochs
+- Users can split their votes across multiple credential pools
+- Users that vote, get rewards. Those that do not vote, do not get rewards.
+- End-of-epoch snapshot determines veMOCA voting power distribution
+
+### Vote Delegation
+
+- Users can delegate veMOCA to others, who can vote on their behalf
+- Open system allowing anyone to become a Delegate Leader
+- Leaders earn commission (e.g. 10%) on verification fees from voted pools
+- Flexible delegation allowing allocation to any available Leader
+
+## Subsidies and esMOCA
+
+At the end of a voting period, $esMOCA emissions will be allocated to different credential pools, as per the votes.
+Verifiers will pay for verifications in full, and consequently receive $esMOCA as “cashback” from these credential pools.
+
+- Subsidies allocated to credential pools based on voting results
+- Verifiers receive verification subsidies as esMOCA
+
+*so each pool must hold an esMOCA balance?*
+*distribute based on ecdsa signatures?*
+
+## Others 
+
+**Can validators participate in voting?**
+
+- Yes; but only through their esMOCA
+- $esMOCA emissions can be staked for $veMOCA (it is treated 1:1 as $MOCA when staking)
+
+## Credential Pool (aka Schema)
+
+**Example of a credential pool/scheme:**
+
+- Proof of Personhood Schema
+- Credit Score
+- Proof of Income
+
+**Credential**
+
+- instance of data issued to a user conforming to a credential schema
+- a user's proof of income is a credential
+
+## Credential Pool/Schema Setups
+
+- Issuers must be whitelisted by the protocol administrators
+- Multiple issuers can be authorized to issue credentials for the same schema
+- Verifiers must specify (in advance) which issuer's credentials they will accept for verification
+
+## 
