@@ -43,8 +43,9 @@ User receives 25 veMOCA.
 - Staked $MOCA is redeemable in full only after full lock expiry.
 - Early redemption is allowed with a penalty
 
+### Penalty calc.
 
-### Penalty
+
 
 ## Locking esMoca for veMoca
 
