@@ -47,7 +47,9 @@ $esMOCA penalties for early redemption are `redistributed` `50-50`:
     2. 50% distributed between all active stakers based on their $veMOCA holdings `at the time` of redemption (aka penalty redistribution)
     3. The person initiating the redemption is `excluded` from penalty redistribution
 
-## Staking esMOCA for veMOCA
+## locking esMOCA for veMOCA
 
 - Conversion rate: 1 esMOCA = 1 MOCA when staked for veMOCA
 - Basically treat esMOCA as MOCA and apply the same veMOCA formula to determine the amount of veMOCA receivable.
+- However, cannot backdoor esMoca redemption options by locking esMOCA and hoping to get MOCA, through veMOCA.
+

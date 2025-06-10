@@ -15,15 +15,37 @@ Formula
 
 ```bash
 veMOCA = MOCA_staked * (lockTimeInSeconds / MAX_LOCK_TIME_IN_SECONDS)
+
+lockTimeInSeconds = min. value of 7 days, max. of 2yrs
+MAX_LOCK_TIME_IN_SECONDS = 2 yrs
 ```
 
-Example: Lock 100 MOCA for 6 months: 100 MOCA * (6 months / 2 years) = 25 veMOCA
+**Example**
 
-## Decay: decay linearly every second
+- User chooses to lock 100 MOCA for 6 months
+- 100 MOCA * (6 months / 2 years) = 25 veMOCA
 
-- lock for 2 years: your veMOCA starts at full power and gradually reduces to 0 over 2 years.
+User receives 25 veMOCA.
+
+## Decay: linearly every second
+
+- If stake for 2 years: veMOCA starts at full power and gradually reduces to 0 over 2 years.
 - If you **extend the lock**, you maintain your veMOCA.
 
 *Unclear*
 
-- smlj extend your lock - what happens to veMOCA?
+```smlj
+- extend your lock; what happens to veMOCA?
+```
+
+## Redeeming veMoca for Moca
+
+- Staked $MOCA is redeemable in full only after full lock expiry.
+- Early redemption is allowed with a penalty
+
+
+### Penalty
+
+## Locking esMoca for veMoca
+
+- treated as MOCA
