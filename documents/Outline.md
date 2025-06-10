@@ -19,9 +19,8 @@ This document outlines the key smart contracts that will be implemented for the 
    - Handles credential verification and validation
    - Tracks referral relationships and rewards
 
-Each component is designed to work together to create a secure and efficient staking ecosystem while maintaining proper separation of concerns.
-
-Reference: https://www.notion.so/animocabrands/WIP-Moca-Chain-Staking-Product-1fb3f5ceb8fe80c5b0fbc2b372c9a325
+> Reference: https://www.notion.so/animocabrands/WIP-Moca-Chain-Staking-Product-1fb3f5ceb8fe80c5b0fbc2b372c9a325
+> PRD: https://www.notion.so/animocabrands/WIP-Moca-Chain-Staking-Product-1fb3f5ceb8fe80c5b0fbc2b372c9a325
 
 ![Overview](overview.png)
 
@@ -29,15 +28,9 @@ Reference: https://www.notion.so/animocabrands/WIP-Moca-Chain-Staking-Product-1f
 
 ## Overview
 
-The validator staking system balances network security with sustainable token emissions through:
-
-- Optimized emissions that maintain >10% APR for validators after node costs
-- Permissioned validator model with infrastructure partner support
-- Strong alignment incentives through $veMOCA governance
-- Flexible redemption options for emissions rewards
-
-Whitelisted actors can stake MOCA for a defined period to operate a validator node.
-For running said node, they receive vested rewards, esMOCA.
+- Whitelisted actors can stake MOCA for a defined period to operate a validator node.
+- Node operators receive vested rewards, esMOCA.
+- esMoca has multiple redemption options, see esMOCA.md
 
 > Note: After the initial 18-24-month period, the network may transition to permissionless validator onboarding, delegated proof of staking
 
