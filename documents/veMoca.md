@@ -43,9 +43,33 @@ User receives 25 veMOCA.
 - Staked $MOCA is redeemable in full only after full lock expiry.
 - Early redemption is allowed with a penalty
 
-### Penalty calc.
+### Early Redemption Penalty
 
+The early redemption penalty is calculated based on the time elapsed since locking:
 
+- Penalty decreases linearly as time locked increases
+
+**Formula:**
+
+```
+    Penalty_Pct = (1 - (Elapsed Lock Time / Total Lock Time)) × Max_Penalty_Pct
+
+    Alternatively,
+
+    Penalty_Pct = (Time_left / Total_Lock_Time) × Max_Penalty_Pct
+```
+
+- Maximum penalty is 50% (configurable by governance)
+- Penalty portion goes to treasury for future emission incentives
+- Partial unlocking of veMoca is supported
+
+**Example:**
+
+- Lock: 1,000 MOCA for 365 days
+- Early exit after 200 days
+- Penalty = (1 - 200/365) × 50% = 22.6%
+- User receives 774 MOCA
+- Treasury receives 226 MOCA
 
 ## Locking esMoca for veMoca
 
