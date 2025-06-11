@@ -37,6 +37,7 @@ contract Validators is AccessControl {
         _grantRole(DEFAULT_ADMIN_ROLE, owner);
     }
 
+//-------------------------------validator functions------------------------------------------
 
 
     function lockMoca() external onlyRole(VALIDATOR_ROLE) {
@@ -45,21 +46,21 @@ contract Validators is AccessControl {
         mocaToken.safeTransferFrom(msg.sender, address(this), MOCA_STAKING_REQUIREMENT);
     }
 
-//-------------------------------admin functions------------------------------------------
+    function unlockMoca() external onlyRole(VALIDATOR_ROLE) {
+        //require(isValidator[msg.sender], "Not a validator");
 
-    function whitelistValidator(address validator) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        mocaToken.safeTransferFrom(address(this), msg.sender, MOCA_STAKING_REQUIREMENT);
+    }
+
+//-------------------------------admin functions--------------------------------------------
+
+    function whitelistValidator(address validator, bool toWhitelist) external onlyRole(DEFAULT_ADMIN_ROLE) {
         //isValidator[validator] = true;
-        _grantRole(VALIDATOR_ROLE, validator);
-    }
-
-    function setMocaStakingRequirement(uint256 mocaStakingRequirement) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        MOCA_STAKING_REQUIREMENT = mocaStakingRequirement;
-        // event
-    }
-
-    function setLockDuration(uint256 lockDuration) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        LOCK_DURATION = lockDuration;
-        //event
+        if (toWhitelist) {
+            _grantRole(VALIDATOR_ROLE, validator);
+        } else {
+            _revokeRole(VALIDATOR_ROLE, validator);
+        }
     }
 
     function slashValidator(address validator, uint256 penalty) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -79,4 +80,17 @@ contract Validators is AccessControl {
     }
 
 
+    function setMocaStakingRequirement(uint256 mocaStakingRequirement) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        MOCA_STAKING_REQUIREMENT = mocaStakingRequirement;
+        // event
+    }
+
+    function setLockDuration(uint256 lockDuration) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        LOCK_DURATION = lockDuration;
+        //event
+    }
+
+
+
+//-------------------------------view functions--------------------------------------------
 }

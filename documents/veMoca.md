@@ -71,6 +71,13 @@ The early redemption penalty is calculated based on the time elapsed since locki
 - User receives 774 MOCA
 - Treasury receives 226 MOCA
 
+User immediately loses all voting rights of the early redemption amount.
+
 ## Locking esMoca for veMoca
 
 - treated as MOCA
+- same formula applies
+
+## 7-Day Unbonding Delay (Archived)
+
+- ignore for now
