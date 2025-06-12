@@ -301,10 +301,11 @@ contract Voting is AccessControl {
         
         epochs[epoch].totalIncentives += amount;
 
+        TOTAL_INCENTIVES_DEPOSITED += amount;
+
         // event
 
         // transfer esMoca to voting contract
-        TOTAL_INCENTIVES_DEPOSITED += amount;
         esMOCA.transfer(address(this), amount);
     }
 
