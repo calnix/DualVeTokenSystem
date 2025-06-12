@@ -61,7 +61,7 @@ contract Voting is AccessControl {
         require(pool.isWhitelisted, "Pool is not whitelisted");
 
         // check epoch
-        _checkEpoch();
+        _checkEpoch();  //note: consider moving to top, and try the rest. so contract always gets updated
 
         // check user's veMOCA balance
         uint256 userTotalVotes = veMOCA.balanceOf(msg.sender);
@@ -82,6 +82,35 @@ contract Voting is AccessControl {
         // update user's pool data
         userEpochPoolData[CURRENT_EPOCH][poolId][msg.sender].votes += amount;
 
+        // event
+    }
+
+    function migrateVotes(bytes32 fromPoolId, bytes32 toPoolId, uint256 amount) external {
+        // check epoch
+        _checkEpoch();
+        
+        // get pools
+        Pool memory fromPool = pools[fromPoolId];
+        Pool memory toPool = pools[toPoolId];
+        
+        // check pools
+        require(fromPool.poolId != bytes32(0), "Source pool does not exist");
+        require(toPool.poolId != bytes32(0), "Destination pool does not exist");
+        require(toPool.isActive, "Destination pool is not active");
+        require(toPool.isWhitelisted, "Destination pool is not whitelisted");
+        
+        // check user's votes in the source pool
+        uint256 userPoolVotes = userEpochPoolData[CURRENT_EPOCH][fromPoolId][msg.sender].votes;
+        require(userPoolVotes >= amount, "Insufficient votes in source pool");
+        
+        // update pools' total votes
+        epochPools[CURRENT_EPOCH][fromPoolId].totalVotes -= amount;
+        epochPools[CURRENT_EPOCH][toPoolId].totalVotes += amount;
+        
+        // update user's pool data
+        userEpochPoolData[CURRENT_EPOCH][fromPoolId][msg.sender].votes -= amount;
+        userEpochPoolData[CURRENT_EPOCH][toPoolId][msg.sender].votes += amount;
+        
         // event
     }
 
