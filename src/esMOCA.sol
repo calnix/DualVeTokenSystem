@@ -16,12 +16,16 @@ contract esMOCA is ERC20, AccessControl {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable mocaToken;
+    uint256 public constant PRECISION_BASE = 100;    // 100%: 100, 1%: 1 | no decimal places
 
-
-
+    uint256 public PENALTY_FACTOR_TO_VOTERS;         // range:[1,100] 100%: 100 | 1%: 1. no decimal places
+    
+    uint256 public totalPenaltyToVoters; 
+    uint256 public totalPenaltyToTreasury; 
+    
     struct RedemptionOption {
-        uint128 lockDuration;       // number of seconds until redemption is available
-        uint128 conversionRate;     // range:[1,100] 100%: 100 | 1%: 1. no decimal places
+        uint128 lockDuration;       // number of seconds until redemption is available    | 0 for instant redemption
+        uint128 conversionRate;     // range:[1,100] 100%: 100 | 1%: 1. no decimal places | if 0, redemption type is disabled
     }
 
     struct Redemption {
@@ -32,6 +36,8 @@ contract esMOCA is ERC20, AccessControl {
     mapping(uint256 redemptionOption => RedemptionOption redemptionOption) public redemptionOptions;
 
     mapping(address user => mapping(uint256 timestamp => Redemption redemption)) public redemptions;
+
+    mapping()
 
 //-------------------------------constructor------------------------------------------
 
@@ -54,26 +60,43 @@ contract esMOCA is ERC20, AccessControl {
      * @param amount The amount of esMOCA to redeem
      * @param redemptionOption The redemption option (0: Standard, 1: Early, 2: Instant)
      */
-    function redeemMoca(uint256 amount, uint256 redemptionOption) external {
+    function redeemMoca(uint256 redemptionAmount, uint256 redemptionOption) external {
         require(amount > 0, "Amount must be greater than zero");
         require(redemptionOption <= 2, "Invalid redemption option");
         require(balanceOf(msg.sender) >= amount, "Insufficient esMOCA balance");
 
-        // burn esMoca tokens from the sender
-        _burn(msg.sender, amount);
-
         // get redemption option 
         RedemptionOption memory option = redemptionOptions[redemptionOption];
+        require(option.conversionRate > 0, "Redemption option not enabled");
 
-        // calculate moca receivable based on conversion rate
-        uint256 mocaReceivable = amount * option.conversionRate / 100;
+        // burn corresponding esMoca tokens from the caller
+        _burn(msg.sender, redemptionAmount);
+
+        // calculate moca receivable + lockup time
         uint256 lockupTime = block.timestamp + option.lockDuration;
-
+        uint256 mocaReceivable = redemptionAmount * option.conversionRate / PRECISION_BASE;
         // book redemption amount
         redemptions[msg.sender][lockupTime].amount += mocaReceivable;
 
+        // ------ if penalty, calculate and book penalty ------
+        if(option.conversionRate < PRECISION_BASE) {
+            
+            // calculate penalty amount
+            uint256 penaltyAmount = redemptionAmount - mocaReceivable;
+            uint256 penaltyToVoters = penaltyAmount * PENALTY_FACTOR_TO_VOTERS / PRECISION_BASE;
+            uint256 penaltyToTreasury = penaltyAmount - penaltyToVoters;
+
+            _mint(address(this), penaltyAmount);
+
+            // book penalty amount
+            totalPenaltyToVoters += penaltyToVoters;
+            totalPenaltyToTreasury += penaltyToTreasury;
+        }
+
+        //event: redeemed
+
         // for instant redemption (no lockup), transfer tokens immediately
-        if (option.lockDuration == 0) {
+        if(option.lockDuration == 0) {
             
             // book claimed + transfer
             redemptions[msg.sender][lockupTime].claimed = true;
@@ -81,8 +104,6 @@ contract esMOCA is ERC20, AccessControl {
 
             // event: claimed
         }
-
-        //event: redeemed
     }
 
     // claim everything. no partial claims.
@@ -108,6 +129,33 @@ contract esMOCA is ERC20, AccessControl {
 //-------------------------------admin functions------------------------------------------
 
     function stakeOnBehalf(address user, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    }
+
+    function setPenaltyToVoters(uint256 penaltyToVoters) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(penaltyToVoters <= 100, "Penalty to voters must be less than or equal to 100");
+
+        PENALTY_TO_VOTERS = penaltyToVoters;
+
+        // event
+    }
+
+    // redemptionOption & lockDuration, can have 0 values
+    function setRedemptionOption(uint256 redemptionOption, uint128 lockDuration, uint128 conversionRate) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(conversionRate > 0, "Conversion rate must be greater than 0");
+
+        redemptionOptions[redemptionOption] = RedemptionOption({
+            lockDuration: lockDuration,
+            conversionRate: conversionRate
+        });
+
+        // event
+    }
+
+    // disable redemption option
+    function disableRedemption(uint256 redemptionOption) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        redemptionOptions[redemptionOption].conversionRate = 0;
+
+        // event
     }
 
 }

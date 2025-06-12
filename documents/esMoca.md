@@ -32,10 +32,19 @@ esMOCA can be redeemed for MOCA through three different redemption paths, each w
 4. Redemption cannot be cancelled once initiated
 5. Penalties from early/instant redemption are split:
    - 50% to treasury
-   - 50% distributed to active stakers based on veMOCA holdings
-   - Redemption initiator excluded from penalty distribution
+   - 50% distributed to veMOCA holders
 
 *Note: Treasury/staker penalty distribution ratio must be configurable*
+
+*Unclear*
+
+```smlj
+1. are penalities given to treasury and veMoca holders in the form of esMoca, matching whatever redemption option selected?
+2. how would penalties to voters be distributed in relation to voting epoch? 
+    - voting occurs at different points in time
+    - esMoca redemption occurs at different points in time
+    - how to match who get what?
+```
 
 **Example:**
     1. User wishes to redeem 100 $esMOCA on June 1st and selects a redemption window of 15 days.
