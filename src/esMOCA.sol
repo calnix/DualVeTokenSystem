@@ -48,19 +48,15 @@ contract esMOCA is ERC20, AccessControl {
         _grantRole(DEFAULT_ADMIN_ROLE, owner);
     }
 
-//-------------------------------external functions------------------------------------------
-
-    function stakeMoca(uint256 amount) external {
-    //    mocaToken.safeTransferFrom(msg.sender, address(this), amount);
-    }
+//-------------------------------user functions------------------------------------------
 
     /**
      * @notice Allows users to redeem esMOCA for MOCA with different redemption options
      * @dev Cannot cancel redemption once initiated
-     * @param amount The amount of esMOCA to redeem
+     * @param redemptionAmount The amount of esMOCA to redeem
      * @param redemptionOption The redemption option (0: Standard, 1: Early, 2: Instant)
      */
-    function redeemMoca(uint256 redemptionAmount, uint256 redemptionOption) external {
+    function initiateRedemption(uint256 redemptionAmount, uint256 redemptionOption) external {
         require(amount > 0, "Amount must be greater than zero");
         require(redemptionOption <= 2, "Invalid redemption option");
         require(balanceOf(msg.sender) >= amount, "Insufficient esMOCA balance");
@@ -126,9 +122,21 @@ contract esMOCA is ERC20, AccessControl {
     }
 
 
-//-------------------------------admin functions------------------------------------------
+//-------------------------------admin functions-----------------------------------------
 
+    // might need a fn to convert moca to esMoca
+    // might also needs a stakeOnBehalf fn
+
+    // note: for distributing esMoca to validators - direct emissions
     function stakeOnBehalf(address user, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(user != address(0), "Invalid user address");
+        require(amount > 0, "Amount must be greater than 0");
+        
+        mocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        
+        _mint(user, amount);
+        
+        // Emit stake event
     }
 
     function setPenaltyToVoters(uint256 penaltyToVoters) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -158,4 +166,6 @@ contract esMOCA is ERC20, AccessControl {
         // event
     }
 
+
+    // claim for voters and treasury
 }
