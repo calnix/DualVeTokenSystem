@@ -194,4 +194,22 @@ contract esMOCA is ERC20, AccessControl {
 
 
     // claim for voters and treasury
+
+//-------------------------------overrides-----------------------------------------
+
+    /**
+     * @notice Override the transfer function to block transfers
+     * @dev veMOCA is non-transferable
+     */
+    function transfer(address, uint256) public pure override returns (bool) {
+        revert("veMOCA is non-transferable");
+    }
+
+    /**
+     * @notice Override the transferFrom function to block transfers
+     * @dev veMOCA is non-transferable
+     */
+    function transferFrom(address, address, uint256) public pure override returns (bool) {
+        revert("veMOCA is non-transferable");
+    }
 }

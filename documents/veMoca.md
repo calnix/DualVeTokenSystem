@@ -36,6 +36,7 @@ User receives 25 veMOCA.
 
 ```smlj
 - extend your lock; what happens to veMOCA?
+- is veMoca transferable?
 ```
 
 ## Redeeming veMoca for Moca
