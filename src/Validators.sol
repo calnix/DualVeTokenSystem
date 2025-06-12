@@ -2,8 +2,7 @@
 pragma solidity 0.8.26;
 
 import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-
-import { AccessControl } from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
 contract Validators is AccessControl {
     using SafeERC20 for IERC20;
@@ -15,7 +14,7 @@ contract Validators is AccessControl {
     }
 
     mapping(address => Validator) public validators;
-    mapping(address validator => uint256 timestamp => uint256 amountSlashed) public slashedAmounts;
+    mapping(address validator => mapping(uint256 timestamp => uint256 amountSlashed)) public slashedAmounts;
     
     IERC20 public immutable mocaToken;
     
@@ -28,8 +27,8 @@ contract Validators is AccessControl {
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address mocaToken, address owner, uint256 mocaStakingRequirement, uint256 lockDuration) {
-        mocaToken = IERC20(mocaToken);
+    constructor(address mocaToken_, address owner, uint256 mocaStakingRequirement, uint256 lockDuration) {
+        mocaToken = IERC20(mocaToken_);
 
         MOCA_STAKING_REQUIREMENT = mocaStakingRequirement;
         LOCK_DURATION = lockDuration;

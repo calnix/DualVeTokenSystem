@@ -9,7 +9,8 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
     esMoca is given out to:
     1. validators as direct emissions
     2. voters gets esMoca from verification fee split
-    3. verifiers claim subsidies as esMoca
+    3. voters gets esMoca from early esMoca redemption penalties
+    4. verifiers claim subsidies as esMoca
 
     this contract caters to validators and their direct emissions.
 
@@ -40,7 +41,7 @@ contract esMOCA is ERC20, AccessControl {
         bool claimed; // true if claimed, false if not
     }
 
-    mapping(uint256 redemptionOption => RedemptionOption redemptionOption) public redemptionOptions;
+    mapping(uint256 redemptionType => RedemptionOption redemptionOption) public redemptionOptions;
 
     mapping(address user => mapping(uint256 timestamp => Redemption redemption)) public redemptions;
 
@@ -52,7 +53,7 @@ contract esMOCA is ERC20, AccessControl {
 
     // check naming style; MOCA or Moca?
     constructor(address mocaToken_, address owner) ERC20("esMOCA", "esMOCA") {
-        mocaToken = IERC20(mocaToken);
+        mocaToken = IERC20(mocaToken_);
 
         _grantRole(DEFAULT_ADMIN_ROLE, owner);
     }
@@ -66,9 +67,9 @@ contract esMOCA is ERC20, AccessControl {
      * @param redemptionOption The redemption option (0: Standard, 1: Early, 2: Instant)
      */
     function initiateRedemption(uint256 redemptionAmount, uint256 redemptionOption) external {
-        require(amount > 0, "Amount must be greater than zero");
+        require(redemptionAmount > 0, "Amount must be greater than zero");
         require(redemptionOption <= 2, "Invalid redemption option");
-        require(balanceOf(msg.sender) >= amount, "Insufficient esMOCA balance");
+        require(balanceOf(msg.sender) >= redemptionAmount, "Insufficient esMOCA balance");
 
         // get redemption option 
         RedemptionOption memory option = redemptionOptions[redemptionOption];
@@ -154,7 +155,7 @@ contract esMOCA is ERC20, AccessControl {
     function setPenaltyToVoters(uint256 penaltyToVoters) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(penaltyToVoters <= 100, "Penalty to voters must be less than or equal to 100");
 
-        PENALTY_TO_VOTERS = penaltyToVoters;
+        PENALTY_FACTOR_TO_VOTERS = penaltyToVoters;
 
         // event
     }
