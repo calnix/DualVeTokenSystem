@@ -10,6 +10,11 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
     1. validators as direct emissions
     2. voters gets esMoca from verification fee split
     3. verifiers claim subsidies as esMoca
+
+    this contract caters to validators and their direct emissions.
+
+    voters+verifiers will have to initiate claim through voting contract,
+    which will then call this contract to claim esMoca
  */
 
 contract esMOCA is ERC20, AccessControl {
@@ -23,6 +28,8 @@ contract esMOCA is ERC20, AccessControl {
     uint256 public totalPenaltyToVoters; 
     uint256 public totalPenaltyToTreasury; 
     
+    address public TREASURY; // multisig or contract?
+
     struct RedemptionOption {
         uint128 lockDuration;       // number of seconds until redemption is available    | 0 for instant redemption
         uint128 conversionRate;     // range:[1,100] 100%: 100 | 1%: 1. no decimal places | if 0, redemption type is disabled
@@ -37,7 +44,9 @@ contract esMOCA is ERC20, AccessControl {
 
     mapping(address user => mapping(uint256 timestamp => Redemption redemption)) public redemptions;
 
-    mapping()
+    // addresses that can transfer esMoca to other addresses: voting claims, verifier subsidy claims
+    mapping(address addr => bool isWhitelisted) public whitelist;
+
 
 //-------------------------------constructor------------------------------------------
 
@@ -79,10 +88,11 @@ contract esMOCA is ERC20, AccessControl {
             
             // calculate penalty amount
             uint256 penaltyAmount = redemptionAmount - mocaReceivable;
-            uint256 penaltyToVoters = penaltyAmount * PENALTY_FACTOR_TO_VOTERS / PRECISION_BASE;
+            uint256 penaltyToVoters = penaltyAmount * PENALTY_FACTOR_TO_VOTERS / PRECISION_BASE;        //note: how/where to push the tokens to for claiming?
             uint256 penaltyToTreasury = penaltyAmount - penaltyToVoters;
 
-            _mint(address(this), penaltyAmount);
+            _mint(address(this), penaltyToVoters);  // note: update depending how distribution is done
+            _mint(TREASURY, penaltyToTreasury);
 
             // book penalty amount
             totalPenaltyToVoters += penaltyToVoters;
@@ -103,6 +113,7 @@ contract esMOCA is ERC20, AccessControl {
     }
 
     // claim everything. no partial claims.
+    // validators to claim esMoca from direct emissions
     function claimRedemption(uint256 redemptionTimestamp) external {
         // check if redemption is available
         require(redemptionTimestamp < block.timestamp, "Redemption not available yet");
@@ -128,6 +139,7 @@ contract esMOCA is ERC20, AccessControl {
     // might also needs a stakeOnBehalf fn
 
     // note: for distributing esMoca to validators - direct emissions
+    // note: for allocating subsidies to a pool, per epoch
     function stakeOnBehalf(address user, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(user != address(0), "Invalid user address");
         require(amount > 0, "Amount must be greater than 0");
@@ -162,6 +174,19 @@ contract esMOCA is ERC20, AccessControl {
     // disable redemption option
     function disableRedemption(uint256 redemptionOption) external onlyRole(DEFAULT_ADMIN_ROLE) {
         redemptionOptions[redemptionOption].conversionRate = 0;
+
+        // event
+    }
+
+    function setTreasury(address treasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        TREASURY = treasury;
+        // event
+    }
+
+    // for voting contract to claim esMoca from voters
+    // for verifier subsidy claims
+    function whitelistAddress(address addr, bool isWhitelisted) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        whitelist[addr] = isWhitelisted;
 
         // event
     }

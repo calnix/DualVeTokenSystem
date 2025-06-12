@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
+
+import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+
+/**
+    - voters to claim esMoca from penalties -> ?
+
+    - voters to claim esMoca from pools   -> need their pool data
+    - verifiers to claim esMoca subsidies -> need their pool data
+
+    have this contract slaved to voting contract
+ */
+
+contract VotingVaultContract is AccessControl {
+    using SafeERC20 for IERC20;
+
+    IERC20 public immutable mocaToken;
+
+    constructor(address mocaToken_, address owner) {
+        mocaToken = IERC20(mocaToken);
+
+        _grantRole(DEFAULT_ADMIN_ROLE, owner);
+    }
+
+
+//-------------------------------user functions------------------------------------------
+
+    // for verifiers to claim esMoca subsidies for a specific pool
+    function claimVerifierSubsidies(bytes32 poolId) external {
+        mocaToken.safeTransfer(msg.sender, amount);
+    }
+
+    // for voters to claim esMoca rewards from their voting on pools
+    function claimVotingRewards(uint256 epoch, bytes32 poolId) external {}
+
+//-------------------------------admin functions-----------------------------------------
+
+    // for admin to award esMoca subsidies to a specific pool, for a specific epoch
+    function awardSubsidies(uint256 epoch, bytes32 poolId, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        mocaToken.safeTransferFrom(msg.sender, address(this), amount);
+    }
+
+
+
+}
