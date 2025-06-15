@@ -16,33 +16,45 @@ contract veMOCA is ERC20, AccessControl {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable mocaToken;
-    IERC20 public immutable esMOCA;
+    IERC20 public immutable esMocaToken;
 
+    // global
+    uint256 public totalLockedMoca;
+    uint256 public totalLockedEsMoca;
+    address public treasury;
+
+    //
     uint256 public constant MIN_LOCK_DURATION = 7 days;
     uint256 public constant MAX_LOCK_DURATION = 730 days; // 2 years
     uint256 public constant PRECISION_BASE = 100; // 100%: 100, 1%: 1 | no decimal places
     
     uint256 public maxEarlyRedemptionPenalty = 50; // Default 50% maximum penalty
 
-    address public treasury;
 
-    struct User {
-        uint256 moca;             
+    struct Lock {
+        uint256 lockId;
+
+        // locked tokens
+        uint256 moca;    
+        uint256 esMoca;
+        
+        // veMOCA
         uint256 veMoca;          
         uint256 endTime; 
     }
 
-    // global
-    uint256 public totalLockedMOCA;
-    uint256 public totalLockedEsMOCA;
 
     // User => Lock ID => Lock data
     mapping(address user => mapping(uint256 lockId => Lock lock)) public userLocks;
-    
+
+    // do you wanna generateVaultId for each lock?
+    // if you do vaultId, all locks will have unique vaultId - needed?
+    mapping(address user => uint256 userLockCount) public userLockCount;
+
 //-------------------------------events------------------------------------------
 
     // Events
-    event TokensLocked(address indexed user, uint256 indexed lockId, uint256 amount, uint256 lockDuration, uint256 veMOCAAmount, bool isEsMOCA);
+    event TokensLocked(address indexed user, uint256 indexed lockId, uint256 amount, uint256 lockDuration, uint256 veMocaAmount, bool isMoca);
     event LockExtended(address indexed user, uint256 indexed lockId, uint256 newEndTime, uint256 newVeMOCAAmount);
     event TokensRedeemed(address indexed user, uint256 indexed lockId, uint256 amount, uint256 penalty);
     event MaxEarlyRedemptionPenaltyUpdated(uint256 oldPenalty, uint256 newPenalty);
@@ -50,14 +62,14 @@ contract veMOCA is ERC20, AccessControl {
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address mocaToken_, address esMOCA_, address owner_, address initialTreasury_) ERC20("veMOCA", "veMOCA") {
+    constructor(address mocaToken_, address esMocaToken_, address owner_, address initialTreasury_) ERC20("veMOCA", "veMOCA") {
         require(mocaToken_ != address(0), "Invalid MOCA token address");
-        require(esMOCA_ != address(0), "Invalid esMOCA token address");
+        require(esMocaToken_ != address(0), "Invalid esMOCA token address");
         require(owner_ != address(0), "Invalid owner address");
         require(initialTreasury_ != address(0), "Invalid treasury address");
         
         mocaToken = IERC20(mocaToken_);
-        esMOCA = IERC20(esMOCA_);
+        esMocaToken = IERC20(esMocaToken_);
         treasury = initialTreasury_;
         
         _grantRole(DEFAULT_ADMIN_ROLE, owner_);
@@ -67,79 +79,87 @@ contract veMOCA is ERC20, AccessControl {
 
 
     /**
-     * @notice Lock MOCA tokens to receive veMOCA
-     * @param amount Amount of MOCA to lock
+     * @notice Lock tokens to receive veMOCA
+     * @param amount Amount of tokens to lock
      * @param lockDuration Duration of the lock in seconds
+     * @param isMoca Boolean indicating if Moca (true) or esMoca (false) tokens are being locked
+     * @return lockId The ID of the newly created lock
      */
-    function lockMOCA(uint256 amount, uint256 lockDuration) external {
+    function createLock(uint256 amount, uint256 lockDuration, bool isMoca) external returns (uint256) {
         require(amount > 0, "Amount must be greater than zero");
         require(lockDuration >= MIN_LOCK_DURATION, "Lock duration too short");
         require(lockDuration <= MAX_LOCK_DURATION, "Lock duration too long");
-        
-        // Transfer MOCA from user to this contract
-        mocaToken.safeTransferFrom(msg.sender, address(this), amount);
         
         // Calculate veMOCA amount
         uint256 veMoca = _calculateVeMoca(amount, lockDuration);
         
-        // Create lock
+        // get next lockId
         uint256 lockId = userLockCount[msg.sender];
-        userLocks[msg.sender][lockId] = Lock({
-            amount: amount,
-            startTime: block.timestamp,
-            endTime: block.timestamp + lockDuration,
-            initialVeMOCA: veMOCAAmount
-        });
         
-        // Update user lock count
-        userLockCount[msg.sender]++;
-        
-        // Update total locked MOCA
-        totalLockedMOCA += amount;
-        
-        // Mint veMOCA to user
-        _mint(msg.sender, veMOCAAmount);
-        
-        emit TokensLocked(msg.sender, lockId, amount, lockDuration, veMOCAAmount, false);
+        // create lock
+        Lock memory lock;
+            lock.lockId = lockId;
+            if (isMoca) lock.moca = amount;
+            else lock.esMoca = amount;
+            lock.veMoca = veMoca;
+            lock.endTime = block.timestamp + lockDuration;
+
+        // set lock
+        userLocks[msg.sender][lockId] = lock;
+        // increment user lock count
+        ++userLockCount[msg.sender];
+               
+        // emit event
+        emit TokensLocked(msg.sender, lockId, amount, lockDuration, veMoca, isMoca);
+
+        // mint veMoca to user
+        _mint(msg.sender, veMoca);
+       
+        // token transfers + update global
+        if (isMoca) {   
+            totalLockedMoca += amount;
+            mocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        } else {
+            totalLockedEsMoca += amount;
+            esMocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        }
+
+        return lockId;
     }
 
-    /**
-     * @notice Lock esMOCA tokens to receive veMOCA
-     * @param amount Amount of esMOCA to lock
-     * @param lockDuration Duration of the lock in seconds
-     */
-    function lockEsMOCA(uint256 amount, uint256 lockDuration) external {
+    function addToLock(uint256 lockId, uint256 amount, bool isMoca) external {
         require(amount > 0, "Amount must be greater than zero");
-        require(lockDuration >= MIN_LOCK_DURATION, "Lock duration too short");
-        require(lockDuration <= MAX_LOCK_DURATION, "Lock duration too long");
-        
-        // Transfer esMOCA from user to this contract
-        esMOCA.safeTransferFrom(msg.sender, address(this), amount);
-        
-        // Calculate veMOCA amount (same formula as MOCA)
-        uint256 veMOCAAmount = calculateVeMOCA(amount, lockDuration);
-        
-        // Create lock
-        uint256 lockId = userLockCount[msg.sender];
-        userLocks[msg.sender][lockId] = Lock({
-            amount: amount,
-            startTime: block.timestamp,
-            endTime: block.timestamp + lockDuration,
-            initialVeMOCA: veMOCAAmount
-        });
-        
-        // Update user lock count
-        userLockCount[msg.sender]++;
-        
-        // Update total locked esMOCA
-        totalLockedEsMOCA += amount;
-        
-        // Mint veMOCA to user
-        _mint(msg.sender, veMOCAAmount);
-        
-        emit TokensLocked(msg.sender, lockId, amount, lockDuration, veMOCAAmount, true);
-    }
+        require(lockId < userLockCount[msg.sender], "Lock does not exist");
 
+        Lock storage lock = userLocks[msg.sender][lockId];
+
+        // assess lock duration
+        uint256 lockDuration = lock.endTime - block.timestamp;
+        require(lockDuration >= MIN_LOCK_DURATION, "Lock duration too short");
+        
+        // calculate incoming veMoca amount        
+        uint256 veMoca = _calculateVeMoca(amount, lockDuration);
+
+        // emit event
+        emit TokensLocked(msg.sender, lockId, amount, lockDuration, veMoca, isMoca);
+
+        // mint veMoca to user
+        _mint(msg.sender, veMoca);
+
+        // update lock: veMoca
+        lock.veMoca += veMoca;
+
+        // token transfers + update state
+        if (isMoca) {   
+            lock.moca += amount;    
+            totalLockedMoca += amount;
+            mocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        } else {
+            lock.esMoca += amount;
+            totalLockedEsMoca += amount;
+            esMocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        }
+    }
 
     /**
      * @notice Calculate veMOCA amount based on lock amount and duration
@@ -147,54 +167,9 @@ contract veMOCA is ERC20, AccessControl {
      * @param lockDuration Duration of the lock in seconds
      * @return veMOCAAmount The amount of veMOCA to mint
      */
-    function _calculateVeMoca(uint256 amount, uint256 lockDuration) internal pure returns (uint256) {
-        // Ensure lock duration is within limits
-        lockDuration = lockDuration > MAX_LOCK_DURATION ? MAX_LOCK_DURATION : lockDuration;
-        lockDuration = lockDuration < MIN_LOCK_DURATION ? MIN_LOCK_DURATION : lockDuration;
-
+    function _calculateVeMoca(uint256 amount, uint256 lockDuration) internal view returns (uint256) {
         return amount * lockDuration / MAX_LOCK_DURATION;
     }
-
-    /**
-     * @notice Get current veMOCA balance for a lock considering decay
-     * @param user The address of the user
-     * @param lockId The ID of the lock
-     * @return currentVeMOCA The current veMOCA amount after decay
-     */
-    function getCurrentVeMOCA(address user, uint256 lockId) public view returns (uint256 currentVeMOCA) {
-        Lock memory lock = userLocks[user][lockId];
-        
-        // If lock doesn't exist or has expired
-        if (lock.amount == 0 || block.timestamp >= lock.endTime) {
-            return 0;
-        }
-        
-        uint256 totalLockDuration = lock.endTime - lock.startTime;
-        uint256 timeRemaining = lock.endTime - block.timestamp;
-        
-        // veMOCA decays linearly over time
-        // Current veMOCA = Initial veMOCA * (timeRemaining / totalLockDuration)
-        currentVeMOCA = lock.initialVeMOCA * timeRemaining / totalLockDuration;
-        
-        return currentVeMOCA;
-    }
-
-    /**
-     * @notice Get total veMOCA balance for a user across all active locks
-     * @param user The address of the user
-     * @return totalVeMOCA The total current veMOCA amount
-     */
-    function getTotalVeMOCA(address user) public view returns (uint256 totalVeMOCA) {
-        uint256 lockCount = userLockCount[user];
-        
-        for (uint256 i = 0; i < lockCount; i++) {
-            totalVeMOCA += getCurrentVeMOCA(user, i);
-        }
-        
-        return totalVeMOCA;
-    }
-
-
 
     /**
      * @notice Extend lock duration
@@ -252,7 +227,7 @@ contract veMOCA is ERC20, AccessControl {
         totalLockedMOCA -= amount;
         
         // Transfer tokens back to user
-        mocaToken.safeTransfer(msg.sender, amount);
+        token.safeTransfer(msg.sender, amount);
         
         emit TokensRedeemed(msg.sender, lockId, amount, 0);
     }
@@ -325,7 +300,7 @@ contract veMOCA is ERC20, AccessControl {
         emit TreasuryUpdated(oldTreasury, newTreasury);
     }
 
-//-------------------------------admin functions-----------------------------------------
+//-------------------------------transfer functions-----------------------------------------
 
     /**
      * @notice Override the transfer function to block transfers
@@ -342,4 +317,46 @@ contract veMOCA is ERC20, AccessControl {
     function transferFrom(address, address, uint256) public pure override returns (bool) {
         revert("veMOCA is non-transferable");
     }
+
+//-------------------------------view functions-----------------------------------------
+
+    /**
+     * @notice Get current veMOCA balance for a lock considering decay
+     * @param user The address of the user
+     * @param lockId The ID of the lock
+     * @return currentVeMOCA The current veMOCA amount after decay
+     */
+    function getCurrentVeMOCA(address user, uint256 lockId) public view returns (uint256 currentVeMOCA) {
+        Lock memory lock = userLocks[user][lockId];
+        
+        // If lock doesn't exist or has expired
+        if (lock.amount == 0 || block.timestamp >= lock.endTime) {
+            return 0;
+        }
+        
+        uint256 totalLockDuration = lock.endTime - lock.startTime;
+        uint256 timeRemaining = lock.endTime - block.timestamp;
+        
+        // veMOCA decays linearly over time
+        // Current veMOCA = Initial veMOCA * (timeRemaining / totalLockDuration)
+        currentVeMOCA = lock.initialVeMOCA * timeRemaining / totalLockDuration;
+        
+        return currentVeMOCA;
+    }
+
+    /**
+     * @notice Get total veMOCA balance for a user across all active locks
+     * @param user The address of the user
+     * @return totalVeMOCA The total current veMOCA amount
+     */
+    function getTotalVeMOCA(address user) public view returns (uint256 totalVeMOCA) {
+        uint256 lockCount = userLockCount[user];
+        
+        for (uint256 i = 0; i < lockCount; i++) {
+            totalVeMOCA += getCurrentVeMOCA(user, i);
+        }
+        
+        return totalVeMOCA;
+    }
+
 }

@@ -43,9 +43,10 @@ User receives 25 veMOCA.
 
 ```smlj
 A single user can lock moca under diff. conditions - diff. end times.
- - reat each of them an individual positions/trades
+ - treat each of them an individual positions/trades
  - unique lock positions
  - users can create a new lock positions OR add to a pre-existing lock position
+ - users can add either esMoca or Moca to the same lock position
 
 Extend your lock; what happens to veMOCA?
 - 
