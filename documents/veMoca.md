@@ -7,6 +7,10 @@
 - veMOCA decays linearly over time, reducing voting power
 - Formula-based calculation determines veMOCA amount based on stake amount and duration
 
+> veMoca not transferable.
+> no whitelist, cannot transfer
+> use aave tokens for the realtime decay
+
 ## moca -> veMoca formula
 
 Lock duration: {min: 7 Days,  max: 2 years}
@@ -16,9 +20,12 @@ Formula
 ```bash
 veMOCA = MOCA_staked * (lockTimeInSeconds / MAX_LOCK_TIME_IN_SECONDS)
 
-lockTimeInSeconds = min. value of 7 days, max. of 2yrs
+lockTimeInSeconds = min. value of 7 days, max. of 2yrs [728 days]
 MAX_LOCK_TIME_IN_SECONDS = 2 yrs
 ```
+
+- only integer values of days.
+- no 1.5 days
 
 **Example**
 
@@ -35,8 +42,13 @@ User receives 25 veMOCA.
 *Unclear*
 
 ```smlj
-- extend your lock; what happens to veMOCA?
-- is veMoca transferable?
+A single user can lock moca under diff. conditions - diff. end times.
+ - reat each of them an individual positions/trades
+ - unique lock positions
+ - users can create a new lock positions OR add to a pre-existing lock position
+
+Extend your lock; what happens to veMOCA?
+- 
 ```
 
 ## Redeeming veMoca for Moca
