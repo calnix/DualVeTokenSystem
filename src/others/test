@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// @title veMOCA Staking with Linear Decay, Multiple Locks, and Early Redemption
+contract VeMoca {
+    uint256 public constant MAX_LOCK_DURATION = 730 days;
+    uint256 public constant MAX_PENALTY_PCT = 50e16; // 50% in 1e18 precision
+
+    address public immutable moca;
+    address public treasury;
+
+    constructor(address _moca, address _treasury) {
+        moca = _moca;
+        treasury = _treasury;
+    }
+
+    struct Lock {
+        uint128 mocaAmount;
+        uint128 veMoca;
+        uint64 startTime;
+        uint64 endTime;
+        uint128 slope;
+    }
+
+    struct AggregatedVeMoca {
+        uint128 bias; // total veMOCA
+        uint128 slope; // decay per second
+        uint64 lastUpdated;
+    }
+
+    mapping(address => Lock[]) public userLocks;
+    mapping(address => AggregatedVeMoca) public userState;
+
+    /// ------------------------
+    /// Staking Logic
+    /// ------------------------
+
+    function createLock(uint128 amount, uint64 duration) external {
+        require(duration >= 7 days && duration <= MAX_LOCK_DURATION, "Invalid duration");
+
+        uint64 start = uint64(block.timestamp);
+        uint64 end = start + duration;
+
+        uint128 veMoca = uint128((uint256(amount) * duration) / MAX_LOCK_DURATION);
+        uint128 slope = veMoca / duration;
+
+        userLocks[msg.sender].push(Lock({
+            mocaAmount: amount,
+            veMoca: veMoca,
+            startTime: start,
+            endTime: end,
+            slope: slope
+        }));
+
+        AggregatedVeMoca storage agg = userState[msg.sender];
+        _decayUpdate(agg);
+
+        agg.bias += veMoca; // bias is total veMoca
+        agg.slope += slope; // slope is decayPerSecond [veMoca / duration]
+
+        // Transfer MOCA in (assumes ERC20)
+        IERC20(moca).transferFrom(msg.sender, address(this), amount);
+    }
+
+    // update global state
+    function _decayUpdate(AggregatedVeMoca storage agg) internal {
+        // time since last update
+        uint256 elapsed = block.timestamp - agg.lastUpdated;
+
+        if (elapsed > 0) {
+            uint256 decay = uint256(agg.slope) * elapsed;                 // decay is the amount of veMoca that has been lost due to time
+            agg.bias = decay >= agg.bias ? 0 : agg.bias - uint128(decay); // if decay is greater than bias, set bias to 0
+            agg.lastUpdated = uint64(block.timestamp);
+        }
+    }
+
+    /// ------------------------
+    /// Query Logic
+    /// ------------------------
+
+    function balanceOf(address user) external view returns (uint256) {
+        AggregatedVeMoca memory agg = userState[user];
+
+        uint256 elapsed = block.timestamp - agg.lastUpdated;
+        if (elapsed == 0 || agg.bias == 0) return agg.bias;
+
+        uint256 decay = uint256(agg.slope) * elapsed;
+        return decay >= agg.bias ? 0 : agg.bias - decay;
+    }
+
+    /// ------------------------
+    /// Early Redemption
+    /// ------------------------
+
+    function redeemEarly(uint lockId, uint128 redeemAmount) external {
+        Lock storage lock = userLocks[msg.sender][lockId];
+        require(block.timestamp < lock.endTime, "Use normal withdraw");
+        require(redeemAmount <= lock.mocaAmount, "Too much");
+
+        uint256 timeElapsed = block.timestamp - lock.startTime;
+        uint256 totalTime = lock.endTime - lock.startTime;
+
+        uint256 penaltyPct = (lock.endTime - block.timestamp) * MAX_PENALTY_PCT / totalTime;
+        uint256 penalty = redeemAmount * penaltyPct / 1e18;
+        uint256 payout = redeemAmount - penalty;
+
+        // Update lock and user state
+        uint128 oldVe = lock.veMoca;
+        uint128 oldSlope = lock.slope;
+
+        lock.mocaAmount -= redeemAmount;
+
+        if (lock.mocaAmount == 0) {
+            // Delete lock
+            userLocks[msg.sender][lockId] = userLocks[msg.sender][userLocks[msg.sender].length - 1];
+            userLocks[msg.sender].pop();
+        } else {
+            // Recalculate veMoca and slope
+            uint64 duration = lock.endTime - lock.startTime;
+            lock.veMoca = uint128((uint256(lock.mocaAmount) * duration) / MAX_LOCK_DURATION);
+            lock.slope = lock.veMoca / duration;
+        }
+
+        // Update aggregate
+        AggregatedVeMoca storage agg = userState[msg.sender];
+        _decayUpdate(agg);
+
+        agg.bias -= oldVe;
+        agg.slope -= oldSlope;
+
+        if (lock.mocaAmount > 0) {
+            agg.bias += lock.veMoca;
+            agg.slope += lock.slope;
+        }
+
+        // Send tokens
+        IERC20(moca).transfer(msg.sender, payout);
+        IERC20(moca).transfer(treasury, penalty);
+    }
+
+    /// ------------------------
+    /// Interfaces
+    /// ------------------------
+
+    interface IERC20 {
+        function transferFrom(address from, address to, uint256 value) external returns (bool);
+        function transfer(address to, uint256 value) external returns (bool);
+    }
+}

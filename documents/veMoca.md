@@ -26,6 +26,13 @@ MAX_LOCK_TIME_IN_SECONDS = 2 yrs
 
 - only integer values of days.
 - no 1.5 days
+- min. stake amount is 1 MOCA
+
+*making the formula multiplicative instead of division*
+
+- when you divide there is rounding down
+- w/ small enough values, could lead to rounding to 0
+- we can block that obviously; but multiplicative would be more permissive
 
 **Example**
 
@@ -39,6 +46,9 @@ User receives 25 veMOCA.
 - If stake for 2 years: veMOCA starts at full power and gradually reduces to 0 over 2 years.
 - If you **extend the lock**, you maintain your veMOCA.
 
+**that means that VeMoca is "unique" to different locks**
+**different groups of veMoca will decay at different rates**
+
 *Unclear*
 
 ```smlj
@@ -49,7 +59,9 @@ A single user can lock moca under diff. conditions - diff. end times.
  - users can add either esMoca or Moca to the same lock position
 
 Extend your lock; what happens to veMOCA?
-- 
+- kickback start date: endTime + newDuration [duration must obey rules]
+- can only extend ended (~renew)? or mid-way
+- if mid-way: what happens to veMoca
 ```
 
 ## Redeeming veMoca for Moca
@@ -65,7 +77,7 @@ The early redemption penalty is calculated based on the time elapsed since locki
 
 **Formula:**
 
-```
+```bash
     Penalty_Pct = (1 - (Elapsed Lock Time / Total Lock Time)) × Max_Penalty_Pct
 
     Alternatively,
@@ -86,11 +98,28 @@ The early redemption penalty is calculated based on the time elapsed since locki
 - Treasury receives 226 MOCA
 
 User immediately loses all voting rights of the early redemption amount.
+*but what is the corresponding amount of veMoca? how do we calc. that?*
+*how much veMoca to burn?*
+*calculate asset ratio on initial veMoca or current VeMoca -decay*
+
+Early redemption is blockable by admin. enable/disable.
 
 ## Locking esMoca for veMoca
 
 - treated as MOCA
 - same formula applies
+
+## stakeOnBehalf for user
+
+- stake moca for them
+- we will decide duration
+
+## auto-staking
+
+Users can opt for rewards to be auto-staked to the same lock
+
+1. claim on a per lock basis and autocompound
+2. claimAll()
 
 ## 7-Day Unbonding Delay (Archived)
 

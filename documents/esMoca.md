@@ -62,3 +62,9 @@ $esMOCA penalties for early redemption are `redistributed` `50-50`:
 - Basically treat esMOCA as MOCA and apply the same veMOCA formula to determine the amount of veMOCA receivable.
 - However, cannot backdoor esMoca redemption options by locking esMOCA and hoping to get MOCA, through veMOCA.
 
+## Only Treasury can convert esMoca to Moca
+
+- treaasury fn to convert
+
+## Auto-compounding
+
