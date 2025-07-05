@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 library DataTypes {
 
-    struct LockedPosition {
+    struct Lock {
         bytes32 lockId;
         address creator;
 
@@ -26,6 +26,12 @@ library DataTypes {
         uint128 slope;
         // permanentLockBalance
     }
+
+
+
+
+
+
 
 
     // global view of user

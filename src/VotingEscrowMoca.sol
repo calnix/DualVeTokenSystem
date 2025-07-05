@@ -39,7 +39,7 @@ contract veMoca is ERC20, AccessControl {
 //-------------------------------mapping------------------------------------------
 
     // lock
-    mapping(bytes32 lockId => DataTypes.LockedPosition lock) public locks;
+    mapping(bytes32 lockId => DataTypes.Lock lock) public locks;
     // Checkpoints are added upon every state transition; not weekly. use binary search to find the checkpoint at any wTime
     mapping(bytes32 lockId => DataTypes.Checkpoint[] checkpoints) public lockHistory;
 
@@ -91,8 +91,8 @@ contract veMoca is ERC20, AccessControl {
             while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, msg.sender);      // If lockId exists, generate new random Id
         }
 
-        // create lock
-        DataTypes.LockedPosition memory newLock;
+        // --------- create lock ---------
+        DataTypes.Lock memory newLock;
             newLock.lockId = lockId;
             newLock.creator = msg.sender;
             if (isMoca) newLock.moca = uint128(amount);
@@ -102,31 +102,31 @@ contract veMoca is ERC20, AccessControl {
         locks[lockId] = newLock;
 
         // get lock's veBalance
-        DataTypes.VeBalance memory incomingVeBalance = _convertToVeBalance(newLock, isMoca);
+        DataTypes.VeBalance memory veIncoming = _convertToVeBalance(newLock);
         // update lock history
-        _pushCheckpoint(lockHistory[lockId], incomingVeBalance, currentWeekStart);
+        _pushCheckpoint(lockHistory[lockId], veIncoming, currentWeekStart);
 
         // EMIT LOCK CREATED
 
         // --------- newlock: increment global state ---------
 
         // add new position to global state
-        veGlobal_.bias += incomingVeBalance.bias;
-        veGlobal_.slope += incomingVeBalance.slope;
+        veGlobal_.bias += veIncoming.bias;
+        veGlobal_.slope += veIncoming.slope;
         
         // storage: book updated veGlobal & schedule slope change
         veGlobal = veGlobal_;
-        slopeChanges[expiry] += incomingVeBalance.slope;
+        slopeChanges[expiry] += veIncoming.slope;
 
         // --------- newLock: increment user state ---------
         
         // add new position to user's aggregated veBalance
-        veUser.bias += incomingVeBalance.bias;
-        veUser.slope += incomingVeBalance.slope;
+        veUser.bias += veIncoming.bias;
+        veUser.slope += veIncoming.slope;
 
         // storage: book updated veUser & schedule slope change
         userHistory[msg.sender][currentWeekStart] = veUser;
-        userSlopeChanges[msg.sender][expiry] += incomingVeBalance.slope;
+        userSlopeChanges[msg.sender][expiry] += veIncoming.slope;
 
         // EMIT USER UPDATED
 
@@ -140,13 +140,99 @@ contract veMoca is ERC20, AccessControl {
         }
 
         // mint veMoca
-        _mint(msg.sender, incomingVeBalance.bias);
+        _mint(msg.sender, veIncoming.bias);
 
         return lockId;
     }
 
+    function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external {
+        DataTypes.Lock memory oldLock = locks[lockId];
+        require(oldLock.lockId != bytes32(0), "NoLockFound");
+        require(oldLock.creator == msg.sender, "Only the creator can increase the amount");
+        require(oldLock.expiry > block.timestamp, "Lock has expired");
 
-    
+        //note: check delegation
+
+        // UPDATE GLOBAL & USER
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
+
+        // copy old lock: update amount and/or duration
+        DataTypes.Lock memory newLock = oldLock;
+            newLock.moca += mocaToIncrease;
+            newLock.esMoca += esMocaToIncrease;
+            
+        // calc. delta and book new veBalance + schedule slope changes
+        DataTypes.VeBalance memory newVeBalance = _modifyPosition(veGlobal_, veUser, oldLock, newLock, currentWeekStart);
+
+        // storage: update lock + checkpoint lock
+        locks[lockId] = newLock;
+        _pushCheckpoint(lockHistory[lockId], newVeBalance, currentWeekStart);        
+
+
+        // emit event
+
+        // transfer tokens to contract
+        if(mocaToIncrease > 0) mocaToken.safeTransferFrom(msg.sender, address(this), mocaToIncrease);
+        if(esMocaToIncrease > 0) esMocaToken.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
+    }
+
+
+    function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external {
+        DataTypes.Lock memory oldLock = locks[lockId];
+        require(oldLock.lockId != bytes32(0), "NoLockFound");
+        require(oldLock.creator == msg.sender, "Only the creator can increase the duration");
+        require(oldLock.expiry > block.timestamp, "Lock has expired");
+
+        //note: for extending lock duration: must meet min duration?
+
+        //note: check delegation
+
+        // UPDATE GLOBAL & USER
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
+
+        // copy old lock: update amount and/or duration
+        DataTypes.Lock memory newLock = oldLock;
+            newLock.expiry += durationToIncrease;
+
+        // calc. delta and book new veBalance + schedule slope changes
+        DataTypes.VeBalance memory newVeBalance = _modifyPosition(veGlobal_, veUser, oldLock, newLock, currentWeekStart);
+
+        // storage: update lock + checkpoint lock
+        locks[lockId] = newLock;
+        _pushCheckpoint(lockHistory[lockId], newVeBalance, currentWeekStart);        
+
+        // emit event
+    }
+
+
+
+
+
+    // note: any possible rounding errors due to calc. of delta; instead of removed old then add new?
+    function _modifyPosition(
+        DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, DataTypes.Lock memory oldLock, DataTypes.Lock memory newLock, uint128 currentWeekStart) internal returns (DataTypes.VeBalance memory) {
+
+        // get delta btw old and new
+        DataTypes.VeBalance memory oldVeBalance = _convertToVeBalance(oldLock);
+        DataTypes.VeBalance memory newVeBalance = _convertToVeBalance(newLock);
+
+        // get delta
+        DataTypes.VeBalance memory increaseInVeBalance = _sub(newVeBalance, oldVeBalance);
+
+        // update global
+        veGlobal_ = _add(veGlobal_, increaseInVeBalance);
+        slopeChanges[newLock.expiry] += increaseInVeBalance.slope;
+
+        // update user
+        veUser = _add(veUser, increaseInVeBalance);
+        userSlopeChanges[msg.sender][newLock.expiry] += increaseInVeBalance.slope;
+
+        // storage
+        veGlobal = veGlobal_;
+        userHistory[msg.sender][currentWeekStart] = veUser;
+
+        return newVeBalance;
+    }
 
 //-------------------------------internal-----------------------------------------------------
 
@@ -345,6 +431,22 @@ contract veMoca is ERC20, AccessControl {
         return res;
     }
 
+    function _sub(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
+        DataTypes.VeBalance memory res;
+            res.bias = a.bias - b.bias;
+            res.slope = a.slope - b.slope;
+
+        return res;
+    }
+
+    function _add(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
+        DataTypes.VeBalance memory res;
+            res.bias = a.bias + b.bias;
+            res.slope = a.slope + b.slope;
+
+        return res;
+    }
+
     // time is timestamp, not duration
     function _getValueAt(DataTypes.VeBalance memory a, uint128 time) internal pure returns (uint128) {
         if(a.bias < (a.slope * time)) {
@@ -354,13 +456,15 @@ contract veMoca is ERC20, AccessControl {
         return a.bias - (a.slope * time);
     }
 
-    // calc. veBalance{bias,slope} from lock; based on expiry time | note: need to update for esMoca
-    function _convertToVeBalance(DataTypes.LockedPosition memory lock, bool isMoca) internal pure returns (DataTypes.VeBalance memory) {
+    // calc. veBalance{bias,slope} from lock; based on expiry time
+    function _convertToVeBalance(DataTypes.Lock memory lock) internal pure returns (DataTypes.VeBalance memory) {
         DataTypes.VeBalance memory veBalance;
-        
-        veBalance.slope = isMoca ? uint128(lock.moca / Constants.MAX_LOCK_DURATION) : uint128(lock.esMoca / Constants.MAX_LOCK_DURATION);
+
+        uint128 totalAmount = lock.moca + lock.esMoca;
+
+        veBalance.slope = totalAmount / Constants.MAX_LOCK_DURATION;
         veBalance.bias = veBalance.slope * lock.expiry;
-        
+
         return veBalance;
     }
 
@@ -455,4 +559,41 @@ contract veMoca is ERC20, AccessControl {
 
     this would not be the case if our starting point was some arbitrary time; not T0
     as the weekly count would start at TX, and time checks would have to be done with respect to TX
+ */
+
+
+
+/**
+    function _increasePosition(DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, DataTypes.Lock memory lock, uint128 amountToIncrease, uint128 durationToIncrease, uint128 currentWeekStart) internal returns (DataTypes.VeBalance memory) {
+        
+        // ---- remove the old veBalance: global + user ----
+        DataTypes.VeBalance memory oldVeBalance = _convertToVeBalance(lock);
+        
+        veGlobal_ = _sub(veGlobal_, oldVeBalance);
+        slopeChanges[lock.expiry] -= oldVeBalance.slope;
+        
+        veUser = _sub(veUser, oldVeBalance);
+        userSlopeChanges[msg.sender][lock.expiry] -= oldVeBalance.slope;
+
+        // ---- recalculate the new veBalance ----
+        DataTypes.Lock memory newLock;
+            newLock.amount = lock.amount + amountToIncrease;
+            newLock.expiry = lock.expiry + durationToIncrease;
+
+        DataTypes.VeBalance memory newVeBalance = _convertToVeBalance(newLock);
+
+        // ---- add the new veBalance: global + user ----
+        veGlobal_ = _add(veGlobal_, newVeBalance);
+        slopeChanges[newLock.expiry] += newVeBalance.slope;
+        
+        veUser = _add(veUser, newVeBalance);
+        userSlopeChanges[msg.sender][newLock.expiry] += newVeBalance.slope;
+
+        // storage
+        veGlobal = veGlobal_;
+        userHistory[msg.sender][currentWeekStart] = veUser;
+        lockHistory[lock.lockId].push(DataTypes.Checkpoint(newVeBalance, currentWeekStart));
+
+        return newVeBalance;
+    }
  */
