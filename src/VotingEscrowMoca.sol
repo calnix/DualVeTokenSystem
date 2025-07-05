@@ -27,11 +27,11 @@ contract veMoca is ERC20, AccessControl {
     address public treasury;
     uint256 public totalLockedMoca;
     uint256 public totalLockedEsMoca;
-
+    DataTypes.VeBalance public veGlobal;
 
     // history
-    uint256 public EPOCH;   
-    uint128 public lastSlopeChangeAppliedAt; // timestamp of last weekly epoch update
+    //uint256 public EPOCH;                     // its helpful; but not needed.
+    //uint128 public lastSlopeChangeAppliedAt; // timestamp of last weekly epoch update
 
     // early redemption penalty
     //uint256 public constant MAX_PENALTY_PCT = 50; // Default 50% maximum penalty
@@ -47,19 +47,20 @@ contract veMoca is ERC20, AccessControl {
 
     // scheduled global slope changes
     mapping(uint128 wTime => uint128 slopeChange) public slopeChanges;
-    // history | epoch0: 0 struct?
-    mapping(uint256 epoch => DataTypes.VeBalance veGlobal) public veGlobalHistory;
+    // saving totalSupply checkpoint for each week
+    mapping(uint128 wTime => uint256 totalSupply) public totalSupplyAt; //note: do i need to save bias and slope?
 
     // user data
-    mapping(address user => DataTypes.User userAggregated) public users;
+    //mapping(address user => DataTypes.User userAggregated) public users;
     mapping(address user => mapping(uint128 wTime => uint128 slopeChange)) public userSlopeChanges;
-    
+    mapping(address user => DataTypes.VeBalance[] vePoints) public userHistory;
+
 
 //-------------------------------constructor------------------------------------------
 
     constructor(address mocaToken_, address esMocaToken_, address owner_, address treasury_) ERC20("veMoca", "veMOCA") {
-        mocaToken = IERC20(_mocaToken);
-        esMocaToken = IERC20(_esMocaToken);
+        mocaToken = IERC20(mocaToken_);
+        esMocaToken = IERC20(esMocaToken_);
 
         treasury = treasury_;
 
@@ -78,9 +79,29 @@ contract veMoca is ERC20, AccessControl {
         require(expiry >= block.timestamp + Constants.MIN_LOCK_DURATION, "Lock duration too short");
         require(expiry <= block.timestamp + Constants.MAX_LOCK_DURATION, "Lock duration too long");
         
-        // update global state
-        (DataTypes.VeBalance memory veGlobal, ) = _updateGlobal();
+        // book all prior checkpoints | veGlobal not stored
+        DataTypes.VeBalance memory veGlobal_ = _updateGlobal();
+     
+        // update user aggregated
+        /**
+            treat the user as 'global'. 
+            must do prior updates to bring user's bias and slope to current week. [_updateGlobal]
+            then add new position to user's aggregated veBalance
+            then schedule slope changes for the new position
 
+            1. bias
+            2. slope
+            3. scheduled slope changes
+            
+            note:
+            could possibly skip the prior updates, and just add the new position to user's veBalance + schedule changes
+            then have view fn balanceOf do the prior updates. saves gas
+         */
+        DataTypes.VeBalance memory veUser = _updateUser(msg.sender);
+
+
+
+        // --------- lock creation ---------
 
         // vaultId generation
         bytes32 lockId;
@@ -89,40 +110,52 @@ contract veMoca is ERC20, AccessControl {
             lockId = _generateVaultId(salt, msg.sender);
             while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, msg.sender);      // If lockId exists, generate new random Id
         }
-        
+
         // create lock
         DataTypes.LockedPosition memory newLock;
             newLock.lockId = lockId;
             newLock.creator = msg.sender;
-            if (isMoca) newLock.moca = amount;
-            else newLock.esMoca = amount;
+            if (isMoca) newLock.moca = uint128(amount);
+            else newLock.esMoca = uint128(amount);
             newLock.expiry = expiry;
-        // update storage
+        // storage: book lock
         locks[lockId] = newLock;
 
-        // get user veBalance: does not set lastUpdatedAt
+        // get lock's veBalance | does not set .lastUpdatedAt
         DataTypes.VeBalance memory incomingVeBalance = _convertToVeBalance(newLock, isMoca);
-
-        // update lock history
+        // update lock history | sets .lastUpdatedAt
         _pushCheckpoint(lockHistory[lockId], incomingVeBalance);
 
-        // add new position to global state
-        veGlobal.bias += incomingVeBalance.bias;
-        veGlobal.slope += incomingVeBalance.slope;
-        // storage
-        veGlobalHistory[epoch] = veGlobal;
+        // --------- increment: global state ---------
 
-        // schedule global slope change
+        // add new position to global state
+        veGlobal_.bias += incomingVeBalance.bias;
+        veGlobal_.slope += incomingVeBalance.slope;
+        
+        // storage: book updated veGlobal & schedule slope change
+        veGlobal = veGlobal_;
         slopeChanges[expiry] += incomingVeBalance.slope;
 
-        // update user aggregated
-        DataTypes.User memory user = users[msg.sender];
-            if (isMoca) user.moca += amount;
-            else user.esMoca += amount;            
-            user.bias += incomingVeBalance.bias;
-            user.slope += incomingVeBalance.slope;
-        // storage
-        users[msg.sender] = user;
+        // --------- increment: user state ---------
+        
+        // add new position to user's aggregated veBalance
+        veUser.bias += incomingVeBalance.bias;
+        veUser.slope += incomingVeBalance.slope;
+
+        // schedule slope change
+        userSlopeChanges[msg.sender][expiry] += incomingVeBalance.slope;
+
+        // update user history
+        _pushCheckpoint(userHistory[msg.sender], veUser);
+
+        // transfer tokens to contract
+        if (isMoca) {
+            mocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        } else {
+            esMocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        }
+
+        // emit event
 
         return lockId;
     }
@@ -135,59 +168,58 @@ contract veMoca is ERC20, AccessControl {
     }
 
 
-    function _updateGlobal() internal returns (DataTypes.VeBalance memory, uint256) {
-        // get epoch
-        uint256 epoch = EPOCH;
-
+    function _updateGlobal() internal returns (DataTypes.VeBalance memory) {
         // cache global veBalance
-        DataTypes.VeBalance memory veGlobal = veGlobalHistory[epoch];
-
-        // epoch 0: will occur only once on the first createLock
-        if(epoch == 0) {
-            veGlobal.lastUpdatedAt = block.timestamp;   // starting anchor point for all future epochs
-            return (veGlobal, block.timestamp);
-        }
-
-        uint128 lastUpdatedAtEpoch = veGlobal.lastUpdatedAt;
+        DataTypes.VeBalance memory veGlobal_ = veGlobal;
+        
+        //
+        uint128 lastUpdatedAt = veGlobal_.lastUpdatedAt;
         uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); // express in weekly bucket
+        // nothing to update: lastUpdate was within current week 
+        if(lastUpdatedAt >= currentWeekStart) return (veGlobal_); // no new week, no new checkpoint
 
-        // nothing to update: lastUpdate was within current week epoch | no new week, no new update
-        if(lastUpdatedAtEpoch >= currentWeekStart) return (veGlobal, lastUpdatedAtEpoch);
+        // skip first time: no prior updates needed | set lastUpdatedAt | return
+        if(lastUpdatedAt == 0) {
+            veGlobal_.lastUpdatedAt = currentWeekStart;   // move forward the anchor point to skip empty weeks
+            return veGlobal;
+        }
 
         // update global veBalance
-        while (lastUpdatedAtEpoch < currentWeekStart) {
+        while (lastUpdatedAt < currentWeekStart) {
             // advance 1 week/epoch
-            lastUpdatedAtEpoch += Constants.WEEK;                  
-            ++epoch;
+            lastUpdatedAt += Constants.WEEK;                  
 
             // decrement decay for this week | remove any scheduled slope changes from expiring locks
-            veGlobal.bias = _getValueAt(veGlobal, lastUpdatedAtEpoch);
-            veGlobal.slope -= slopeChanges[lastUpdatedAtEpoch];
-            veGlobal.lastUpdatedAt = lastUpdatedAtEpoch;
+            //veGlobal.bias = _getValueAt(veGlobal, lastUpdatedAt);
+            //veGlobal.slope -= slopeChanges[lastUpdatedAt];
+            //veGlobal.lastUpdatedAt = lastUpdatedAt;
+            veGlobal_ = subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
 
-            // book global state for the new week
-            veGlobalHistory[epoch] = veGlobal;
+            // book ve supply for the new week
+            totalSupplyAt[lastUpdatedAt] = _getValueAt(veGlobal_, lastUpdatedAt);
         }
 
-        return (veGlobal, lastUpdatedAtEpoch);
+        // set final lastUpdatedAt
+        veGlobal_.lastUpdatedAt = lastUpdatedAt;
+
+        // return
+        return (veGlobal_);
     }
 
-    function _updateUserVeBalance(address user) internal view returns (DataTypes.VeBalance memory) {
-        // get user's current state
-        DataTypes.User memory userData = users[user];
-        DataTypes.VeBalance memory userVeBalance = DataTypes.VeBalance({
-            bias: userData.bias,
-            slope: userData.slope,
-            lastUpdatedAt: userData.lastUpdatedAt
-        });
+    // _updateGlobal ran before this: so veGlobal.lastUpdatedAt is not stale
+    function _updateUser(address user) internal returns (DataTypes.VeBalance memory) {
+        DataTypes.VeBalance memory userVeBalance;
 
-        // if user has no locks, return zero balance
-        if (userData.moca == 0 && userData.esMoca == 0) {
+        uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); // express in weekly bucket
+
+        // first time: no prior updates needed | set lastUpdatedAt to latest global 
+        if (userHistory[user].length == 0) {
+            userVeBalance = DataTypes.VeBalance(0, 0, currentWeekStart);
             return userVeBalance;
         }
 
+        userVeBalance = userHistory[user][userHistory[user].length - 1];
         uint128 lastUpdatedAt = userVeBalance.lastUpdatedAt;
-        uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp));
 
         // nothing to update: lastUpdate was within current week epoch
         if(lastUpdatedAt >= currentWeekStart) return userVeBalance;
@@ -198,18 +230,47 @@ contract veMoca is ERC20, AccessControl {
             lastUpdatedAt += Constants.WEEK;
 
             // decrement decay for this week | remove any scheduled slope changes from expiring locks
-            userVeBalance.bias = _getValueAt(userVeBalance, lastUpdatedAt);
-            userVeBalance.slope -= userSlopeChanges[user][lastUpdatedAt];
-            userVeBalance.lastUpdatedAt = lastUpdatedAt;
-        }
+            userVeBalance = subtractExpired(userVeBalance, userSlopeChanges[user][lastUpdatedAt], lastUpdatedAt);
 
-        // update lastUpdatedAt to current week start
-        userVeBalance.lastUpdatedAt = currentWeekStart;
+            //book user state for the new week
+            _pushCheckpoint(userHistory[user], userVeBalance);
+        }
 
         return userVeBalance;
     }
 
+    function _viewUpdateUser(address user) internal view returns (DataTypes.VeBalance memory) {
+        // get user's latest veBalance
+        DataTypes.VeBalance memory userVeBalance = userHistory[user][userHistory[user].length - 1];
 
+        uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); // express in weekly bucket
+        
+        // first time: no prior updates needed | set lastUpdatedAt to latest global 
+        if (userHistory[user].length == 0) {
+            userVeBalance = DataTypes.VeBalance(0, 0, currentWeekStart);
+            return userVeBalance;
+        }
+        
+        userVeBalance = userHistory[user][userHistory[user].length - 1];
+        uint128 lastUpdatedAt = userVeBalance.lastUpdatedAt;
+
+        // nothing to update: lastUpdate was within current week epoch
+        if(lastUpdatedAt >= currentWeekStart) return userVeBalance;
+
+        // update user's veBalance to current week
+        while (lastUpdatedAt < currentWeekStart) {
+            // advance 1 week
+            lastUpdatedAt += Constants.WEEK;
+
+            // decrement decay for this week | remove any scheduled slope changes from expiring locks
+            userVeBalance = subtractExpired(userVeBalance, userSlopeChanges[user][lastUpdatedAt], lastUpdatedAt);
+
+            //book user state for the new week
+            //_pushCheckpoint(userHistory[user], userVeBalance);
+        }
+
+        return userVeBalance;
+    }
     
 
 //-------------------------------lib-----------------------------------------------------
@@ -227,13 +288,13 @@ contract veMoca is ERC20, AccessControl {
     function _convertToVeBalance(DataTypes.LockedPosition memory lock, bool isMoca) internal pure returns (DataTypes.VeBalance memory) {
         DataTypes.VeBalance memory veBalance;
         
-        veBalance.slope = isMoca ? lock.moca / Constants.MAX_LOCK_DURATION : lock.esMoca / Constants.MAX_LOCK_DURATION;
+        veBalance.slope = isMoca ? uint128(lock.moca / Constants.MAX_LOCK_DURATION) : uint128(lock.esMoca / Constants.MAX_LOCK_DURATION);
         veBalance.bias = veBalance.slope * lock.expiry;
         
         return veBalance;
     }
 
-
+    //note: this could store zero-value checkpoints?
     function _pushCheckpoint(DataTypes.VeBalance[] storage lockHistory, DataTypes.VeBalance memory veBalance) internal {
         uint256 length = lockHistory.length;
         // if last checkpoint is in the same week as incoming; overwrite
@@ -247,29 +308,27 @@ contract veMoca is ERC20, AccessControl {
     }
 
 
-    // removed expired locks from global state | note: not used yet | was meant for while loop in _updateGlobal
+    // removed expired locks from veBalance | does not set lastUpdatedAt
     function subtractExpired(DataTypes.VeBalance memory a, uint128 expiringSlope, uint128 expiry) internal pure returns (DataTypes.VeBalance memory) {
         uint128 bias = a.bias - (expiringSlope * expiry);       // remove decayed ve
-        uint128 slope = a.slope - expiringSlope;                // remove expiring slope
+        uint128 slope = a.slope - expiringSlope;                 // remove expiring slope
 
-        return DataTypes.VeBalance({bias: bias, slope: slope});
+        DataTypes.VeBalance memory res;
+            res.bias = bias;
+            res.slope = slope;
+
+        return res;
     }
 
 
 //-------------------------------token functions-----------------------------------------
 
     function balanceOf(address user) public view override returns (uint256) {
-        DataTypes.User memory userAggregated = users[user];
-        if(userAggregated.bias == 0) return 0; 
+        // _pushCheckpoint in _updateUser makes storage updates.
+        DataTypes.VeBalance memory veUser = _viewUpdateUser(user);
+        if(veUser.bias == 0) return 0; 
 
-        // check scheduled changes for user
-        uint128 slopeChange = userSlopeChanges[user][uint128(block.timestamp)];
-        if(slopeChange > 0) {
-            userAggregated.slope -= slopeChange;
-            userSlopeChanges[user][uint128(block.timestamp)] = 0;
-        }
-
-       return _getValueAt(DataTypes.VeBalance({bias: userAggregated.bias, slope: userAggregated.slope}), uint128(block.timestamp));
+        return _getValueAt(veUser, uint128(block.timestamp));
     }
 
 /*
@@ -284,13 +343,34 @@ contract veMoca is ERC20, AccessControl {
 
 //-------------------------------view functions-----------------------------------------
 
-    function totalSupplyCurrent() public view virtual override returns (uint256) {
-        (DataTypes.VeBalance memory veGlobal, ) = _updateGlobal();
+/*    function totalSupplyCurrent() public view virtual override returns (uint256) {
+        DataTypes.VeBalance memory veGlobal = _updateGlobal();
 
         return _getValueAt(veGlobal, uint128(block.timestamp));
     }
-
+*/
 
     //function totalSupplyAt(uint128 time) public view virtual override returns (uint256) {}
         
 }
+
+
+
+/**
+    cos' we calculate bias from T0 to Now
+    the starting anchor point for the contract is T0
+    meaning, 
+    - the first week start is T0 
+    - the second week start is T0+1 week
+    - the third week start is T0+2 weeks
+    - etc.
+
+    so on user's passing expiry
+    - expiry is specified timestamp representing endTime; not duration
+    - expiry is sanitized isValidTime: expiry % Constants.WEEK == 0
+    - this ensures that the endTime lies on a week boundary; not inbtw
+    - 
+
+    this would not be the case if our starting point was some arbitrary time; not T0
+    as the weekly count would start at TX, and time checks would have to be done with respect to TX
+ */

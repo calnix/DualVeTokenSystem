@@ -3,13 +3,6 @@ pragma solidity 0.8.27;
 
 library DataTypes {
 
-    struct VeBalance {
-        uint128 bias;
-        uint128 slope;
-        uint128 lastUpdatedAt;
-        // permanentLockBalance
-    }
-
     struct LockedPosition {
         bytes32 lockId;
         address creator;
@@ -20,6 +13,14 @@ library DataTypes {
         
         uint128 expiry;             // timestamp when lock ends
     }
+
+    struct VeBalance {
+        uint128 bias;
+        uint128 slope;
+        uint128 lastUpdatedAt;
+        // permanentLockBalance
+    }
+
 
     // global view of user
     struct User {
