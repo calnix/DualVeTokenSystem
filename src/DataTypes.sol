@@ -13,11 +13,17 @@ library DataTypes {
         
         uint128 expiry;             // timestamp when lock ends
     }
+    
+    // Checkpoint
+    struct Checkpoint {
+        VeBalance veBalance;
+        uint128 lastUpdatedAt;
+    }
 
+    // Aggregation: global + user
     struct VeBalance {
         uint128 bias;
         uint128 slope;
-        uint128 lastUpdatedAt;
         // permanentLockBalance
     }
 
