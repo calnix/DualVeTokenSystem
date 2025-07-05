@@ -176,7 +176,6 @@ contract veMoca is ERC20, AccessControl {
         if(esMocaToIncrease > 0) esMocaToken.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
     }
 
-
     function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external {
         DataTypes.Lock memory oldLock = locks[lockId];
         require(oldLock.lockId != bytes32(0), "NoLockFound");
@@ -204,7 +203,32 @@ contract veMoca is ERC20, AccessControl {
         // emit event
     }
 
+    // Withdraws an expired lock position, returning the principal and veMoca
+    function withdraw(bytes32 lockId) external {
+        DataTypes.Lock memory lock = locks[lockId];
+        require(lock.lockId != bytes32(0), "NoLockFound");
+        require(lock.creator == msg.sender, "Only the creator can withdraw");
+        require(lock.expiry < block.timestamp, "Lock has not expired");
+        require(lock.moca > 0 || lock.esMoca > 0, "No principal to withdraw");
 
+        // UPDATE GLOBAL & USER
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
+
+        // get old veBalance
+        DataTypes.VeBalance memory veBalance = _convertToVeBalance(lock);
+        require(veBalance.bias == 0, "No veMoca to withdraw");
+
+        // storage: update lock + checkpoint lock
+        lock.isWithdrawn = true;    
+        locks[lockId] = lock;
+        _pushCheckpoint(lockHistory[lockId], veBalance, currentWeekStart);  // book final checkpoint, since we do not delete the lock
+
+        // emit event
+
+        // transfer tokens to user
+        if(lock.moca > 0) mocaToken.safeTransfer(msg.sender, lock.moca);
+        if(lock.esMoca > 0) esMocaToken.safeTransfer(msg.sender, lock.esMoca);        
+    }
 
 
 

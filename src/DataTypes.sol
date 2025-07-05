@@ -12,6 +12,7 @@ library DataTypes {
         uint128 esMoca;
         
         uint128 expiry;             // timestamp when lock ends
+        bool isWithdrawn;           // flag to indicate if the lock has been withdrawn
     }
     
     // Checkpoint
