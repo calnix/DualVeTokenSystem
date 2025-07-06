@@ -31,10 +31,7 @@ contract veMoca is ERC20, AccessControl {
     // global veBalance
     DataTypes.VeBalance public veGlobal;
     uint128 public lastUpdatedTimestamp;  
-
-    // early redemption penalty
-    uint256 public constant MAX_PENALTY_PCT = 50; // Default 50% maximum penalty
-    uint256 public constant PRECISION_BASE = 100; // 100%: 100, 1%: 1 | no decimal places
+    
 
 //-------------------------------mapping------------------------------------------
 
@@ -86,7 +83,7 @@ contract veMoca is ERC20, AccessControl {
         // UPDATE GLOBAL & USER
         (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
 
-        // copy old lock: update amount and/or duration
+        // copy old lock: update amount
         DataTypes.Lock memory newLock = oldLock;
             newLock.moca += mocaToIncrease;
             newLock.esMoca += esMocaToIncrease;
@@ -110,6 +107,8 @@ contract veMoca is ERC20, AccessControl {
         require(oldLock.lockId != bytes32(0), "NoLockFound");
         require(oldLock.creator == msg.sender, "Only the creator can increase the duration");
         require(oldLock.expiry > block.timestamp, "Lock has expired");
+
+        require(WeekMath.isValidWTime(oldLock.expiry + durationToIncrease), "Expiry must be a valid week beginning");
 
         //note: for extending lock duration: must meet min duration?
 
@@ -417,7 +416,6 @@ contract veMoca is ERC20, AccessControl {
         return newVeBalance;
     }
 
-
 //-------------------------------internal: view-----------------------------------------------------
 
 
@@ -499,7 +497,30 @@ contract veMoca is ERC20, AccessControl {
         return (veGlobal_, veUser, currentWeekStart);
     }
 
+    function _viewUser(address user) internal view returns (DataTypes.VeBalance memory) {
+        // init user veUser
+        DataTypes.VeBalance memory veUser;
 
+        uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
+        // if user's first time: no prior updates to execute 
+        if(userLastUpdatedAt == 0) return veUser;
+
+        // load user's previous veBalance
+        veUser = userHistory[user][userLastUpdatedAt];
+        
+        // get current week start
+        uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
+        // already up to date: return
+        if(userLastUpdatedAt >= currentWeekStart) return veUser;
+
+        // update user veBalance to current week
+        while (userLastUpdatedAt < currentWeekStart) {
+            userLastUpdatedAt += Constants.WEEK;
+            veUser = subtractExpired(veUser, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
+        }
+
+        return veUser;
+    }
 
 //-------------------------------lib-----------------------------------------------------
 
@@ -596,10 +617,10 @@ contract veMoca is ERC20, AccessControl {
     }
 
 
-    // override: ERC20 balanceOf()
-    function balanceOf(address user) public view override returns (uint256) {
+    // override: ERC20 balanceOf() | use _viewUser to save gas when Voting.sol calls this
+    function balanceOf(address user) public view override returns (uint128) {
 
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _viewUserAndGlobal(user);
+        DataTypes.VeBalance memory veUser = _viewUser(user);
         if(veUser.bias == 0) return 0; 
 
         // calculate current voting power based on bias and slope at current timestamp
@@ -607,7 +628,7 @@ contract veMoca is ERC20, AccessControl {
     }
 
     // historical search. since veBalances are stored weekly, find the closest week boundary to the timestamp and interpolate from there
-    function balanceOfAt(address user, uint128 time) external view returns (uint256) {
+    function balanceOfAt(address user, uint128 time) external view returns (uint128) {
         require(time <= block.timestamp, "Timestamp is in the future");
 
         // find the closest weekly boundary (wTime) that is not larger than the input time
