@@ -33,8 +33,8 @@ contract veMoca is ERC20, AccessControl {
     uint128 public lastUpdatedTimestamp;  
 
     // early redemption penalty
-    //uint256 public constant MAX_PENALTY_PCT = 50; // Default 50% maximum penalty
-    //uint256 public constant PRECISION_BASE = 100; // 100%: 100, 1%: 1 | no decimal places
+    uint256 public constant MAX_PENALTY_PCT = 50; // Default 50% maximum penalty
+    uint256 public constant PRECISION_BASE = 100; // 100%: 100, 1%: 1 | no decimal places
 
 //-------------------------------mapping------------------------------------------
 
@@ -68,81 +68,11 @@ contract veMoca is ERC20, AccessControl {
 
     }
 
-//-------------------------------external functions------------------------------------------
+//-------------------------------user functions------------------------------------------
 
 
     function createLock(uint256 amount, uint128 expiry, bool isMoca) external returns (bytes32) {
-        require(amount > 0, "Amount must be greater than zero");
-        require(WeekMath.isValidWTime(expiry), "Expiry must be a valid week beginning");
-
-        require(expiry >= block.timestamp + Constants.MIN_LOCK_DURATION, "Lock duration too short");
-        require(expiry <= block.timestamp + Constants.MAX_LOCK_DURATION, "Lock duration too long");
-        
-        // update global and user veBalance
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
-
-        // --------- create lock ---------
-
-        // vaultId generation
-        bytes32 lockId;
-        {
-            uint256 salt = block.number;
-            lockId = _generateVaultId(salt, msg.sender);
-            while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, msg.sender);      // If lockId exists, generate new random Id
-        }
-
-        // --------- create lock ---------
-        DataTypes.Lock memory newLock;
-            newLock.lockId = lockId;
-            newLock.creator = msg.sender;
-            if (isMoca) newLock.moca = uint128(amount);
-            else newLock.esMoca = uint128(amount);
-            newLock.expiry = expiry;
-        // storage: book lock
-        locks[lockId] = newLock;
-
-        // get lock's veBalance
-        DataTypes.VeBalance memory veIncoming = _convertToVeBalance(newLock);
-        // update lock history
-        _pushCheckpoint(lockHistory[lockId], veIncoming, currentWeekStart);
-
-        // EMIT LOCK CREATED
-
-        // --------- newlock: increment global state ---------
-
-        // add new position to global state
-        veGlobal_.bias += veIncoming.bias;
-        veGlobal_.slope += veIncoming.slope;
-        
-        // storage: book updated veGlobal & schedule slope change
-        veGlobal = veGlobal_;
-        slopeChanges[expiry] += veIncoming.slope;
-
-        // --------- newLock: increment user state ---------
-        
-        // add new position to user's aggregated veBalance
-        veUser.bias += veIncoming.bias;
-        veUser.slope += veIncoming.slope;
-
-        // storage: book updated veUser & schedule slope change
-        userHistory[msg.sender][currentWeekStart] = veUser;
-        userSlopeChanges[msg.sender][expiry] += veIncoming.slope;
-
-        // EMIT USER UPDATED
-
-        // transfer tokens to contract
-        if (isMoca) {
-            totalLockedMoca += amount;
-            mocaToken.safeTransferFrom(msg.sender, address(this), amount);
-        } else {
-            totalLockedEsMoca += amount;
-            esMocaToken.safeTransferFrom(msg.sender, address(this), amount);
-        }
-
-        // mint veMoca
-        _mint(msg.sender, veIncoming.bias);
-
-        return lockId;
+        return _createLockFor(msg.sender, amount, expiry, isMoca);
     }
 
     function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external {
@@ -167,7 +97,6 @@ contract veMoca is ERC20, AccessControl {
         // storage: update lock + checkpoint lock
         locks[lockId] = newLock;
         _pushCheckpoint(lockHistory[lockId], newVeBalance, currentWeekStart);        
-
 
         // emit event
 
@@ -209,7 +138,7 @@ contract veMoca is ERC20, AccessControl {
         require(lock.lockId != bytes32(0), "NoLockFound");
         require(lock.creator == msg.sender, "Only the creator can withdraw");
         require(lock.expiry < block.timestamp, "Lock has not expired");
-        require(lock.moca > 0 || lock.esMoca > 0, "No principal to withdraw");
+        require(lock.isWithdrawn == false, "Lock has already been withdrawn");
 
         // UPDATE GLOBAL & USER
         (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
@@ -223,6 +152,9 @@ contract veMoca is ERC20, AccessControl {
         locks[lockId] = lock;
         _pushCheckpoint(lockHistory[lockId], veBalance, currentWeekStart);  // book final checkpoint, since we do not delete the lock
 
+        // burn originally issued veMoca
+        _burn(msg.sender, veBalance.bias);
+
         // emit event
 
         // transfer tokens to user
@@ -231,34 +163,128 @@ contract veMoca is ERC20, AccessControl {
     }
 
 
+    /** note: incomplete 
+     * @notice Early redemption with penalty (partial redemption allowed)
+     * @param lockId ID of the lock to redeem early
+     * @param amountToRedeem Amount of veMoca to redeem
+     */
+    function earlyRedemption(bytes32 lockId, uint128 amountToRedeem) external {
 
-    // note: any possible rounding errors due to calc. of delta; instead of removed old then add new?
-    function _modifyPosition(
-        DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, DataTypes.Lock memory oldLock, DataTypes.Lock memory newLock, uint128 currentWeekStart) internal returns (DataTypes.VeBalance memory) {
+        // check lock exists
+        DataTypes.Lock memory lock = locks[lockId];
+        require(lock.lockId != bytes32(0), "NoLockFound");
+        require(lock.creator == msg.sender, "Only the creator can redeem early");
+        require(lock.expiry > block.timestamp, "Lock has not expired");
+        require(lock.isWithdrawn == false, "Lock has already been withdrawn");
 
-        // get delta btw old and new
-        DataTypes.VeBalance memory oldVeBalance = _convertToVeBalance(oldLock);
-        DataTypes.VeBalance memory newVeBalance = _convertToVeBalance(newLock);
+        // get veBalance
+        DataTypes.VeBalance memory veBalance = _convertToVeBalance(lock);
+        require(veBalance.bias > 0, "No veMoca to redeem");
 
-        // get delta
-        DataTypes.VeBalance memory increaseInVeBalance = _sub(newVeBalance, oldVeBalance);
+        // ratio of veMoca to base assets
+        uint256 totalBase = lock.moca + lock.esMoca;
+        uint256 veMocaRatio = veBalance.bias / totalBase;
 
-        // update global
-        veGlobal_ = _add(veGlobal_, increaseInVeBalance);
-        slopeChanges[newLock.expiry] += increaseInVeBalance.slope;
+        // calculate Penalty_Pct = (Time_left / Total_Lock_Time) × Max_Penalty_Pct
+        uint256 timeLeft = lock.expiry - block.timestamp;
+        uint256 penaltyPct = (MAX_PENALTY_PCT * timeLeft) / MAX_LOCK_DURATION;
+        
+        // apply penalty
+        uint256 penalty = totalBase * penaltyPct / PRECISION_BASE;
 
-        // update user
-        veUser = _add(veUser, increaseInVeBalance);
-        userSlopeChanges[msg.sender][newLock.expiry] += increaseInVeBalance.slope;
+        // calculate amount to return
+        uint256 amountToReturn = totalBase - penalty;
 
-        // storage
-        veGlobal = veGlobal_;
-        userHistory[msg.sender][currentWeekStart] = veUser;
 
-        return newVeBalance;
+        // burn ve
+
+        // transfer tokens to user
+        
+        
+    }
+
+
+//-------------------------------admin functions------------------------------------------
+
+
+    function createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca) external onlyRole(Constants.CRON_JOB_ROLE) returns (bytes32) { 
+        return _createLockFor(user, amount, expiry, isMoca);
     }
 
 //-------------------------------internal-----------------------------------------------------
+
+    function _createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca) internal returns (bytes32) {
+        require(amount > 0, "Amount must be greater than zero");
+        require(WeekMath.isValidWTime(expiry), "Expiry must be a valid week beginning");
+
+        require(expiry >= block.timestamp + Constants.MIN_LOCK_DURATION, "Lock duration too short");
+        require(expiry <= block.timestamp + Constants.MAX_LOCK_DURATION, "Lock duration too long");
+        
+        // update global and user veBalance
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
+
+        // --------- create lock ---------
+
+        // vaultId generation
+        bytes32 lockId;
+        {
+            uint256 salt = block.number;
+            lockId = _generateVaultId(salt, msg.sender);
+            while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, msg.sender);      // If lockId exists, generate new random Id
+        }
+
+        DataTypes.Lock memory newLock;
+            newLock.lockId = lockId;
+            newLock.creator = msg.sender;
+            if (isMoca) newLock.moca = uint128(amount);
+            else newLock.esMoca = uint128(amount);
+            newLock.expiry = expiry;
+        // storage: book lock
+        locks[lockId] = newLock;
+
+        // get lock's veBalance
+        DataTypes.VeBalance memory veIncoming = _convertToVeBalance(newLock);
+        // update lock history
+        _pushCheckpoint(lockHistory[lockId], veIncoming, currentWeekStart);
+
+        // EMIT LOCK CREATED
+
+        // --------- newLock: increment global state ---------
+
+        // add new position to global state
+        veGlobal_.bias += veIncoming.bias;
+        veGlobal_.slope += veIncoming.slope;
+        
+        // storage: book updated veGlobal & schedule slope change
+        veGlobal = veGlobal_;
+        slopeChanges[expiry] += veIncoming.slope;
+
+        // --------- newLock: increment user state ---------
+        
+        // add new position to user's aggregated veBalance
+        veUser.bias += veIncoming.bias;
+        veUser.slope += veIncoming.slope;
+
+        // storage: book updated veUser & schedule slope change
+        userHistory[msg.sender][currentWeekStart] = veUser;
+        userSlopeChanges[msg.sender][expiry] += veIncoming.slope;
+
+        // EMIT USER UPDATED
+
+        // transfer tokens to contract
+        if (isMoca) {
+            totalLockedMoca += amount;
+            mocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        } else {
+            totalLockedEsMoca += amount;
+            esMocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        }
+
+        // mint veMoca
+        _mint(msg.sender, veIncoming.bias);
+
+        return lockId;
+    }
 
     ///@dev Generate a vaultId. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
     function _generateVaultId(uint256 salt, address user) internal view returns (bytes32) {
@@ -355,6 +381,40 @@ contract veMoca is ERC20, AccessControl {
         
         // return
         return (veGlobal_, veUser, currentWeekStart);
+    }
+
+    // note: any possible rounding errors due to calc. of delta; instead of removed old then add new?
+    function _modifyPosition(
+        DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, DataTypes.Lock memory oldLock, DataTypes.Lock memory newLock, uint128 currentWeekStart) internal returns (DataTypes.VeBalance memory) {
+
+        // get delta btw old and new
+        DataTypes.VeBalance memory oldVeBalance = _convertToVeBalance(oldLock);
+        DataTypes.VeBalance memory newVeBalance = _convertToVeBalance(newLock);
+
+        // get delta
+        DataTypes.VeBalance memory increaseInVeBalance = _sub(newVeBalance, oldVeBalance);
+
+        // update global
+        veGlobal_ = _add(veGlobal_, increaseInVeBalance);
+        slopeChanges[newLock.expiry] += increaseInVeBalance.slope;
+
+        // update user
+        veUser = _add(veUser, increaseInVeBalance);
+        userSlopeChanges[msg.sender][newLock.expiry] += increaseInVeBalance.slope;
+
+        // storage
+        veGlobal = veGlobal_;
+        userHistory[msg.sender][currentWeekStart] = veUser;
+
+        // NOTE: do you want to overhaaful this to handle early redemption as well?
+        // mint the delta (difference between old and new veBalance)
+        if (newVeBalance.bias > oldVeBalance.bias) {
+            _mint(msg.sender, newVeBalance.bias - oldVeBalance.bias);
+        } else if (oldVeBalance.bias > newVeBalance.bias) {
+            _burn(msg.sender, oldVeBalance.bias - newVeBalance.bias);
+        }
+
+        return newVeBalance;
     }
 
 
@@ -471,7 +531,7 @@ contract veMoca is ERC20, AccessControl {
         return res;
     }
 
-    // time is timestamp, not duration
+    // time is timestamp, not duration | forward-lookingl; not historical search
     function _getValueAt(DataTypes.VeBalance memory a, uint128 time) internal pure returns (uint128) {
         if(a.bias < (a.slope * time)) {
             return 0;
@@ -505,18 +565,9 @@ contract veMoca is ERC20, AccessControl {
     }
 
 
-//-------------------------------token functions-----------------------------------------
+//-------------------------------block: transfer/transferFrom -----------------------------------------
 
-
-    function balanceOf(address user) public view override returns (uint256) {
-
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _viewUserAndGlobal(user);
-        if(veUser.bias == 0) return 0; 
-
-        // calculate current voting power based on bias and slope at current timestamp
-        return _getValueAt(veUser, uint128(block.timestamp));
-    }
-
+    //note: white-list transfers?
 
     function transfer(address, uint256) public pure override returns (bool) {
         revert("veMOCA is non-transferable");
@@ -528,63 +579,93 @@ contract veMoca is ERC20, AccessControl {
 
 //-------------------------------view functions-----------------------------------------
 
-    function totalSupplyCurrent() public view virtual override returns (uint256) {
+    // totalSupplyCurrent: update from last to now; return current veBalance
+    // override: ERC20 totalSupply()
+    function totalSupply() public view override returns (uint256) {
         DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, WeekMath.getWeekStartTimestamp(uint128(block.timestamp)));
         return _getValueAt(veGlobal_, uint128(block.timestamp));
     }
 
+    // note: do we really needs this?
+    // forward-looking; not historical search | for historical search, use totalSupplyAt[]; limited to weekly checkpoints
+    function totalSupplyInFuture(uint128 time) public view returns (uint256) {
+        require(time <= block.timestamp, "Timestamp is in the future");
 
-    function totalSupplyAt(uint128 time) public view virtual override returns (uint256) {
         DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, WeekMath.getWeekStartTimestamp(time));
         return _getValueAt(veGlobal_, time);
     }
+
+
+    // override: ERC20 balanceOf()
+    function balanceOf(address user) public view override returns (uint256) {
+
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _viewUserAndGlobal(user);
+        if(veUser.bias == 0) return 0; 
+
+        // calculate current voting power based on bias and slope at current timestamp
+        return _getValueAt(veUser, uint128(block.timestamp));
+    }
+
+    // historical search. since veBalances are stored weekly, find the closest week boundary to the timestamp and interpolate from there
+    function balanceOfAt(address user, uint128 time) external view returns (uint256) {
+        require(time <= block.timestamp, "Timestamp is in the future");
+
+        // find the closest weekly boundary (wTime) that is not larger than the input time
+        uint128 wTime = WeekMath.getWeekStartTimestamp(time);
+        
+        // get the user's veBalance at that weekly boundary
+        DataTypes.VeBalance memory veUser = userHistory[user][wTime];
+        
+        // calculate the voting power at the exact timestamp using the veBalance from the closest past weekly boundary
+        return _getValueAt(veUser, time);
+    }
+
+
+    function getLockHistoryLength(bytes32 lockId) external view returns (uint256) {
+        return lockHistory[lockId].length;
+    }
+
+    //note: isn't _convertToVeBalance(locks[lockId]) == lockHistory[lockId][lockHistory.length - 1].veBalance?
+    function getLockCurrentVeBalance(bytes32 lockId) external view returns (DataTypes.VeBalance memory) {
+        return _convertToVeBalance(locks[lockId]);
+    }
+
+    function getLockCurrentVotingPower(bytes32 lockId) external view returns (uint256) {
+        return _getValueAt(_convertToVeBalance(locks[lockId]), uint128(block.timestamp));
+    }
+
+    //note: historical search. veBalances are stored weekly, find the closest week boundary to the timestamp and interpolate from there
+    function getLockVeBalanceAt(bytes32 lockId, uint128 timestamp) external view returns (uint256) {
+        require(timestamp <= block.timestamp, "Timestamp is in the future");
+
+        DataTypes.Checkpoint[] storage history = lockHistory[lockId];
+        uint256 length = history.length;
+        if(length == 0) return 0;
+        
+        // binary search to find the checkpoint with timestamp closest, but not larger than the input time
+        uint256 min = 0;
+        uint256 max = length - 1;
+        
+        // if timestamp is earlier than the first checkpoint, return zero balance
+        if(timestamp < history[0].lastUpdatedAt) return 0;
+        
+        // if timestamp is at or after the last checkpoint, return the last checkpoint
+        if(timestamp >= history[max].lastUpdatedAt) return _getValueAt(history[max].veBalance, timestamp);
+        
+        // binary search
+        while (min < max) {
+            uint256 mid = (min + max + 1) / 2;
+            if(history[mid].lastUpdatedAt <= timestamp) {
+                min = mid;
+            } else {
+                max = mid - 1;
+            }
+        }
+        
+        return _getValueAt(history[min].veBalance, timestamp);
+    }
         
 }
-
-
-/**
-        // book all prior checkpoints | veGlobal not stored
-        //DataTypes.VeBalance memory veGlobal_ = _updateGlobal();
-
-        // update user aggregated
-        /**
-            treat the user as 'global'. 
-            must do prior updates to bring user's bias and slope to current week. [_updateGlobal]
-            then add new position to user's aggregated veBalance
-            then schedule slope changes for the new position
-
-            1. bias
-            2. slope
-            3. scheduled slope changes
-            
-            note:
-            could possibly skip the prior updates, and just add the new position to user's veBalance + schedule changes
-            then have view fn balanceOf do the prior updates. saves gas
-         */
-        //DataTypes.VeBalance memory veUser = _updateUser(msg.sender);
-
-
-
-
-/**
-    cos' we calculate bias from T0 to Now
-    the starting anchor point for the contract is T0
-    meaning, 
-    - the first week start is T0 
-    - the second week start is T0+1 week
-    - the third week start is T0+2 weeks
-    - etc.
-
-    so on user's passing expiry
-    - expiry is specified timestamp representing endTime; not duration
-    - expiry is sanitized isValidTime: expiry % Constants.WEEK == 0
-    - this ensures that the endTime lies on a week boundary; not inbtw
-    - 
-
-    this would not be the case if our starting point was some arbitrary time; not T0
-    as the weekly count would start at TX, and time checks would have to be done with respect to TX
- */
-
 
 
 /**

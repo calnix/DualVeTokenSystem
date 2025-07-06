@@ -189,6 +189,10 @@ contract Voting is AccessControl {
          */
     }
 
+    function claimAndLock(uint256 amount, uint128 expiry, bool isMoca) external {
+        // need to call VotingEscrowMoca.increaseAmount()
+    }
+
 //-------------------------------verifier functions------------------------------------------
 
     function claimIncentives(uint256 epochNumber, bytes32 poolId) external {
@@ -311,3 +315,14 @@ contract Voting is AccessControl {
 
     //withdraw surplus incentives
 }
+
+
+/** NOTE:
+
+## auto-staking
+
+Users can opt for rewards to be auto-staked to the same lock
+
+1. claim on a per lock basis and autocompound
+2. claimAll()
+ */

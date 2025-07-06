@@ -10,7 +10,7 @@ library DataTypes {
         // locked principal
         uint128 moca;    
         uint128 esMoca;
-        
+            
         uint128 expiry;             // timestamp when lock ends
         bool isWithdrawn;           // flag to indicate if the lock has been withdrawn
     }
