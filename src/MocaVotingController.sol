@@ -137,6 +137,8 @@ contract MocaVotingController is AccessControl {
 
         // for seamless voting across epochs
         uint128 epoch = getCurrentEpoch(); // based on timestamp
+        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
+
         uint128 epochStart = getEpochStartTimestamp(epoch);
 
         // Get snapshot voting power
@@ -341,8 +343,6 @@ contract MocaVotingController is AccessControl {
 
 
 //-------------------------------admin functions-----------------------------------------
-
-
 
     function createPool(bytes32 poolId, bool isActive) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(poolId != bytes32(0), "Pool ID cannot be zero");
