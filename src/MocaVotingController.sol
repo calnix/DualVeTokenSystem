@@ -12,6 +12,7 @@ contract MocaVotingController is AccessControl {
 
     IERC20 public immutable esMOCA;
     IERC20 public immutable veMOCA;
+    IERC20 public immutable MOCA;       // MOCA token for registration fees
     IAirKit public immutable AIRKIT;    // airkit contract: books verification payments by verifiers
         
     // epoch anchor
@@ -25,6 +26,9 @@ contract MocaVotingController is AccessControl {
     uint256 public INCENTIVE_FACTOR;
     uint256 public TOTAL_INCENTIVES_DEPOSITED;
     uint256 public TOTAL_INCENTIVES_CLAIMED;
+
+    // registration fee
+    uint256 public REGISTRATION_FEES;
     
     // voting epoch data
     struct EpochData {
@@ -62,6 +66,18 @@ contract MocaVotingController is AccessControl {
         uint128 totalClaimed;
     }
 
+    struct DelegatorData {
+        address delegate;
+        uint128 totalDelegated;  // total voting power delegated 
+        bool active;             // used if you want to allow freezing/kicking a delegate
+        
+        //uint256 registrationFee; // amount of MOCA paid to register
+
+        uint128 currentFeePct;    // 100%: 100, 1%: 1 | no decimal places
+        uint128 nextFeePct;       // to be in effect for next epoch
+        uint128 nextFeePctEpoch;  // epoch of next fee change
+    }
+
 //-------------------------------mapping------------------------------------------
 
     // epoch data
@@ -75,18 +91,27 @@ contract MocaVotingController is AccessControl {
     mapping(uint256 epoch => mapping(address user => User userEpochData)) public userEpochData;
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => User userPoolData))) public userEpochPoolData;
     
+    // delegation
+    mapping(address delegator => DelegatorData delegatorData) public delegatorData;          
+    
+
     // verifier
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => uint256 claimed))) public verifierClaimedSubsidies;
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address veMoca_, address airKit, address owner) {
+    constructor(address veMoca_, address esMoca_, address airKit, address owner) {
         
         veMOCA = IERC20(veMoca_);
+        MOCA = IERC20(moca_);
+        esMOCA = IERC20(esMoca_);
         AIRKIT = IAirKit(airKit);
 
         // epoch: epoch 0 will start in the future | in-line with veMoca's 4 week bucket
         EPOCH_ZERO_TIMESTAMP = CURRENT_EPOCH_START_TIME = epochs[0].epochStart = WeekMath.getNextEpochStart(uint128(block.timestamp));
+        
+        //CURRENT_EPOCH = 0;
+        //CURRENT_EPOCH_END_TIME = EPOCH_ZERO_TIMESTAMP + Constants.EPOCH_DURATION;
         
         // roles
         _grantRole(DEFAULT_ADMIN_ROLE, owner);
@@ -94,42 +119,6 @@ contract MocaVotingController is AccessControl {
 
 
 //-------------------------------veHolder functions------------------------------------------
-
-/*
-    function vote(bytes32 poolId, uint128 weight) external {
-        // get pool
-        Pool memory pool = pools[poolId];
-
-        // check pool
-        require(pool.poolId != bytes32(0), "Pool does not exist");
-        require(pool.isActive, "Inactive pool");
-        require(pool.isWhitelisted, "Not whitelisted pool");
-
-        uint128 epoch = getCurrentEpoch();
-        uint128 epochStart = getEpochStartTimestamp(epoch);
-
-        // Get user's total veMOCA voting power at start of epoch
-        uint128 votingPower = veMOCA.balanceOfAt(msg.sender, epochStart);
-        require(votingPower > 0, "Zero veMoca");
-
-        // check user's total votes spent for this epoch
-        uint128 userTotalVotesSpent = userEpochData[epoch][msg.sender].totalVotesSpent;
-        require(userTotalVotesSpent + weight < votingPower, "No unused votes");
-
-        // Record the vote
-        userEpochData[epoch][msg.sender].totalVotesSpent += weight;
-        userEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent += weight;
-
-        // event
-
-        // Update pool and global aggregates
-        epochPools[epoch][poolId].totalVotes += weight;
-        pools[poolId].totalVotes += weight;
-        epochs[epoch].totalVotes += weight;
-
-        // event
-    }
-*/
 
     function vote(bytes32[] calldata poolIds, uint128[] calldata weights) external {
         require(poolIds.length > 0, "Invalid Array");
@@ -193,20 +182,94 @@ contract MocaVotingController is AccessControl {
         require(userFrom.totalVotesSpent >= amount, "Insufficient votes to migrate");
 
         // Deduct from old pool
-        userFrom.votes -= amount;
-        epochPools[epoch][fromPoolId].votes -= amount;
+        userFrom.totalVotesSpent -= amount;
+        epochPools[epoch][fromPoolId].totalVotes -= amount;
         pools[fromPoolId].totalVotes -= amount;
         epochData.totalVotes -= amount;
 
         // Add to new pool
         User storage userTo = userEpochPoolData[epoch][toPoolId][msg.sender];
-        userTo.votes += amount;
-        epochPools[epoch][toPoolId].votes += amount;
+        userTo.totalVotesSpent += amount;
+        epochPools[epoch][toPoolId].totalVotes += amount;
         pools[toPoolId].totalVotes += amount;
         epochData.totalVotes += amount;
 
         //     emit VotesMigrated(msg.sender, epoch, fromPoolId, toPoolId, amount);
     }
+
+//-------------------------------delegate functions------------------------------------------
+
+    // active on registration
+    function registerAsDelegator(uint128 commissionPct) external {
+        require(commissionPct > 0, "Invalid commission: zero");
+        require(commissionPct < Constants.PRECISION_BASE, "Commission must be less than 100%");
+
+        DelegatorData memory delegator = delegatorData[msg.sender];
+        require(delegator.delegate == address(0), "Already registered");
+
+        // get registration fee
+        uint256 registrationFee = 100 ether;
+        MOCA.safeTransferFrom(msg.sender, address(this), registrationFee);
+        REGISTRATION_FEES += registrationFee;
+
+        delegator.delegate = msg.sender;
+        delegator.commissionPct = commissionPct;
+        delegator.active = true;
+
+        delegatorData[msg.sender] = delegator;
+
+        // event
+    }
+
+    function updateDelegatorFee(uint128 feePct) external {
+        require(feePct > 0, "Invalid fee: zero");
+        require(feePct < Constants.PRECISION_BASE, "Fee must be less than 100%");
+
+        DelegatorData storage delegator = delegatorData[msg.sender];
+        require(delegator.delegate != address(0), "Not registered");
+        require(delegator.active, "Not active");
+
+        delegator.nextFeePct = feePct;
+        delegator.nextFeePctEpoch = getCurrentEpoch() + 2;  //note: plus 2 so cannot last minute change
+
+        // event
+    }
+
+    function resignAsDelegator() external {
+        DelegatorData storage delegator = delegatorData[msg.sender];
+        
+        require(delegator.delegate == msg.sender, "Not registered as delegator");
+        require(delegator.active, "Not active");
+
+        // remove delegation
+        delete delegator.active;
+        delete delegator.nextFeePct;
+        delete delegator.nextFeePctEpoch;
+        
+        //note: registration fee?
+
+        // event
+    }
+
+    function setDelegate(address delegate) external {
+        if (delegate == msg.sender) revert Errors.CannotDelegateToSelf();
+        if (delegate == address(0)) revert Errors.InvalidAddress();
+        if (!delegatorsOf[delegate].active) revert Errors.DelegateNotRegistered();
+
+        address current = delegateOf[msg.sender];
+
+        // remove old delegation
+        if (current != address(0)) {
+            _removeDelegator(current, msg.sender);
+        }
+
+        delegateOf[msg.sender] = delegate;
+        delegatorsOf[delegate].totalDelegated += 1;
+
+        //emit Delegated(msg.sender, delegate);
+    }
+
+
 
 /*
     // allows seamless booking of votes accurately across epochs, w/o manual epoch management
@@ -231,7 +294,7 @@ contract MocaVotingController is AccessControl {
         require(epochNumber < CURRENT_EPOCH, "Cannot claim rewards for current or future epochs");
 
         // get veHolder's total votes spent for the epoch
-        uint256 userTotalVotesSpent = userEpochData[epochNumber][msg.sender].votes;
+        uint256 userTotalVotesSpent = userEpochData[epochNumber][msg.sender].totalVotesSpent;
         require(userTotalVotesSpent > 0, "No votes spent in epoch");
 
         /**
@@ -305,12 +368,12 @@ contract MocaVotingController is AccessControl {
         PoolEpoch memory epochPool = epochPools[epochNumber][poolId];
 
         // epochPool: book incentives if not already done
-        if(epochPool.incentives == 0) {
+        if(epochPool.totalIncentives == 0) {
             // non-zero votes: else division by zero
-            require(epochPool.votes > 0, "No votes in pool");
+            require(epochPool.totalVotes > 0, "No votes in pool");
 
             // book pool incentives for the epoch
-            epochPool.incentives = epoch.incentivePerVote * epochPool.votes;
+            epochPool.totalIncentives = epoch.incentivePerVote * epochPool.totalVotes;
 
             // storage update
             epochPools[epochNumber][poolId] = epochPool;
@@ -330,7 +393,7 @@ contract MocaVotingController is AccessControl {
 
         // update epoch's total claimed
         epochs[epochNumber].totalClaimed += incentives;
-        epochPools[epochNumber][poolId].claimed += incentives;
+        epochPools[epochNumber][poolId].totalClaimed += incentives;
 
         TOTAL_INCENTIVES_CLAIMED += incentives;
         
@@ -405,7 +468,7 @@ contract MocaVotingController is AccessControl {
 
             for (uint256 i = 0; i < poolIds.length; ++i) {
                 bytes32 poolId = poolIds[i];
-                uint256 poolVotes = epochPools[epoch][poolId].votes;
+                uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
 
                 if (poolVotes > 0) {
                     uint256 poolIncentives = (poolVotes * totalIncentives) / totalVotes;
@@ -433,8 +496,6 @@ contract MocaVotingController is AccessControl {
 
     }
 
-
-
     //withdraw surplus incentives
 }
 
@@ -448,3 +509,41 @@ Users can opt for rewards to be auto-staked to the same lock
 1. claim on a per lock basis and autocompound
 2. claimAll()
  */
+
+
+
+ /*
+    function vote(bytes32 poolId, uint128 weight) external {
+        // get pool
+        Pool memory pool = pools[poolId];
+
+        // check pool
+        require(pool.poolId != bytes32(0), "Pool does not exist");
+        require(pool.isActive, "Inactive pool");
+        require(pool.isWhitelisted, "Not whitelisted pool");
+
+        uint128 epoch = getCurrentEpoch();
+        uint128 epochStart = getEpochStartTimestamp(epoch);
+
+        // Get user's total veMOCA voting power at start of epoch
+        uint128 votingPower = veMOCA.balanceOfAt(msg.sender, epochStart);
+        require(votingPower > 0, "Zero veMoca");
+
+        // check user's total votes spent for this epoch
+        uint128 userTotalVotesSpent = userEpochData[epoch][msg.sender].totalVotesSpent;
+        require(userTotalVotesSpent + weight < votingPower, "No unused votes");
+
+        // Record the vote
+        userEpochData[epoch][msg.sender].totalVotesSpent += weight;
+        userEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent += weight;
+
+        // event
+
+        // Update pool and global aggregates
+        epochPools[epoch][poolId].totalVotes += weight;
+        pools[poolId].totalVotes += weight;
+        epochs[epoch].totalVotes += weight;
+
+        // event
+    }
+*/

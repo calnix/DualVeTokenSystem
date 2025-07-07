@@ -63,3 +63,31 @@ This is forward decay based on current state.
 `lastUpdatedTimestamp` reflects when veGlobal was last updated.
 
 *note: what about forward decay and accounting for incoming slopeChanges?*
+
+## Penalty 
+
+```bash
+penaltyPct = (1 - currentVotingPower / initialVotingPower) * MAX_PENALTY_PCT
+```
+
+- Calculate penalty based on current veMoca value relative to original veMoca value
+- penalizes users based on the proportion of their lock's duration that has elapsed, without needing to store startTime or duration
+
+### Penalty application
+
+- User selects token type: MOCA or esMOCA
+- Penalty calculation is based on veMoca value loss, but applied only to the selected token amount
+- Token return: User receives the selected token type minus the penalty
+- could lead to situations where the selected redemption token is insufficient to bear the penalty
+
+i don't see how we would to partial unstaking for early redemption
+penaltyPct is calculated on timeLeft
+penaltyAmt = penaltyPct applied on totalPrincipalBase [esMoca + Moca]
+penaltyAmt is subtracted from the user's selected principal [either es or moca]
+if insufficient, reverts
+remaining principal assets returns
+how would is the partial unstake amount factored into this process?
+also, since there could be a situation where the selected principal token is insufficient to bear the penalty deduction ->  the only sensible way is to:
+apply the penalty to the user's choice first.
+then the remaining on the other.
+finally, return whats left

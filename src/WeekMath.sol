@@ -5,7 +5,6 @@ import {Constants} from "./Constants.sol";
 
 library WeekMath {
 
-/* note: these need to updated to 4 WEEKS
     function getCurrentWeekStart() internal view returns (uint128) {
         return getWeekStartTimestamp(uint128(block.timestamp));
     }
@@ -17,7 +16,4 @@ library WeekMath {
     function isValidWTime(uint128 time) internal pure returns (bool) {
         return time % Constants.WEEK == 0;
     }
-*/
-
-
 }
