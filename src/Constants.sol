@@ -20,6 +20,6 @@ library Constants {
     uint256 public constant PRECISION_BASE = 100; // 100%: 100, 1%: 1 | no decimal places
     
     // votingController
-    uint256 public constant MAX_COMMISSION_BPS = 5000; // 50% maximum commission in basis points
+    //uint256 public constant MAX_COMMISSION_BPS = 5000; // 50% maximum commission in basis points
 
 }

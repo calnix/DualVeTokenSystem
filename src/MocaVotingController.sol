@@ -64,9 +64,13 @@ contract MocaVotingController is AccessControl {
         uint128 totalVotesSpent;
         uint128 totalRewards;
         uint128 totalClaimed;
+        
+        // delegation
+        uint128 totalDelegated;
+        address delegate;
     }
 
-    struct DelegatorData {
+    struct DelegateData {
         address delegate;
         uint128 totalDelegated;  // total voting power delegated 
         bool active;             // used if you want to allow freezing/kicking a delegate
@@ -92,7 +96,7 @@ contract MocaVotingController is AccessControl {
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => User userPoolData))) public userEpochPoolData;
     
     // delegation
-    mapping(address delegator => DelegatorData delegatorData) public delegatorData;          
+    mapping(address delegateAgent => DelegateData delegateData) public delegateData;          
     
 
     // verifier
@@ -197,78 +201,93 @@ contract MocaVotingController is AccessControl {
         //     emit VotesMigrated(msg.sender, epoch, fromPoolId, toPoolId, amount);
     }
 
-//-------------------------------delegate functions------------------------------------------
+    //note: create internal function _vote to be used in both vote(), migrateVotes(), delegateVotes()
+    function delegateVotes(address delegate) external {
+        // delegator checks:
+        require(delegate != msg.sender, "Cannot delegate to self");
+        require(delegate != address(0), "Invalid address");
+
+        // delegate agent checks:
+        DelegateData storage delegateInfo = delegateData[delegate];
+        require(delegateInfo.delegate != address(0), "Not registered");
+        require(delegateInfo.active, "Not active");
+
+        // get current epoch and epoch start
+        uint128 epoch = getCurrentEpoch();
+        uint128 epochStart = getEpochStartTimestamp(epoch);
+        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
+
+        // get user's available voting power at the start of the current epoch
+        uint128 availableVotes = veMOCA.balanceOfAt(msg.sender, epochStart);
+        require(availableVotes > 0, "No voting power");
+
+        // check if user has already delegated in this epoch
+        require(userEpochData[epoch][msg.sender].totalDelegated == 0, "Already delegated");
+
+        // record delegation for the user
+        userEpochData[epoch][msg.sender].totalDelegated = availableVotes;
+        userEpochData[epoch][msg.sender].delegate = delegate;
+
+        // Update delegate's total delegated voting power
+        delegateInfo.totalDelegated += availableVotes;
+
+        // Emit event
+        //emit Delegated(msg.sender, delegate, epoch, availableVotes);
+    }
+
+//-------------------------------delegator functions------------------------------------------
 
     // active on registration
-    function registerAsDelegator(uint128 commissionPct) external {
+    function registerAsDelegate(uint128 commissionPct) external {
         require(commissionPct > 0, "Invalid commission: zero");
         require(commissionPct < Constants.PRECISION_BASE, "Commission must be less than 100%");
 
-        DelegatorData memory delegator = delegatorData[msg.sender];
-        require(delegator.delegate == address(0), "Already registered");
+        Delegate memory delegate = delegateData[msg.sender];
+        require(delegate.delegate == address(0), "Already registered");
 
         // get registration fee
         uint256 registrationFee = 100 ether;
         MOCA.safeTransferFrom(msg.sender, address(this), registrationFee);
         REGISTRATION_FEES += registrationFee;
 
-        delegator.delegate = msg.sender;
-        delegator.commissionPct = commissionPct;
-        delegator.active = true;
+        delegate.delegate = msg.sender;
+        delegate.commissionPct = commissionPct;
+        delegate.active = true;
 
-        delegatorData[msg.sender] = delegator;
+        delegateData[msg.sender] = delegate;
 
         // event
     }
 
-    function updateDelegatorFee(uint128 feePct) external {
+    function updateDelegateFee(uint128 feePct) external {
         require(feePct > 0, "Invalid fee: zero");
         require(feePct < Constants.PRECISION_BASE, "Fee must be less than 100%");
 
-        DelegatorData storage delegator = delegatorData[msg.sender];
-        require(delegator.delegate != address(0), "Not registered");
-        require(delegator.active, "Not active");
+        Delegate storage delegate = delegateData[msg.sender];
+        require(delegate.delegate != address(0), "Not registered");
+        require(delegate.active, "Not active");
 
-        delegator.nextFeePct = feePct;
-        delegator.nextFeePctEpoch = getCurrentEpoch() + 2;  //note: plus 2 so cannot last minute change
+        delegate.nextFeePct = feePct;
+        delegate.nextFeePctEpoch = getCurrentEpoch() + 2;  //note: plus 2 so cannot last minute change
 
         // event
     }
 
-    function resignAsDelegator() external {
-        DelegatorData storage delegator = delegatorData[msg.sender];
+    function resignAsDelegate() external {
+        Delegate storage delegate = delegateData[msg.sender];
         
-        require(delegator.delegate == msg.sender, "Not registered as delegator");
-        require(delegator.active, "Not active");
+        require(delegate.delegate == msg.sender, "Not registered as delegate");
+        require(delegate.active, "Not active");
 
         // remove delegation
-        delete delegator.active;
-        delete delegator.nextFeePct;
-        delete delegator.nextFeePctEpoch;
+        delete delegate.active;
+        delete delegate.nextFeePct;
+        delete delegate.nextFeePctEpoch;
         
         //note: registration fee?
 
         // event
     }
-
-    function setDelegate(address delegate) external {
-        if (delegate == msg.sender) revert Errors.CannotDelegateToSelf();
-        if (delegate == address(0)) revert Errors.InvalidAddress();
-        if (!delegatorsOf[delegate].active) revert Errors.DelegateNotRegistered();
-
-        address current = delegateOf[msg.sender];
-
-        // remove old delegation
-        if (current != address(0)) {
-            _removeDelegator(current, msg.sender);
-        }
-
-        delegateOf[msg.sender] = delegate;
-        delegatorsOf[delegate].totalDelegated += 1;
-
-        //emit Delegated(msg.sender, delegate);
-    }
-
 
 
 /*
@@ -314,24 +333,28 @@ contract MocaVotingController is AccessControl {
 
 //-------------------------------view functions------------------------------------------
 
+    // returns start time of specified epoch number
     function getEpochStartTimestamp(uint128 epoch) internal view returns (uint128) {
         return EPOCH_ZERO_TIMESTAMP + (epoch * Constants.EPOCH_DURATION);
     }
 
+    // returns end time of specified epoch number
     function getEpochEndTimestamp(uint128 epoch) internal view returns (uint128) {
         return EPOCH_ZERO_TIMESTAMP + ((epoch + 1) * Constants.EPOCH_DURATION);
     }
 
+    //returns current epoch number
     function getCurrentEpoch() internal view returns (uint128) {
         return getEpochNumber(uint128(block.timestamp));
     }
 
+    //returns epoch number for a given timestamp
     function getEpochNumber(uint128 timestamp) internal view returns (uint128) {
         require(timestamp >= EPOCH_ZERO_TIMESTAMP, "Before epoch 0");
         return (timestamp - EPOCH_ZERO_TIMESTAMP) / Constants.EPOCH_DURATION;
     }
 
-
+    //returns current epoch start timestamp
     function getCurrentEpochStart() internal view returns (uint128) {
         return getEpochStartTimestamp(getCurrentEpoch());
     }
