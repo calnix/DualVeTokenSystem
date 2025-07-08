@@ -27,8 +27,11 @@ contract MocaVotingController is AccessControl {
     uint256 public TOTAL_INCENTIVES_DEPOSITED;
     uint256 public TOTAL_INCENTIVES_CLAIMED;
 
-    // registration fee
-    uint256 public REGISTRATION_FEES;
+    // delegate
+    uint256 public REGISTRATION_FEE;
+    uint256 public MAX_DELEGATE_FEE_PCT; // 100%: 100, 1%: 1 | no decimal places
+    uint256 public TOTAL_REGISTRATION_FEES;
+    
     
     // voting epoch data
     struct EpochData {
@@ -71,13 +74,13 @@ contract MocaVotingController is AccessControl {
     }
 
     struct DelegateData {
+        bool isActive;             
         address delegate;
-        uint128 totalDelegated;  // total voting power delegated 
-        bool active;             // used if you want to allow freezing/kicking a delegate
-        
-        //uint256 registrationFee; // amount of MOCA paid to register
-
         uint128 currentFeePct;    // 100%: 100, 1%: 1 | no decimal places
+        
+        uint128 totalDelegated;   // total voting power delegated 
+        
+        // fee change
         uint128 nextFeePct;       // to be in effect for next epoch
         uint128 nextFeePctEpoch;  // epoch of next fee change
     }
@@ -238,39 +241,46 @@ contract MocaVotingController is AccessControl {
 //-------------------------------delegator functions------------------------------------------
 
     // active on registration
-    function registerAsDelegate(uint128 commissionPct) external {
-        require(commissionPct > 0, "Invalid commission: zero");
-        require(commissionPct < Constants.PRECISION_BASE, "Commission must be less than 100%");
+    function registerAsDelegate(uint128 feePct) external {
+        require(feePct > 0, "Invalid fee: zero");
+        require(feePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
 
-        Delegate memory delegate = delegateData[msg.sender];
+        DelegateData storage delegate = delegateData[msg.sender];
         require(delegate.delegate == address(0), "Already registered");
 
-        // get registration fee
-        uint256 registrationFee = 100 ether;
-        MOCA.safeTransferFrom(msg.sender, address(this), registrationFee);
-        REGISTRATION_FEES += registrationFee;
+        // collect registration fee | note: may want to transfer directly to treasury
+        MOCA.safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
+        TOTAL_REGISTRATION_FEES += REGISTRATION_FEE;
 
+        // storage: create delegate
+        delegate.isActive = true;
         delegate.delegate = msg.sender;
-        delegate.commissionPct = commissionPct;
-        delegate.active = true;
-
-        delegateData[msg.sender] = delegate;
-
+        delegate.currentFeePct = feePct;
+        
         // event
     }
 
+    // if increase, only applicable currentEpoch+2
+    // if decrease, applicable immediately        
     function updateDelegateFee(uint128 feePct) external {
         require(feePct > 0, "Invalid fee: zero");
-        require(feePct < Constants.PRECISION_BASE, "Fee must be less than 100%");
+        require(feePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
 
-        Delegate storage delegate = delegateData[msg.sender];
+        DelegateData storage delegate = delegateData[msg.sender];
+        require(delegate.isActive, "Not active");
         require(delegate.delegate != address(0), "Not registered");
-        require(delegate.active, "Not active");
-
-        delegate.nextFeePct = feePct;
-        delegate.nextFeePctEpoch = getCurrentEpoch() + 2;  //note: plus 2 so cannot last minute change
+        
+        // if increase, only applicable currentEpoch+2
+        if(feePct > delegate.currentFeePct) {
+            delegate.nextFeePct = feePct;
+            delegate.nextFeePctEpoch = getCurrentEpoch() + 2;  // buffer of 2 epochs to prevent last-minute fee increases
+        } else {
+            // if decrease, applicable immediately
+            delegate.currentFeePct = feePct;
+        }
 
         // event
+        //emit DelegateFeeUpdated(msg.sender, feePct, delegate.nextFeePctEpoch);
     }
 
     function resignAsDelegate() external {
@@ -520,6 +530,14 @@ contract MocaVotingController is AccessControl {
     }
 
     //withdraw surplus incentives
+
+
+    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(maxFeePct > 0, "Invalid fee: zero");
+        require(maxFeePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
+
+        MAX_DELEGATE_FEE_PCT = maxFeePct;
+    }
 }
 
 
