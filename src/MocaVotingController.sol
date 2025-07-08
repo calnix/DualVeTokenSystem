@@ -544,6 +544,7 @@ contract MocaVotingController is AccessControl {
         MAX_DELEGATE_FEE_PCT = maxFeePct;
 
         // event
+        //emit MaxDelegateFeePctUpdated(maxFeePct);
     }
 
 
