@@ -283,19 +283,24 @@ contract MocaVotingController is AccessControl {
         //emit DelegateFeeUpdated(msg.sender, feePct, delegate.nextFeePctEpoch);
     }
 
+    // TODO: handle rewards, delegated votes
+    // resign as delegate: registration fee is not refunded
     function resignAsDelegate() external {
-        Delegate storage delegate = delegateData[msg.sender];
+        DelegateData storage delegate = delegateData[msg.sender];
         
+        require(delegate.isActive, "Not active");
         require(delegate.delegate == msg.sender, "Not registered as delegate");
-        require(delegate.active, "Not active");
-
+        
         // remove delegation
-        delete delegate.active;
+        delete delegate.isActive;
+        delete delegate.delegate;
+        //delete delegate.currentFeePct; // note: may want to keep for calc. rewards
         delete delegate.nextFeePct;
         delete delegate.nextFeePctEpoch;
         
-        //note: registration fee?
-
+        // update delegate's total delegated voting power
+        //delegate.totalDelegated -= userEpochData[getCurrentEpoch()][msg.sender].totalDelegated;
+        
         // event
     }
 
@@ -314,6 +319,7 @@ contract MocaVotingController is AccessControl {
         // event
     }
 */
+    //TODO: handle rewards, delegated votes
     // for veHolders tt voted get esMoca -> from verification fee split
     function claimRewards(uint256 epochNumber, bytes32 poolId) external {
         // check epoch
@@ -337,6 +343,8 @@ contract MocaVotingController is AccessControl {
          */
     }
 
+
+    //TODO
     function claimAndLock(uint256 amount, uint128 expiry, bool isMoca) external {
         // need to call VotingEscrowMoca.increaseAmount()
     }
@@ -529,15 +537,18 @@ contract MocaVotingController is AccessControl {
 
     }
 
-    //withdraw surplus incentives
-
-
     function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(maxFeePct > 0, "Invalid fee: zero");
-        require(maxFeePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
+        require(maxFeePct < Constants.PRECISION_BASE, "MAX_DELEGATE_FEE_PCT must be < 100%");
 
         MAX_DELEGATE_FEE_PCT = maxFeePct;
+
+        // event
     }
+
+
+    //TODO: withdraw surplus incentives
+
 }
 
 
