@@ -4,16 +4,20 @@ pragma solidity 0.8.27;
 import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
+import {veMoca} from "./VotingEscrowMoca.sol";
 import {IAirKit} from "./interfaces/IAirKit.sol";
 import {Constants} from "./Constants.sol";
 
 contract MocaVotingController is AccessControl {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable esMOCA;
-    IERC20 public immutable veMOCA;
-    IERC20 public immutable MOCA;       // MOCA token for registration fees
+    VotingEscrowMoca public immutable veMoca;
     IAirKit public immutable AIRKIT;    // airkit contract: books verification payments by verifiers
+    address public immutable TREASURY;
+
+    //IERC20 public immutable veMOCA;
+    IERC20 public immutable esMOCA;
+    IERC20 public immutable MOCA;       // MOCA token for registration fees
         
     // epoch anchor
     uint128 public immutable EPOCH_ZERO_TIMESTAMP;
@@ -98,8 +102,9 @@ contract MocaVotingController is AccessControl {
     mapping(uint256 epoch => mapping(address user => User userEpochData)) public userEpochData;
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => User userPoolData))) public userEpochPoolData;
     
-    // delegation
+    // delegate data
     mapping(address delegateAgent => DelegateData delegateData) public delegateData;          
+    mapping()
     
 
     // verifier
@@ -131,7 +136,7 @@ contract MocaVotingController is AccessControl {
         require(poolIds.length > 0, "Invalid Array");
         require(poolIds.length == weights.length, "Mismatched input lengths");
 
-        // for seamless voting across epochs
+        // for seamless voting across epochs Note: re-check this
         uint128 epoch = getCurrentEpoch(); // based on timestamp
         require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
 
@@ -204,6 +209,25 @@ contract MocaVotingController is AccessControl {
         //     emit VotesMigrated(msg.sender, epoch, fromPoolId, toPoolId, amount);
     }
 
+    // for delegateAgents to vote on behalf of veHolders that delegated to them
+    function voteOnBehalf(bytes32[] calldata poolIds, uint128[] calldata weights) external {
+        require(poolIds.length > 0, "Invalid Array");
+        require(poolIds.length == weights.length, "Mismatched input lengths");
+
+        // for seamless voting across epochs. Note: re-check this
+        uint128 epoch = getCurrentEpoch(); // based on timestamp
+        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
+
+        uint128 epochStart = getEpochStartTimestamp(epoch);
+
+        // Get snapshot voting power
+        uint128 votingPower = veMOCA.balanceOfAt(msg.sender, epochStart); // based on epochStart
+        uint128 usedVotes = userEpochData[epoch][msg.sender].totalVotesSpent;
+        require(votingPower > usedVotes, "No unused votes");
+    }
+
+
+    // users call this to delegate their votes to a delegateAgent
     //note: create internal function _vote to be used in both vote(), migrateVotes(), delegateVotes()
     function delegateVotes(address delegate) external {
         // delegator checks:
@@ -237,6 +261,9 @@ contract MocaVotingController is AccessControl {
         // Emit event
         //emit Delegated(msg.sender, delegate, epoch, availableVotes);
     }
+    function undelegateVotes(address delegate) external {}
+
+
 
 //-------------------------------delegator functions------------------------------------------
 
@@ -258,6 +285,9 @@ contract MocaVotingController is AccessControl {
         delegate.currentFeePct = feePct;
         
         // event
+        
+        // note: to markt as active.
+        veMoca.registerAsDelegate(msg.sender);
     }
 
     // if increase, only applicable currentEpoch+2

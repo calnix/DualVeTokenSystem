@@ -6,6 +6,8 @@ import {WeekMath} from "./WeekMath.sol";
 import {Constants} from "./Constants.sol";
 import {DataTypes} from "./DataTypes.sol";
 
+import {MocaVotingController} from "./MocaVotingController.sol";
+
 import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
@@ -17,8 +19,10 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
     - Formula-based calculation determines veMOCA amount based on stake amount and duration
  */
 
-contract veMoca is ERC20, AccessControl {
+contract VotingEscrowMoca is ERC20, AccessControl {
     using SafeERC20 for IERC20;
+
+    MocaVotingController public votingController;
 
     IERC20 public immutable mocaToken;
     IERC20 public immutable esMocaToken;
@@ -32,6 +36,9 @@ contract veMoca is ERC20, AccessControl {
     DataTypes.VeBalance public veGlobal;
     uint128 public lastUpdatedTimestamp;  
     
+    // delegate fees
+    uint256 public DELEGATE_REGISTRATION_FEE;
+    uint256 public TOTAL_DELEGATE_REGISTRATION_FEES;
 
 //-------------------------------mapping------------------------------------------
 
@@ -50,6 +57,13 @@ contract veMoca is ERC20, AccessControl {
     mapping(address user => mapping(uint128 wTime => uint128 slopeChange)) public userSlopeChanges;
     mapping(address user => mapping(uint128 wTime => DataTypes.VeBalance veBalance)) public userHistory; // aggregated user veBalance
     mapping(address user => uint128 lastUpdatedTimestamp) public userLastUpdatedTimestamp;
+
+    // delegation data
+    mapping(address delegate => bool isRegistered) public isRegisteredDelegate;                             // note: payment to treasury
+    mapping(address delegate => mapping(uint128 wTime => uint128 slopeChange)) public delegateSlopeChanges;
+    mapping(address delegate => mapping(uint128 wTime => DataTypes.VeBalance veBalance)) public delegateHistory; // aggregated delegate veBalance
+    mapping(address delegate => uint128 lastUpdatedTimestamp) public delegateLastUpdatedTimestamp;
+
 
 
 //-------------------------------constructor------------------------------------------
@@ -237,6 +251,21 @@ contract veMoca is ERC20, AccessControl {
     }
 
 
+//-------------------------------delegate functions------------------------------------------
+   
+    //note: registration fees were collected by VotingController
+    function registerAsDelegate(address delegate) external {
+        require(msg.sender == address(votingController), "Only voting controller can register delegates");
+        //require(delegate != address(0), "Invalid address"); note: should not be needed since external contract call
+        require(!isRegisteredDelegate[delegate], "Already registered");
+
+        // storage: register delegate
+        isRegisteredDelegate[delegate] = true;
+
+        // event
+        //emit DelegateRegistered(delegate);
+    }
+
 //-------------------------------admin functions------------------------------------------
 
 
@@ -244,65 +273,107 @@ contract veMoca is ERC20, AccessControl {
         return _createLockFor(user, amount, expiry, isMoca);
     }
 
+
+
+
 //-------------------------------internal-----------------------------------------------------
 
-    function _createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca) internal returns (bytes32) {
+    // delegate can be address(0)
+    function _createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca, address delegate) internal returns (bytes32) {
         require(amount > 0, "Amount must be greater than zero");
         require(WeekMath.isValidWTime(expiry), "Expiry must be a valid week beginning");
 
         require(expiry >= block.timestamp + Constants.MIN_LOCK_DURATION, "Lock duration too short");
         require(expiry <= block.timestamp + Constants.MAX_LOCK_DURATION, "Lock duration too long");
-        
+
+        // Validate delegate if specified
+        if (delegate != address(0)) {
+            require(isRegisteredDelegate[delegate], "Delegate not registered");
+            require(delegate != user, "Cannot delegate to self");
+        }
+
         // update global and user veBalance
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
+        //(DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
 
         // --------- create lock ---------
 
-        // vaultId generation
-        bytes32 lockId;
-        {
-            uint256 salt = block.number;
-            lockId = _generateVaultId(salt, msg.sender);
-            while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, msg.sender);      // If lockId exists, generate new random Id
+            // vaultId generation
+            bytes32 lockId;
+            {
+                uint256 salt = block.number;
+                lockId = _generateVaultId(salt, msg.sender);
+                while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, msg.sender);      // If lockId exists, generate new random Id
+            }
+
+            DataTypes.Lock memory newLock;
+                newLock.lockId = lockId; 
+                newLock.creator = msg.sender;
+                newLock.delegate = delegate;        //note: we might be setting this to zero; but no point doing if(delegate != address(0))
+                if (isMoca) newLock.moca = uint128(amount);
+                else newLock.esMoca = uint128(amount);
+                newLock.expiry = expiry;
+            // storage: book lock
+            locks[lockId] = newLock;
+
+            // get lock's veBalance
+            DataTypes.VeBalance memory veIncoming = _convertToVeBalance(newLock);
+            // update lock history
+            _pushCheckpoint(lockHistory[lockId], veIncoming, currentWeekStart);
+
+            // EMIT LOCK CREATED
+
+        
+        // --------- conditional updates based on delegation ---------
+
+        if(delegate != address(0)) {
+        
+            // DELEGATED LOCK: update delegate and global
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint128 currentWeekStart) = _updateDelegateAndGlobal(delegate);
+        
+            // add new lock to global state
+            veGlobal_.bias += veIncoming.bias;
+            veGlobal_.slope += veIncoming.slope;
+
+            // STORAGE: book updated veGlobal & schedule slope change
+            veGlobal = veGlobal_;
+            slopeChanges[expiry] += veIncoming.slope;
+
+            // add new lock to delegate's aggregated veBalance
+            veDelegate.bias += veIncoming.bias;
+            veDelegate.slope += veIncoming.slope;
+            
+            // STORAGE: book updated veDelegate & schedule slope change
+            delegateHistory[delegate][currentWeekStart] = veDelegate;
+            delegateSlopeChanges[delegate][expiry] += veIncoming.slope;
+
+            // Mint to delegate
+            _mint(delegate, veIncoming.bias);
+
+        } else {
+            // PERSONAL LOCK: update user and global
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(user);
+            
+            // add new lock to global state
+            veGlobal_.bias += veIncoming.bias;
+            veGlobal_.slope += veIncoming.slope;
+            
+            // STORAGE: book updated veGlobal & schedule slope change
+            veGlobal = veGlobal_;
+            slopeChanges[expiry] += veIncoming.slope;
+
+            // add new lock to user's aggregated veBalance
+            veUser.bias += veIncoming.bias;
+            veUser.slope += veIncoming.slope;
+            
+            // STORAGE: book updated veUser & schedule slope change
+            userHistory[user][currentWeekStart] = veUser;
+            userSlopeChanges[user][expiry] += veIncoming.slope;
+
+            // MINT to user
+            _mint(user, veIncoming.bias);
         }
 
-        DataTypes.Lock memory newLock;
-            newLock.lockId = lockId;
-            newLock.creator = msg.sender;
-            if (isMoca) newLock.moca = uint128(amount);
-            else newLock.esMoca = uint128(amount);
-            newLock.expiry = expiry;
-        // storage: book lock
-        locks[lockId] = newLock;
-
-        // get lock's veBalance
-        DataTypes.VeBalance memory veIncoming = _convertToVeBalance(newLock);
-        // update lock history
-        _pushCheckpoint(lockHistory[lockId], veIncoming, currentWeekStart);
-
         // EMIT LOCK CREATED
-
-        // --------- newLock: increment global state ---------
-
-        // add new position to global state
-        veGlobal_.bias += veIncoming.bias;
-        veGlobal_.slope += veIncoming.slope;
-        
-        // storage: book updated veGlobal & schedule slope change
-        veGlobal = veGlobal_;
-        slopeChanges[expiry] += veIncoming.slope;
-
-        // --------- newLock: increment user state ---------
-        
-        // add new position to user's aggregated veBalance
-        veUser.bias += veIncoming.bias;
-        veUser.slope += veIncoming.slope;
-
-        // storage: book updated veUser & schedule slope change
-        userHistory[msg.sender][currentWeekStart] = veUser;
-        userSlopeChanges[msg.sender][expiry] += veIncoming.slope;
-
-        // EMIT USER UPDATED
 
         // transfer tokens to contract
         if (isMoca) {
@@ -312,9 +383,6 @@ contract veMoca is ERC20, AccessControl {
             totalLockedEsMoca += amount;
             esMocaToken.safeTransferFrom(msg.sender, address(this), amount);
         }
-
-        // mint veMoca
-        _mint(msg.sender, veIncoming.bias);
 
         return lockId;
     }
@@ -414,6 +482,18 @@ contract veMoca is ERC20, AccessControl {
         
         // return
         return (veGlobal_, veUser, currentWeekStart);
+    }
+
+    function _updateDelegateAndGlobal(address delegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
+        // Similar to _updateUserAndGlobal but for delegates
+        // Updates delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp
+        // Returns (veGlobal_, veDelegate, currentWeekStart)
+
+        // cache global veBalance
+        DataTypes.VeBalance memory veGlobal_ = veGlobal;
+        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
+
+        // init delegate veDelegate
     }
 
     // note: any possible rounding errors due to calc. of delta; instead of removed old then add new?
@@ -531,7 +611,60 @@ contract veMoca is ERC20, AccessControl {
         return (veGlobal_, veUser, currentWeekStart);
     }
 
+    function _viewAccount(address account, bool forDelegate) internal view returns (DataTypes.VeBalance memory) {
+        // init account veBalance
+        DataTypes.VeBalance memory veBalance;
+
+        // Get the appropriate last updated timestamp based on account type
+        uint128 lastUpdatedAt = forDelegate ? delegateLastUpdatedTimestamp[account] : userLastUpdatedTimestamp[account];
+        
+        // if account's first time: no prior updates to execute 
+        if(lastUpdatedAt == 0) return veBalance;
+
+        // load account's previous veBalance from appropriate history
+        veBalance = forDelegate ? delegateHistory[account][lastUpdatedAt] : userHistory[account][lastUpdatedAt];
+        
+        // get current week start
+        uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
+        
+        // already up to date: return
+        if(lastUpdatedAt >= currentWeekStart) return veBalance;
+
+        // update account veBalance to current week
+        while (lastUpdatedAt < currentWeekStart) {
+            lastUpdatedAt += Constants.WEEK;
+            // Use appropriate slope changes mapping based on account type
+            uint128 expiringSlope = forDelegate ? 
+                delegateSlopeChanges[account][lastUpdatedAt] : 
+                userSlopeChanges[account][lastUpdatedAt];
+            
+            veBalance = subtractExpired(veBalance, expiringSlope, lastUpdatedAt);
+        }
+
+        return veBalance;
+    }
+
     function _viewUser(address user) internal view returns (DataTypes.VeBalance memory) {
+        return _viewAccount(user, false);
+    }
+
+    function _viewDelegate(address delegate) internal view returns (DataTypes.VeBalance memory) {
+        return _viewAccount(delegate, true);
+    }
+    
+    /**
+     * @notice Generic function to view account balance (either user or delegate)
+     * @param account The address to view
+     * @param accountType The type of account (0 for user, 1 for delegate)
+     * @return veBalance The voting escrow balance
+     */
+    function _viewAccountByType(address account, uint8 accountType) internal view returns (DataTypes.VeBalance memory) {
+        return _viewAccount(account, accountType == 1);
+    }
+
+// ---- my original ref: before combining. -------
+
+    function _viewUserOld(address user) internal view returns (DataTypes.VeBalance memory) {
         // init user veUser
         DataTypes.VeBalance memory veUser;
 
@@ -554,6 +687,37 @@ contract veMoca is ERC20, AccessControl {
         }
 
         return veUser;
+    }
+
+    function _viewDelegateOld(address delegate) internal view returns (DataTypes.VeBalance memory) {
+        // init account veBalance
+        DataTypes.VeBalance memory veBalance;
+
+        // Get the appropriate last updated timestamp based on account type
+        uint128 lastUpdatedAt = delegateLastUpdatedTimestamp[delegate];
+        
+        // if account's first time: no prior updates to execute 
+        if(lastUpdatedAt == 0) return veBalance;
+
+        // load account's previous veBalance from appropriate history
+        veBalance = delegateHistory[delegate][lastUpdatedAt];
+        
+        // get current week start
+        uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
+        
+        // already up to date: return
+        if(lastUpdatedAt >= currentWeekStart) return veBalance;
+
+        // update account veBalance to current week
+        while (lastUpdatedAt < currentWeekStart) {
+            lastUpdatedAt += Constants.WEEK;
+            // Use appropriate slope changes mapping based on account type
+            uint128 expiringSlope = delegateSlopeChanges[delegate][lastUpdatedAt];
+            
+            veBalance = subtractExpired(veBalance, expiringSlope, lastUpdatedAt);
+        }
+
+        return veBalance;
     }
 
 //-------------------------------lib-----------------------------------------------------

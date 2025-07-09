@@ -6,6 +6,7 @@ library DataTypes {
     struct Lock {
         bytes32 lockId;
         address creator;
+        address delegate;           // flag: zero = not delegated, nonzero = delegated
 
         // locked principal
         uint128 moca;    
