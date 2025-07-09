@@ -292,9 +292,6 @@ contract VotingEscrowMoca is ERC20, AccessControl {
             require(delegate != user, "Cannot delegate to self");
         }
 
-        // update global and user veBalance
-        //(DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
-
         // --------- create lock ---------
 
             // vaultId generation
@@ -328,7 +325,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         if(delegate != address(0)) {
         
             // DELEGATED LOCK: update delegate and global
-            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint128 currentWeekStart) = _updateDelegateAndGlobal(delegate);
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint128 currentWeekStart) = _updateAccountAndGlobal(delegate, true);
         
             // add new lock to global state
             veGlobal_.bias += veIncoming.bias;
@@ -351,7 +348,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
 
         } else {
             // PERSONAL LOCK: update user and global
-            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(user);
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateAccountAndGlobal(msg.sender, false);
             
             // add new lock to global state
             veGlobal_.bias += veIncoming.bias;
