@@ -280,16 +280,16 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         delegateHistory[delegate][currentWeekStart] = veDelegate;
         delegateSlopeChanges[delegate][lock.expiry] += lockVeBalance.slope;
 
+        // transfer veMoca tokens from user to delegate
+        _burn(msg.sender, lockVeBalance.bias);
+        _mint(delegate, lockVeBalance.bias);
+
         // storage: update lock to mark it as delegated
         lock.delegate = delegate;
         locks[lockId] = lock;
 
         // storage: update global state
         veGlobal = veGlobal_;   
-
-        // transfer veMoca tokens from user to delegate
-        _burn(msg.sender, lockVeBalance.bias);
-        _mint(delegate, lockVeBalance.bias);
 
         // Emit event
         //emit LockDelegated(lockId, msg.sender, delegate);
@@ -305,7 +305,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         require(lock.delegate != address(0), "Lock is not delegated");
         
         // [_updateDelegateAndGlobal]: account for decay since lastUpdate and any scheduled slope changes 
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateAccountAndGlobal(lock.delegate, true);
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint128 currentWeekStart) = _updateAccountAndGlobal(lock.delegate, true);
         
         // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
         DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
@@ -323,6 +323,10 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         userHistory[msg.sender][currentWeekStart] = veUser;
         userSlopeChanges[msg.sender][lock.expiry] += lockVeBalance.slope;
 
+        // transfer veMoca tokens from delegate to user
+        _burn(lock.delegate, lockVeBalance.bias);
+        _mint(msg.sender, lockVeBalance.bias);
+
         // storage: update global state
         veGlobal = veGlobal_;
 
@@ -330,11 +334,54 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         delete lock.delegate;
         locks[lockId] = lock;
 
-        // transfer veMoca tokens from delegate to user
-        _burn(lock.delegate, lockVeBalance.bias);
-        _mint(msg.sender, lockVeBalance.bias);
-
         //emit LockUndelegated(lockId, msg.sender, lock.delegate);
+    }
+
+    function changeDelegate(bytes32 lockId, address newDelegate) external {
+        DataTypes.Lock memory lock = locks[lockId];
+
+        require(lock.lockId != bytes32(0), "NoLockFound");
+        require(lock.creator == msg.sender, "Only the creator can change delegate");
+        require(lock.expiry > block.timestamp, "Lock has expired");
+        require(lock.isWithdrawn == false, "Lock has already been withdrawn");
+        require(lock.delegate != address(0), "Lock is not delegated");
+        
+        // sanity: delegate
+        require(newDelegate != msg.sender, "Cannot delegate to self");
+        require(isRegisteredDelegate[newDelegate], "New delegate not registered");
+        require(newDelegate != lock.delegate, "New delegate same as current");
+
+        // [_updateDelegateAndGlobal]: account for decay since lastUpdate and any scheduled slope changes 
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veCurrentDelegate, uint128 currentWeekStart) = _updateAccountAndGlobal(lock.delegate, true);
+        
+        // get lock's current veBalance [no checkpoint required as lock attributes have not changed]
+        DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
+        
+        // remove lock from current delegate
+        veCurrentDelegate = _sub(veCurrentDelegate, lockVeBalance);
+        delegateHistory[lock.delegate][currentWeekStart] = veCurrentDelegate;
+        delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
+
+        // [_updateDelegateAndGlobal]: account for decay since lastUpdate and any scheduled slope changes 
+        (, DataTypes.VeBalance memory veNewDelegate, ) = _updateAccountAndGlobal(newDelegate, true);
+        
+        // add lock to new delegate
+        veNewDelegate = _add(veNewDelegate, lockVeBalance);
+        delegateHistory[newDelegate][currentWeekStart] = veNewDelegate;
+        delegateSlopeChanges[newDelegate][lock.expiry] += lockVeBalance.slope;
+
+        // transfer veMoca tokens from current delegate to new delegate
+        _burn(lock.delegate, lockVeBalance.bias);
+        _mint(newDelegate, lockVeBalance.bias);
+
+        // storage: update global state
+        veGlobal = veGlobal_;
+
+        // storage: update lock
+        lock.delegate = newDelegate;
+        locks[lockId] = lock;
+
+        //emit DelegateChanged(lockId, msg.sender, lock.delegate, newDelegate);
     }
 
 
