@@ -295,6 +295,49 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         //emit LockDelegated(lockId, msg.sender, delegate);
     }
 
+    function undelegateLock(bytes32 lockId) external {
+        DataTypes.Lock memory lock = locks[lockId];
+
+        require(lock.lockId != bytes32(0), "NoLockFound");
+        require(lock.creator == msg.sender, "Only the creator can undelegate");
+        require(lock.expiry > block.timestamp, "Lock has not expired");
+        require(lock.isWithdrawn == false, "Lock has already been withdrawn");
+        require(lock.delegate != address(0), "Lock is not delegated");
+        
+        // [_updateDelegateAndGlobal]: account for decay since lastUpdate and any scheduled slope changes 
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateAccountAndGlobal(lock.delegate, true);
+        
+        // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
+        DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
+
+        // remove the lock from delegate
+        veDelegate = _sub(veDelegate, lockVeBalance);
+        delegateHistory[lock.delegate][currentWeekStart] = veDelegate;
+        delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
+
+        // [_updateUserAndGlobal]: update user's personal voting power
+        (, DataTypes.VeBalance memory veUser, ) = _updateAccountAndGlobal(msg.sender, false);
+
+        // add the lock to user's personal voting power
+        veUser = _add(veUser, lockVeBalance);
+        userHistory[msg.sender][currentWeekStart] = veUser;
+        userSlopeChanges[msg.sender][lock.expiry] += lockVeBalance.slope;
+
+        // storage: update global state
+        veGlobal = veGlobal_;
+
+        // storage: update lock
+        delete lock.delegate;
+        locks[lockId] = lock;
+
+        // transfer veMoca tokens from delegate to user
+        _burn(lock.delegate, lockVeBalance.bias);
+        _mint(msg.sender, lockVeBalance.bias);
+
+        //emit LockUndelegated(lockId, msg.sender, lock.delegate);
+    }
+
+
 
 //-------------------------------delegate functions------------------------------------------
    
