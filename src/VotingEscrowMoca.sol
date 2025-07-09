@@ -425,75 +425,86 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         - user.lastUpdatedAt either matches the global.lastUpdatedAt OR is behind it
         - the global never lags behind the user
      */
-    function _updateUserAndGlobal(address user) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
+    function _updateAccountAndGlobal(address account, bool isDelegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
         // cache global veBalance
         DataTypes.VeBalance memory veGlobal_ = veGlobal;
         uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
 
-        // init user veUser
-        DataTypes.VeBalance memory veUser;
+        // init account veBalance
+        DataTypes.VeBalance memory veAccount;
 
-        // user's lastUpdatedTimestamp either matches global or lags behind it
-        uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
+        // Get the appropriate last updated timestamp based on account type
+        uint128 accountLastUpdatedAt = isDelegate ? 
+            delegateLastUpdatedTimestamp[account] : 
+            userLastUpdatedTimestamp[account];
         
         // get current week start
         uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
 
-        // user's first time: no prior updates to execute 
-        if (userLastUpdatedAt == 0) {
+        // account's first time: no prior updates to execute 
+        if (accountLastUpdatedAt == 0) {
             
-            // set user's lastUpdatedTimestamp and veBalance
-            userLastUpdatedTimestamp[user] = currentWeekStart;
-            veUser = DataTypes.VeBalance(0, 0);
+            // set account's lastUpdatedTimestamp and veBalance
+            if (isDelegate) {
+                delegateLastUpdatedTimestamp[account] = currentWeekStart;
+            } else {
+                userLastUpdatedTimestamp[account] = currentWeekStart;
+            }
+            veAccount = DataTypes.VeBalance(0, 0);
 
             // update global: updates lastUpdatedTimestamp | may or may not have updates
             veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentWeekStart);
 
-            return (veGlobal_, veUser, currentWeekStart);
+            return (veGlobal_, veAccount, currentWeekStart);
         }
                 
-        // load user's previous veBalance: if both global and user are up to date, return
-        veUser = userHistory[user][userLastUpdatedAt];
-        if(userLastUpdatedAt >= currentWeekStart) return (veGlobal_, veUser, currentWeekStart); 
+        // load account's previous veBalance: if both global and account are up to date, return
+        veAccount = isDelegate ? 
+            delegateHistory[account][accountLastUpdatedAt] : 
+            userHistory[account][accountLastUpdatedAt];
+        
+        if(accountLastUpdatedAt >= currentWeekStart) return (veGlobal_, veAccount, currentWeekStart); 
 
-        // update both global and user veBalance to current week
-        while (userLastUpdatedAt < currentWeekStart) {
+        // update both global and account veBalance to current week
+        while (accountLastUpdatedAt < currentWeekStart) {
 
             // advance 1 week
-            userLastUpdatedAt += Constants.WEEK;
+            accountLastUpdatedAt += Constants.WEEK;
 
             // update global: if needed 
-            if(lastUpdatedTimestamp_ < userLastUpdatedAt) {
+            if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
                 
                 // apply decay for this week && remove any scheduled slope changes from expiring locks
-                veGlobal_ = subtractExpired(veGlobal_, slopeChanges[userLastUpdatedAt], userLastUpdatedAt);
+                veGlobal_ = subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
                 // book ve state for the new week
-                totalSupplyAt[userLastUpdatedAt] = _getValueAt(veGlobal_, userLastUpdatedAt);
+                totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
             }
 
-            // update user: decrement decay for this week & remove any scheduled slope changes from expiring locks
-            veUser = subtractExpired(veUser, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
-            // book user checkpoint 
-            userHistory[user][userLastUpdatedAt] = veUser;
+            // update account: decrement decay for this week & remove any scheduled slope changes from expiring locks
+            uint128 expiringSlope = isDelegate ? 
+                delegateSlopeChanges[account][accountLastUpdatedAt] : 
+                userSlopeChanges[account][accountLastUpdatedAt];
+            
+            veAccount = subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
+            
+            // book account checkpoint 
+            if (isDelegate) {
+                delegateHistory[account][accountLastUpdatedAt] = veAccount;
+            } else {
+                userHistory[account][accountLastUpdatedAt] = veAccount;
+            }
         }
 
         // set final lastUpdatedTimestamp
-        lastUpdatedTimestamp = userLastUpdatedTimestamp[user] = userLastUpdatedAt;
+        lastUpdatedTimestamp = accountLastUpdatedAt;
+        if (isDelegate) {
+            delegateLastUpdatedTimestamp[account] = accountLastUpdatedAt;
+        } else {
+            userLastUpdatedTimestamp[account] = accountLastUpdatedAt;
+        }
         
         // return
-        return (veGlobal_, veUser, currentWeekStart);
-    }
-
-    function _updateDelegateAndGlobal(address delegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
-        // Similar to _updateUserAndGlobal but for delegates
-        // Updates delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp
-        // Returns (veGlobal_, veDelegate, currentWeekStart)
-
-        // cache global veBalance
-        DataTypes.VeBalance memory veGlobal_ = veGlobal;
-        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
-
-        // init delegate veDelegate
+        return (veGlobal_, veAccount, currentWeekStart);
     }
 
     // note: any possible rounding errors due to calc. of delta; instead of removed old then add new?
