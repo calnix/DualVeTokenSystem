@@ -575,45 +575,39 @@ contract MocaVotingController is AccessControl {
 
 //-------------------------------view functions-----------------------------------------
 
-    function getEligibleSubsidy(address verifier, uint128 epoch, bytes32 poolId) external view returns (uint128) {
-        require(epoch < getCurrentEpoch(), "Cannot query current or future epochs");
-        require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-        require(epochPools[epoch][poolId].totalIncentives > 0, "No emissions for pool");
+    function getEligibleSubsidy(address verifier, uint128 epoch, bytes32[] calldata poolIds) external view returns (uint128[] memory eligibleSubsidies) {
+        require(poolIds.length > 0, "No pools specified");
+        require(epoch < getCurrentEpoch(), "Cannot query for current or future epochs");
         
-        // Check if already claimed
-        if (verifierClaimedSubsidies[epoch][poolId][verifier] > 0) {
-            return 0; // Already claimed
-        }
+        require(epochs[epoch].isFullyFinalized, "Epoch not finalized");
+            
+        eligibleSubsidies = new uint128[](poolIds.length);
         
-        // Get verifier's verification fees
-        uint128 verifierSpend = AIRKIT.getTotalSpend(verifier, epoch, poolId);
-        if (verifierSpend == 0) {
-            return 0; // No verification fees
-        }
-        
-        // Calculate verifier's share
-        uint128 totalPoolSpend = AIRKIT.getTotalPoolSpend(epoch, poolId);
-        if (totalPoolSpend == 0) {
-            return 0;
-        }
-        
-        uint128 poolEmissions = epochPools[epoch][poolId].totalIncentives;
-        uint128 verifierShare = (verifierSpend * poolEmissions) / totalPoolSpend;
-        
-        // Check FCFS limit
-        uint128 poolClaimed = epochPools[epoch][poolId].totalClaimed;
-        if (poolClaimed >= poolEmissions) {
-            return 0; // Pool emissions depleted
-        }
-        
-        // Return actual claimable amount
-        if (poolClaimed + verifierShare > poolEmissions) {
-            return poolEmissions - poolClaimed;
-        }
-        
-        return verifierShare;
-    }
+        for (uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            
+            // check if pool exists and epoch is finalized
+            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
+            
+            // get verifier's total spend for {pool, epoch}
+            uint256 verifierTotalSpend = AIRKIT.getTotalSpend(verifier, epoch, poolId);
+            if(verifierTotalSpend == 0) {
+                //eligibleSubsidies[i] = 0;
+                continue;
+            }
 
+            // check if already claimed
+            if(verifierClaimedSubsidies[epoch][poolId][verifier] > 0) {
+                //eligibleSubsidies[i] = 0;
+                continue;
+            }
+
+            // calculate subsidies
+            eligibleSubsidies[i] = uint128(verifierTotalSpend * epoch.incentivePerVote * INCENTIVE_FACTOR / PRECISION_BASE);
+        }
+        
+        return eligibleSubsidies;
+    }
 }
 
 
