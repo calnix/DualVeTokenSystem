@@ -393,6 +393,59 @@ contract MocaVotingController is AccessControl {
 
 //-------------------------------admin functions-----------------------------------------
 
+
+    //REVIEW
+    function finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(poolIds.length > 0, "No pools to finalize");
+
+        EpochData storage epochData = epochs[epoch];
+        require(epochData.incentivePerVote == 0, "Epoch already finalized");
+
+        uint128 epochStart = _getEpochStartTimestamp(epoch);
+        require(block.timestamp >= epochStart + Constants.EPOCH_DURATION, "Epoch not ended");
+
+        uint256 totalVotes = epochData.totalVotes;
+        uint256 totalIncentives = epochData.totalIncentives;
+
+        uint256 incentivePerVote;
+        if (totalVotes > 0 && totalIncentives > 0) {
+            incentivePerVote = (totalIncentives * 1e18) / totalVotes;
+            // storage update
+            if(incentivePerVote > 0) epochData.incentivePerVote = incentivePerVote;
+        }
+
+        for (uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
+
+            if (poolVotes > 0) {
+                uint256 poolIncentives = (poolVotes * totalIncentives) / totalVotes;
+                // pool epoch
+                epochPools[epoch][poolId].totalIncentives = poolIncentives;
+                // pool global
+                pools[poolId].totalIncentives += poolIncentives;
+
+                // emit PoolEmissionsFinalized(epoch, poolId, poolIncentives);
+            } else {
+                // no votes in pool: no incentives
+                //epochPools[epoch][poolId].totalIncentives = 0;
+                //pools[poolId].totalIncentives = 0;
+            }
+        }
+        
+
+        // event
+        //emit EpochFinalizedPartially(epoch, poolIds, epochData.incentivePerVote);
+
+        // update epoch data
+        epochData.poolsFinalized += uint128(poolIds.length);
+        if(epochData.poolsFinalized == totalNumberOfPools) {
+            epochData.isFullyFinalized = true;
+
+            // emit EpochFinalized(epoch);
+        }
+    }
+
     function createPool(bytes32 poolId, bool isActive) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(poolId != bytes32(0), "Pool ID cannot be zero");
         require(pools[poolId].poolId == bytes32(0), "Pool already exists");
@@ -476,59 +529,6 @@ contract MocaVotingController is AccessControl {
         }
 
         // emit EpochEmissionsSet(epoch, amount);
-    }
-
-
-    //REVIEW
-    function finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(poolIds.length > 0, "No pools to finalize");
-
-        EpochData storage epochData = epochs[epoch];
-        require(epochData.incentivePerVote == 0, "Epoch already finalized");
-
-        uint128 epochStart = _getEpochStartTimestamp(epoch);
-        require(block.timestamp >= epochStart + Constants.EPOCH_DURATION, "Epoch not ended");
-
-        uint256 totalVotes = epochData.totalVotes;
-        uint256 totalIncentives = epochData.totalIncentives;
-
-        uint256 incentivePerVote;
-        if (totalVotes > 0 && totalIncentives > 0) {
-            incentivePerVote = (totalIncentives * 1e18) / totalVotes;
-            // storage update
-            if(incentivePerVote > 0) epochData.incentivePerVote = incentivePerVote;
-        }
-
-        for (uint256 i; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
-
-            if (poolVotes > 0) {
-                uint256 poolIncentives = (poolVotes * totalIncentives) / totalVotes;
-                // pool epoch
-                epochPools[epoch][poolId].totalIncentives = poolIncentives;
-                // pool global
-                pools[poolId].totalIncentives += poolIncentives;
-
-                // emit PoolEmissionsFinalized(epoch, poolId, poolIncentives);
-            } else {
-                // no votes in pool: no incentives
-                //epochPools[epoch][poolId].totalIncentives = 0;
-                //pools[poolId].totalIncentives = 0;
-            }
-        }
-        
-
-        // event
-        //emit EpochFinalizedPartially(epoch, poolIds, epochData.incentivePerVote);
-
-        // update epoch data
-        epochData.poolsFinalized += uint128(poolIds.length);
-        if(epochData.poolsFinalized == totalNumberOfPools) {
-            epochData.isFullyFinalized = true;
-
-            // emit EpochFinalized(epoch);
-        }
     }
 
 
