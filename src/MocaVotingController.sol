@@ -151,7 +151,7 @@ contract MocaVotingController is AccessControl {
         require(pools[toPoolId].isActive, "Destination pool is not active");
         require(pools[toPoolId].isWhitelisted, "Destination pool is not whitelisted");
 
-        uint128 epoch = getCurrentEpoch();
+        uint128 epoch = _getCurrentEpoch();
         EpochData storage epochData = epochs[epoch];
         require(!epochData.isFullyFinalized, "Epoch finalized");
 
@@ -182,7 +182,7 @@ contract MocaVotingController is AccessControl {
         uint128 epoch = _getCurrentEpoch(); // based on timestamp
         require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
 
-        uint128 epochStart = getEpochStartTimestamp(epoch);
+        uint128 epochStart = _getEpochStartTimestamp(epoch);
 
         // Get snapshot voting power
         uint128 votingPower = veMOCA.balanceOfAt(voter, epochStart, isDelegated);
@@ -303,7 +303,7 @@ contract MocaVotingController is AccessControl {
     }
 */
 
-//---------------------------claiming rewards------------------------------------------
+//---------------------------voters: claiming rewards------------------------------------------
 
     //TODO: handle rewards, delegated votes
     // for veHolders tt voted get esMoca -> from verification fee split
@@ -335,36 +335,10 @@ contract MocaVotingController is AccessControl {
         // need to call VotingEscrowMoca.increaseAmount()
     }
 
-//-------------------------------view functions------------------------------------------
-
-    // returns start time of specified epoch number
-    function getEpochStartTimestamp(uint128 epoch) internal view returns (uint128) {
-        return EPOCH_ZERO_TIMESTAMP + (epoch * Constants.EPOCH_DURATION);
-    }
-
-    // returns end time of specified epoch number
-    function getEpochEndTimestamp(uint128 epoch) internal view returns (uint128) {
-        return EPOCH_ZERO_TIMESTAMP + ((epoch + 1) * Constants.EPOCH_DURATION);
-    }
-
-    //returns current epoch number
-    function _getCurrentEpoch() internal view returns (uint128) {
-        return getEpochNumber(uint128(block.timestamp));
-    }
-
-    //returns epoch number for a given timestamp
-    function getEpochNumber(uint128 timestamp) internal view returns (uint128) {
-        require(timestamp >= EPOCH_ZERO_TIMESTAMP, "Before epoch 0");
-        return (timestamp - EPOCH_ZERO_TIMESTAMP) / Constants.EPOCH_DURATION;
-    }
-
-    //returns current epoch start timestamp
-    function getCurrentEpochStart() internal view returns (uint128) {
-        return getEpochStartTimestamp(getCurrentEpoch());
-    }
 
 
-//-------------------------------verifier functions------------------------------------------
+
+//-------------------------------verifiers: claiming subsidies------------------------------------------
 
     function claimSubsidies(uint256 epochNumber, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, "No pools specified");
@@ -512,7 +486,7 @@ contract MocaVotingController is AccessControl {
         EpochData storage epochData = epochs[epoch];
         require(epochData.incentivePerVote == 0, "Epoch already finalized");
 
-        uint128 epochStart = getEpochStartTimestamp(epoch);
+        uint128 epochStart = _getEpochStartTimestamp(epoch);
         require(block.timestamp >= epochStart + Constants.EPOCH_DURATION, "Epoch not ended");
 
         uint256 totalVotes = epochData.totalVotes;
@@ -573,7 +547,63 @@ contract MocaVotingController is AccessControl {
 
     //TODO: withdraw surplus incentives
 
+//-------------------------------internal functions-----------------------------------------
+
+    // returns start time of specified epoch number
+    function _getEpochStartTimestamp(uint128 epoch) internal view returns (uint128) {
+        return EPOCH_ZERO_TIMESTAMP + (epoch * Constants.EPOCH_DURATION);
+    }
+
+    // returns end time of specified epoch number
+    function _getEpochEndTimestamp(uint128 epoch) internal view returns (uint128) {
+        return EPOCH_ZERO_TIMESTAMP + ((epoch + 1) * Constants.EPOCH_DURATION);
+    }
+
+    //returns current epoch number
+    function _getCurrentEpoch() internal view returns (uint128) {
+        return _getEpochNumber(uint128(block.timestamp));
+    }
+
+    //returns epoch number for a given timestamp
+    function _getEpochNumber(uint128 timestamp) internal view returns (uint128) {
+        require(timestamp >= EPOCH_ZERO_TIMESTAMP, "Before epoch 0");
+        return (timestamp - EPOCH_ZERO_TIMESTAMP) / Constants.EPOCH_DURATION;
+    }
+
+    //returns current epoch start timestamp
+    function _getCurrentEpochStart() internal view returns (uint128) {
+        return _getEpochStartTimestamp(_getCurrentEpoch());
+    }
+
+
 //-------------------------------view functions-----------------------------------------
+    
+    // returns start time of specified epoch number
+    function getEpochStartTimestamp(uint128 epoch) external view returns (uint128) {
+        return _getEpochStartTimestamp(epoch);
+    }
+
+    // returns end time of specified epoch number
+    function getEpochEndTimestamp(uint128 epoch) external view returns (uint128) {
+        return _getEpochEndTimestamp(epoch);
+    }
+
+    //returns current epoch number
+    function getCurrentEpoch() external view returns (uint128) {
+        return _getCurrentEpoch();
+    }
+
+    //returns epoch number for a given timestamp
+    function getEpochNumber(uint128 timestamp) external view returns (uint128) {
+        return _getEpochNumber(timestamp);
+    }
+
+    // returns current epoch start timestamp
+    function getCurrentEpochStart() external view returns (uint128) {
+        return _getCurrentEpochStart();
+    }
+
+
 
     function getEligibleSubsidy(address verifier, uint128 epoch, bytes32[] calldata poolIds) external view returns (uint128[] memory eligibleSubsidies) {
         require(poolIds.length > 0, "No pools specified");
