@@ -980,6 +980,10 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         return _getValueAt(veBalance, time);
     }
 
+    //note: do we really need this? BE can handle it
+    function getTotalBalance(address user) external view returns (uint128) // personal + delegated
+
+
 
 // ------ lock: getLockHistoryLength, getLockCurrentVeBalance, getLockCurrentVotingPower, getLockVeBalanceAt ---------
 
