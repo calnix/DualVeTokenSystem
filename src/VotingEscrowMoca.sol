@@ -430,10 +430,13 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         // init account veBalance
         DataTypes.VeBalance memory veAccount;
 
-        // Get the appropriate last updated timestamp based on account type
-        uint128 accountLastUpdatedAt = isDelegate ? 
-            delegateLastUpdatedTimestamp[account] : 
-            userLastUpdatedTimestamp[account];
+        // mapping lookups to get the appropriate mappings based on account type
+        mapping(address => uint128) storage lastUpdatedMapping = isDelegate ? delegateLastUpdatedTimestamp : userLastUpdatedTimestamp;
+        mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage historyMapping = isDelegate ? delegateHistory : userHistory;
+        mapping(address => mapping(uint128 => uint128)) storage slopeChangesMapping = isDelegate ? delegateSlopeChanges : userSlopeChanges;
+
+        // Get the appropriate last updated timestamp
+        uint128 accountLastUpdatedAt = lastUpdatedMapping[account];
         
         // get current week start
         uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
@@ -442,11 +445,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         if (accountLastUpdatedAt == 0) {
             
             // set account's lastUpdatedTimestamp and veBalance
-            if (isDelegate) {
-                delegateLastUpdatedTimestamp[account] = currentWeekStart;
-            } else {
-                userLastUpdatedTimestamp[account] = currentWeekStart;
-            }
+            lastUpdatedMapping[account] = currentWeekStart;
             veAccount = DataTypes.VeBalance(0, 0);
 
             // update global: updates lastUpdatedTimestamp | may or may not have updates
@@ -456,10 +455,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         }
                 
         // load account's previous veBalance: if both global and account are up to date, return
-        veAccount = isDelegate ? 
-            delegateHistory[account][accountLastUpdatedAt] : 
-            userHistory[account][accountLastUpdatedAt];
-        
+        veAccount = historyMapping[account][accountLastUpdatedAt];
         if(accountLastUpdatedAt >= currentWeekStart) return (veGlobal_, veAccount, currentWeekStart); 
 
         // update both global and account veBalance to current week
@@ -477,28 +473,17 @@ contract VotingEscrowMoca is ERC20, AccessControl {
                 totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
             }
 
-            // update account: decrement decay for this week & remove any scheduled slope changes from expiring locks
-            uint128 expiringSlope = isDelegate ? 
-                delegateSlopeChanges[account][accountLastUpdatedAt] : 
-                userSlopeChanges[account][accountLastUpdatedAt];
-            
+            // update account: apply decay for this week & remove any scheduled slope changes from expiring locks
+            uint128 expiringSlope = slopeChangesMapping[account][accountLastUpdatedAt];    
             veAccount = subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
             
             // book account checkpoint 
-            if (isDelegate) {
-                delegateHistory[account][accountLastUpdatedAt] = veAccount;
-            } else {
-                userHistory[account][accountLastUpdatedAt] = veAccount;
-            }
+            historyMapping[account][accountLastUpdatedAt] = veAccount;
         }
 
-        // set final lastUpdatedTimestamp
+        // set final lastUpdatedTimestamp: for global and account
         lastUpdatedTimestamp = accountLastUpdatedAt;
-        if (isDelegate) {
-            delegateLastUpdatedTimestamp[account] = accountLastUpdatedAt;
-        } else {
-            userLastUpdatedTimestamp[account] = accountLastUpdatedAt;
-        }
+        lastUpdatedMapping[account] = accountLastUpdatedAt;        
         
         // return
         return (veGlobal_, veAccount, currentWeekStart);
@@ -536,6 +521,16 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         }
 
         return newVeBalance;
+    }
+
+    // NOTE: NOT NEEDED; CONFIRM AND REMOVE
+    function _updateUserAndGlobal(address user) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
+        return _updateAccountAndGlobal(user, false);
+    }
+
+    // NOTE: NOT NEEDED; CONFIRM AND REMOVE
+    function _updateDelegateAndGlobal(address delegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
+        return _updateAccountAndGlobal(delegate, true);
     }
 
 //-------------------------------internal: view-----------------------------------------------------
