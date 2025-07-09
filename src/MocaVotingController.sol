@@ -28,7 +28,7 @@ contract MocaVotingController is AccessControl {
 
     // incentives
     uint256 public INCENTIVE_FACTOR;
-    uint256 public TOTAL_INCENTIVES_DEPOSITED;
+    uint256 public TOTAL_SUBSIDIES_DEPOSITED;
     uint256 public TOTAL_SUBSIDIES_CLAIMED;
 
     // delegate
@@ -141,7 +141,7 @@ contract MocaVotingController is AccessControl {
         _vote(msg.sender, poolIds, weights, isDelegated);
     }
 
-    //note: refactor to use _vote() if possible
+    //TODO: refactor to use _vote() if possible
     function migrateVotes(bytes32 fromPoolId, bytes32 toPoolId, uint128 amount) external {
         require(fromPoolId != toPoolId, "Cannot migrate to same pool");
         require(amount > 0, "Zero amount");
@@ -174,45 +174,6 @@ contract MocaVotingController is AccessControl {
 
         //     emit VotesMigrated(msg.sender, epoch, fromPoolId, toPoolId, amount);
     }
-
-    // isDelegated = true: delegate's voting power, false: voter's personal voting power
-    function _vote(address voter, bytes32[] calldata poolIds, uint128[] calldata weights, bool isDelegated) internal {
-        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
-
-        uint128 epoch = _getCurrentEpoch(); // based on timestamp
-        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
-
-        uint128 epochStart = _getEpochStartTimestamp(epoch);
-
-        // Get snapshot voting power
-        uint128 votingPower = veMOCA.balanceOfAt(voter, epochStart, isDelegated);
-        uint128 usedVotes = userEpochData[epoch][voter].totalVotesSpent;
-        require(votingPower > usedVotes, "No unused votes");
-
-        uint128 totalNewVotes = 0;
-        for (uint256 i = 0; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint128 weight = weights[i];
-
-            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-            require(pools[poolId].isActive, "Pool inactive");
-            require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
-            require(weight > 0, "Zero weight");
-
-            userEpochPoolData[epoch][poolId][voter].totalVotesSpent += weight;
-            epochPools[epoch][poolId].totalVotes += weight;
-            pools[poolId].totalVotes += weight;
-            epochs[epoch].totalVotes += weight;
-
-            totalNewVotes += weight;
-        }
-
-        require(usedVotes + totalNewVotes <= votingPower, "Exceeds available voting power");
-        userEpochData[epoch][voter].totalVotesSpent += totalNewVotes;
-        
-        //emit Voted(msg.sender, epoch, poolIds, weights);
-    }
-
 
 //-------------------------------delegator functions------------------------------------------
 
@@ -288,7 +249,7 @@ contract MocaVotingController is AccessControl {
 
 
 
-/*
+/* TODO
     // allows seamless booking of votes accurately across epochs, w/o manual epoch management
     function _checkEpoch() internal {
         // note: >= or > ?
@@ -303,7 +264,20 @@ contract MocaVotingController is AccessControl {
     }
 */
 
-//---------------------------voters: claiming rewards------------------------------------------
+//-------------------------------voters: claiming rewards----------------------------------------------
+
+    /** NOTE:
+
+    ## auto-staking
+
+    Users can opt for rewards to be auto-staked to the same lock
+
+    1. claim on a per lock basis and auto-compound/stack
+    2. claimAll()
+    */
+
+
+
 
     //TODO: handle rewards, delegated votes
     // for veHolders tt voted get esMoca -> from verification fee split
@@ -338,7 +312,7 @@ contract MocaVotingController is AccessControl {
 
 
 
-//-------------------------------verifiers: claiming subsidies------------------------------------------
+//-------------------------------verifiers: claiming subsidies-----------------------------------------
 
     function claimSubsidies(uint256 epochNumber, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, "No pools specified");
@@ -393,15 +367,14 @@ contract MocaVotingController is AccessControl {
 
 //-------------------------------admin functions-----------------------------------------
 
-
-    //REVIEW
+    //note: REVIEW
     function finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(poolIds.length > 0, "No pools to finalize");
 
         EpochData storage epochData = epochs[epoch];
         require(epochData.incentivePerVote == 0, "Epoch already finalized");
 
-        uint128 epochStart = _getEpochStartTimestamp(epoch);
+        uint128 epochStart = getEpochStartTimestamp(epoch);
         require(block.timestamp >= epochStart + Constants.EPOCH_DURATION, "Epoch not ended");
 
         uint256 totalVotes = epochData.totalVotes;
@@ -433,7 +406,6 @@ contract MocaVotingController is AccessControl {
             }
         }
         
-
         // event
         //emit EpochFinalizedPartially(epoch, poolIds, epochData.incentivePerVote);
 
@@ -531,9 +503,6 @@ contract MocaVotingController is AccessControl {
         // emit EpochEmissionsSet(epoch, amount);
     }
 
-
-
-
     function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(maxFeePct > 0, "Invalid fee: zero");
         require(maxFeePct < Constants.PRECISION_BASE, "MAX_DELEGATE_FEE_PCT must be < 100%");
@@ -544,10 +513,48 @@ contract MocaVotingController is AccessControl {
         //emit MaxDelegateFeePctUpdated(maxFeePct);
     }
 
-
     //TODO: withdraw surplus incentives
-
+    function withdrawSurplusIncentives() external onlyRole(DEFAULT_ADMIN_ROLE) {}
+    
 //-------------------------------internal functions-----------------------------------------
+
+    // isDelegated = true: delegate's voting power, false: voter's personal voting power
+    function _vote(address voter, bytes32[] calldata poolIds, uint128[] calldata weights, bool isDelegated) internal {
+        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
+
+        uint128 epoch = _getCurrentEpoch(); // based on timestamp
+        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
+
+        uint128 epochStart = _getEpochStartTimestamp(epoch);
+
+        // Get snapshot voting power
+        uint128 votingPower = veMOCA.balanceOfAt(voter, epochStart, isDelegated);
+        uint128 usedVotes = userEpochData[epoch][voter].totalVotesSpent;
+        require(votingPower > usedVotes, "No unused votes");
+
+        uint128 totalNewVotes = 0;
+        for (uint256 i = 0; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            uint128 weight = weights[i];
+
+            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
+            require(pools[poolId].isActive, "Pool inactive");
+            require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
+            require(weight > 0, "Zero weight");
+
+            userEpochPoolData[epoch][poolId][voter].totalVotesSpent += weight;
+            epochPools[epoch][poolId].totalVotes += weight;
+            pools[poolId].totalVotes += weight;
+            epochs[epoch].totalVotes += weight;
+
+            totalNewVotes += weight;
+        }
+
+        require(usedVotes + totalNewVotes <= votingPower, "Exceeds available voting power");
+        userEpochData[epoch][voter].totalVotesSpent += totalNewVotes;
+        
+        //emit Voted(msg.sender, epoch, poolIds, weights);
+    }
 
     // returns start time of specified epoch number
     function _getEpochStartTimestamp(uint128 epoch) internal view returns (uint128) {
@@ -577,7 +584,7 @@ contract MocaVotingController is AccessControl {
 
 
 //-------------------------------view functions-----------------------------------------
-    
+
     // returns start time of specified epoch number
     function getEpochStartTimestamp(uint128 epoch) external view returns (uint128) {
         return _getEpochStartTimestamp(epoch);
@@ -639,15 +646,3 @@ contract MocaVotingController is AccessControl {
         return eligibleSubsidies;
     }
 }
-
-
-/** NOTE:
-
-## auto-staking
-
-Users can opt for rewards to be auto-staked to the same lock
-
-1. claim on a per lock basis and auto-compound/stack
-2. claimAll()
-*/
-
