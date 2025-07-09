@@ -948,54 +948,36 @@ contract VotingEscrowMoca is ERC20, AccessControl {
 
 // ------ user: balanceOf, balanceOfAt ---------
 
-    // overrides ERC20 balanceOf()
+    //note: overrides ERC20 balanceOf()
     function balanceOf(address user) public view override returns (uint128) {
         // Only personal voting power (non-delegated locks)
-        DataTypes.VeBalance memory veUser = _viewAccount(account: user, forDelegated: false);
-        if(veUser.bias == 0) return 0; 
+        return balanceOf(user, false);
+    }
 
-        // calculate current voting power based on bias and slope at current timestamp
-        return _getValueAt(veUser, uint128(block.timestamp));
+
+    /** note: we combine balanceOf and delegatedBalanceOf into a single function; similarly w/ balanceOfAt and delegatedBalanceOfAt
+        - but we need to override the ERC20 balanceOf() fn, so that wallets querying will readily display a user's personal voting power - decaying in real-time.
+        - this is a bit of a hack, but it's the only way to get the desired functionality without breaking the ERC20 interface.
+    */
+
+    function balanceOf(address user, bool isDelegated) external view returns (uint128) {
+        // Get the appropriate veBalance based on query type
+        DataTypes.VeBalance memory veBalance = _viewAccount(user, isDelegated);
+        return _getValueAt(veBalance, uint128(block.timestamp));
     }
 
     // historical search. since veBalances are stored weekly, find the closest week boundary to the timestamp and interpolate from there
-    function balanceOfAt(address user, uint128 time) external view returns (uint128) {
+    function balanceOfAt(address user, uint128 time, bool isDelegated) external view returns (uint128) {
         require(time <= block.timestamp, "Timestamp is in the future");
 
         // find the closest weekly boundary (wTime) that is not larger than the input time
         uint128 wTime = WeekMath.getWeekStartTimestamp(time);
         
-        // get the user's veBalance at that weekly boundary
-        DataTypes.VeBalance memory veUser = userHistory[user][wTime];
+        // get the appropriate veBalance at that weekly boundary
+        DataTypes.VeBalance memory veBalance = isDelegated ? delegateHistory[user][wTime] : userHistory[user][wTime];
         
         // calculate the voting power at the exact timestamp using the veBalance from the closest past weekly boundary
-        return _getValueAt(veUser, time);
-    }
-
-// ------ user: delegatedBalanceOf, delegatedBalanceOfAt ---------
-
-    // returns the delegated voting power that a user has received from other users' locks
-    function delegatedBalanceOf(address user) external view returns (uint128) {
-        // Only delegated voting power (from other users' locks)
-        DataTypes.VeBalance memory veDelegate = _viewAccount(account: user, forDelegated: true);
-        if(veDelegate.bias == 0) return 0; 
-
-        return _getValueAt(veDelegate, uint128(block.timestamp));
-    }
-
-
-    // historical search. since veBalances are stored weekly, find the closest week boundary to the timestamp and interpolate from there
-    function delegatedBalanceOfAt(address user, uint128 time) external view returns (uint128) {
-        require(time <= block.timestamp, "Timestamp is in the future");
-
-        // find the closest weekly boundary (wTime) that is not larger than the input time
-        uint128 wTime = WeekMath.getWeekStartTimestamp(time);
-        
-        // get the user's delegated veBalance at that weekly boundary
-        DataTypes.VeBalance memory veDelegated = delegateHistory[user][wTime];
-        
-        // calculate the voting power at the exact timestamp using the veBalance from the closest past weekly boundary
-        return _getValueAt(veDelegated, time);
+        return _getValueAt(veBalance, time);
     }
 
 

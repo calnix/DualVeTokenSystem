@@ -29,6 +29,12 @@ library DataTypes {
         // permanentLockBalance
     }
 
+    // note: for bool isDelegated, we could use enum BalanceType { Personal, Delegated }
+    // meh, feels like more overhead
+    enum BalanceType { 
+        Personal, 
+        Delegated
+    }
 
 
 
