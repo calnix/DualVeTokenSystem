@@ -438,6 +438,16 @@ contract MocaVotingController is AccessControl {
         }
     }
 
+    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(maxFeePct > 0, "Invalid fee: zero");
+        require(maxFeePct < Constants.PRECISION_BASE, "MAX_DELEGATE_FEE_PCT must be < 100%");
+
+        MAX_DELEGATE_FEE_PCT = maxFeePct;
+
+        // event
+        //emit MaxDelegateFeePctUpdated(maxFeePct);
+    }
+
     //-------------------------------pool functions----------------------------------------------
 
     function createPool(bytes32 poolId, bool isActive) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -578,20 +588,10 @@ contract MocaVotingController is AccessControl {
         //TODO: continue
     }
 
-
-    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(maxFeePct > 0, "Invalid fee: zero");
-        require(maxFeePct < Constants.PRECISION_BASE, "MAX_DELEGATE_FEE_PCT must be < 100%");
-
-        MAX_DELEGATE_FEE_PCT = maxFeePct;
-
-        // event
-        //emit MaxDelegateFeePctUpdated(maxFeePct);
-    }
-
     //TODO: withdraw unclaimed incentives
     function withdrawUnclaimedIncentives() external onlyRole(DEFAULT_ADMIN_ROLE) {}
     
+
 //-------------------------------internal functions-----------------------------------------
 
     // isDelegated = true: delegate's voting power, false: voter's personal voting power
