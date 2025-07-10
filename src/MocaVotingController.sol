@@ -528,17 +528,54 @@ contract MocaVotingController is AccessControl {
         // emit EpochEmissionsSet(epoch, amount);
     }
 
+    //note: we do not add bonus incentives at a global level - pointless. rather just increment the totalBonusIncentives
+    // hence, epoch.totalBonusIncentives is used to track the total bonus incentives for an epoch [sum of pool bonuses + verifier bonuses]
+    //function setBonusIncentivesGlobal(uint128 epoch, uint128 extraAmount) external onlyRole(ADMIN_ROLE) {}
 
-    //TODO: add bonus incentives
-    function setGlobalExtraSubsidies(uint128 epoch, uint128 extraAmount) external onlyRole(ADMIN_ROLE) {
-        require(epoch >= getCurrentEpoch(), "Cannot set for past epochs");
-        require(extraAmount > 0, "Extra amount must be positive");
+    function setPoolBonusIncentives(uint128 epoch, bytes32[] calldata poolIds, uint128[] calldata bonusAmounts) external onlyRole(ADMIN_ROLE) {
+        require(poolIds.length > 0, "No pools specified");
+        require(poolIds.length == bonusAmounts.length, "Array length mismatch");
+        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
+
+        uint128 totalBonusAmounts;
+        for(uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            uint128 bonusAmount = bonusAmounts[i];
+
+            // sanity checks
+            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
+            require(pools[poolId].isActive, "Pool inactive");
+            require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
+            require(bonusAmount > 0, "Bonus amount must be positive");
+
+            // update pool's bonus incentives
+            pools[poolId].totalBonusIncentives += bonusAmount;
+            epochPools[epoch][poolId].totalBonusIncentives += bonusAmount;
+
+            // increment counter 
+            totalBonusAmounts += bonusAmount;
+
+            // event
+            //emit PoolBonusIncentivesSet(epoch, poolId, bonusAmount);
+        }
         
-        epochExtraSubsidies[epoch].globalExtra = extraAmount;
-        epochExtraSubsidies[epoch].isActive = true;
-        epochExtraSubsidies[epoch].clawbackDeadline = epoch + 6; // 6 epochs later
+        // increment global tracker for epoch
+        epochs[epoch].totalBonusIncentives += totalBonusAmounts;
+    }
+
+    // TODO
+    function setVerifierBonusIncentives(uint128 epoch, address verifier, uint128 bonusAmount) external onlyRole(ADMIN_ROLE) {
+        require(bonusAmount > 0, "Bonus amount must be positive");
+        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
         
-        emit GlobalExtraSubsidiesSet(epoch, extraAmount);
+        // note: any other sanity checks for verifiers?
+        require(verifier != address(0), "Verifier cannot be zero address"); 
+        
+        
+        // update verifier's bonus incentives
+        verifierEpochData[epoch][verifier].bonusIncentivesClaimed += bonusAmount;
+
+        //TODO: continue
     }
 
 
