@@ -8,6 +8,8 @@ import {veMoca} from "./VotingEscrowMoca.sol";
 import {IAirKit} from "./interfaces/IAirKit.sol";
 import {Constants} from "./Constants.sol";
 
+//TODO: standardize naming conventions: {subsidy,incentive}
+
 contract MocaVotingController is AccessControl {
     using SafeERC20 for IERC20;
 
@@ -37,34 +39,50 @@ contract MocaVotingController is AccessControl {
     uint256 public TOTAL_REGISTRATION_FEES;
     
     
-    // voting epoch data
+    // epoch: overview
     struct EpochData {
         uint128 epochStart;
         uint128 totalVotes;
-        uint128 totalIncentives;    // Total esMOCA subsidies for the epoch
-        uint128 incentivePerVote;
-        uint128 totalClaimed;
+        
+        // incentives
+        uint128 totalBaseIncentives;    // Total esMOCA subsidies; disregards any special bonuses granted for this epoch
+        uint128 totalBonusIncentives;   // Aggregated bonus esMOCA subsidies; tracks summation of all special bonuses granted for this epoch
+        uint128 incentivePerVote;       // subsidiesPerVote: totalIncentives / totalVotes | note: bonuses are handled separately; dependent on their granularity
+        uint128 totalClaimed;           // Total esMOCA subsidies claimed; serves as indicator for surplus, accounting for base and bonus incentives
+
         // safety check
         uint128 poolsFinalized;
         bool isFullyFinalized;
     }
     
-    // Pool data - global
+    // pool data [global]
     struct Pool {
         bytes32 poolId;       // poolId = credentialId  
         bool isActive;        // active+inactive: pause pool
         bool isWhitelisted;   // whitelist+blacklist
-        uint256 totalVotes;
-        uint256 totalIncentives;    // Pool's allocated esMOCA subsidies
-        uint256 totalClaimed;
+
+        uint128 totalVotes;
+        uint128 totalBaseIncentives;    // allocated esMOCA subsidies: based on EpochData.incentivePerVote
+        uint128 totalBonusIncentives;   // optional: additional esMOCA subsidies tt have been granted to this pool, in totality
+        uint128 totalClaimed;           // total esMOCA subsidies claimed; for both base and bonus incentives
     }
 
-    // Pool data - epoch
+    // pool data [epoch]
     struct PoolEpoch {
-        uint256 totalVotes;
-        uint256 totalIncentives;
-        uint256 totalClaimed;
+        uint128 totalVotes;
+        uint128 totalBaseIncentives;    // allocated esMOCA subsidies: based on EpochData.incentivePerVote
+        uint128 totalBonusIncentives;   // optional: any additional esMOCA subsidies granted to this pool, for this epoch
+        uint128 totalClaimed;           // total esMOCA subsidies claimed; for both base and bonus incentives
     }
+
+
+    struct Verifier {
+        //uint256 totalSpend; -- logged on the other contract
+        uint128 baseIncentivesClaimed;
+        uint128 bonusIncentivesClaimed;
+    }
+
+
 
     // user data | perEpoch | perPoolPerEpoch
     struct User {
@@ -106,13 +124,15 @@ contract MocaVotingController is AccessControl {
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => User userPoolData))) public userEpochPoolData;
     
     // delegate data
-    mapping(address delegateAgent => DelegateData delegateData) public delegateData;          
+    mapping(address delegateAgent => DelegateData delegateData) public delegateData;           
 
     // pool emissions
 
 
-    // verifier
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => uint256 claimed))) public verifierClaimedSubsidies;
+    // verifier | note: optional: drop verifierData | verifierEpochData | if we want to streamline storage. only verifierEpochPoolData is mandatory
+    mapping(address verifier => Verifier verifierData) public verifierData;                  
+    mapping(uint256 epoch => mapping(address verifier => Verifier verifier)) public verifierEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => Verifier verifier))) public verifierEpochPoolData;
 
 //-------------------------------constructor------------------------------------------
 
@@ -418,6 +438,8 @@ contract MocaVotingController is AccessControl {
         }
     }
 
+    //-------------------------------pool functions----------------------------------------------
+
     function createPool(bytes32 poolId, bool isActive) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(poolId != bytes32(0), "Pool ID cannot be zero");
         require(pools[poolId].poolId == bytes32(0), "Pool already exists");
@@ -456,17 +478,20 @@ contract MocaVotingController is AccessControl {
         // event
     }
 
-
-    //subsidies for {epoch, pool}: for verifiers to claim
+//-------------------------------incentives functions----------------------------------------------
+   
+    // incentives for a specific epoch
     function setEpochIncentives(uint128 epoch, uint128 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(amount > 0, "Amount must be greater than zero");
-        require(epoch > _getCurrentEpoch(), "Cannot set incentives for current or past epochs");
+        require(amount > 0, "Amount must be non-zero");
+        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
 
-        uint128 currentTotalIncentives = epochs[epoch].totalIncentives;
+        // get current total base incentives
+        uint128 currentTotalIncentives = epochs[epoch].totalBaseIncentives;
+        if(currentTotalIncentives == amount) revert("Incentives already set");
 
-        // if no incentives set yet: set
+        // if no base incentives set yet: set
         if(currentTotalIncentives == 0) {
-            epochs[epoch].totalIncentives = amount;
+            epochs[epoch].totalBaseIncentives = amount;
             TOTAL_INCENTIVES_DEPOSITED += amount;
 
             // event
@@ -475,10 +500,10 @@ contract MocaVotingController is AccessControl {
             esMOCA.transfer(address(this), amount);
         } 
 
-        // we want to decrease incentives
+        // decrease base incentives | note: there will be surplus to be withdrawn
         if(currentTotalIncentives > amount) {
             // update incentives for the epoch
-            epochs[epoch].totalIncentives = amount;
+            epochs[epoch].totalBaseIncentives = amount;
             
             uint256 delta = currentTotalIncentives - amount;
             TOTAL_INCENTIVES_DEPOSITED -= delta;
@@ -486,7 +511,7 @@ contract MocaVotingController is AccessControl {
             // event
         }
 
-        // we want to increase incentives
+        // increase base incentives
         if(currentTotalIncentives < amount) {
             // update incentives for the epoch
             epochs[epoch].totalIncentives = amount;
@@ -503,6 +528,20 @@ contract MocaVotingController is AccessControl {
         // emit EpochEmissionsSet(epoch, amount);
     }
 
+
+    //TODO: add bonus incentives
+    function setGlobalExtraSubsidies(uint128 epoch, uint128 extraAmount) external onlyRole(ADMIN_ROLE) {
+        require(epoch >= getCurrentEpoch(), "Cannot set for past epochs");
+        require(extraAmount > 0, "Extra amount must be positive");
+        
+        epochExtraSubsidies[epoch].globalExtra = extraAmount;
+        epochExtraSubsidies[epoch].isActive = true;
+        epochExtraSubsidies[epoch].clawbackDeadline = epoch + 6; // 6 epochs later
+        
+        emit GlobalExtraSubsidiesSet(epoch, extraAmount);
+    }
+
+
     function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(maxFeePct > 0, "Invalid fee: zero");
         require(maxFeePct < Constants.PRECISION_BASE, "MAX_DELEGATE_FEE_PCT must be < 100%");
@@ -513,8 +552,8 @@ contract MocaVotingController is AccessControl {
         //emit MaxDelegateFeePctUpdated(maxFeePct);
     }
 
-    //TODO: withdraw surplus incentives
-    function withdrawSurplusIncentives() external onlyRole(DEFAULT_ADMIN_ROLE) {}
+    //TODO: withdraw unclaimed incentives
+    function withdrawUnclaimedIncentives() external onlyRole(DEFAULT_ADMIN_ROLE) {}
     
 //-------------------------------internal functions-----------------------------------------
 
