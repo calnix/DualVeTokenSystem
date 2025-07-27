@@ -339,7 +339,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         epochs[currentEpoch].feesAccruedToVoters += voterFee;  
 
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
-        // do we need more events for the other accounting actions
+        // do we need more events for the other accounting actions?
     }
 
 
