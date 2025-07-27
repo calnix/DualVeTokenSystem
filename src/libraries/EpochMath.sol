@@ -11,9 +11,9 @@ import {Constants} from "./Constants.sol";
 library EpochMath {
 
     // PERIODICITY:  does not account for leap year or leap seconds
-    uint128 public constant EPOCH_DURATION = 28 days;                    // ~ 1 month            
-    uint256 public constant MIN_LOCK_DURATION = 28 days;
-    uint256 public constant MAX_LOCK_DURATION = 672 days;                // ~2 years= 28 days * 24 months
+    uint128 internal constant EPOCH_DURATION = 28 days;                    // ~ 1 month            
+    uint256 internal constant MIN_LOCK_DURATION = 28 days;
+    uint256 internal constant MAX_LOCK_DURATION = 672 days;                // ~2 years= 28 days * 24 months
 
 
     // returns epoch number for a given timestamp

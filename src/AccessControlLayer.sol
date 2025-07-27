@@ -13,6 +13,8 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
 
 contract AccessControlLayer is AccessControl {
 
+    IAddressBook internal _addressBook;
+
     /**
         for privileged calls, other contract would refer to this to check permissioning. 
         
@@ -33,7 +35,6 @@ contract AccessControlLayer is AccessControl {
     bytes32 public constant override EMERGENCY_ADMIN_ROLE = keccak256('EMERGENCY_ADMIN');
 
 
-    IPoolAddressesProvider public immutable ADDRESSES_PROVIDER;
 
     /**
     * @dev Constructor

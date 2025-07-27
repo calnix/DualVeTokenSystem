@@ -25,13 +25,13 @@ import "./libraries/EpochMath.sol";
 contract EpochController {
     
     // epoch anchor
-    uint128 public immutable EPOCH_ZERO_TIMESTAMP;
+    uint128 internal immutable EPOCH_ZERO_TIMESTAMP;
     
-    uint256 public CURRENT_EPOCH_START_TIME;
-    uint256 public CURRENT_EPOCH;       // epoch number
+    uint256 internal CURRENT_EPOCH_START_TIME;
+    uint256 internal CURRENT_EPOCH;       // epoch number
 
-    uint256 public NEXT_EPOCH_START_TIME;
-    uint256 public NEXT_EPOCH;
+    uint256 internal NEXT_EPOCH_START_TIME;
+    uint256 internal NEXT_EPOCH;
 
 
     constructor(uint256 epochZeroTimestamp) {
@@ -42,11 +42,37 @@ contract EpochController {
         NEXT_EPOCH = 1;
     }
 
+// ------------------------------ Getters: external --------------------------------
 
     function getCurrentEpoch() external returns (uint256) {
         _updateEpoch();
         return CURRENT_EPOCH;
     }
+
+    function getNextEpoch() external returns (uint256) {
+        _updateEpoch();
+        return NEXT_EPOCH;
+    }
+
+// ------------------------------ Getters: external view --------------------------------
+
+    function getCurrentEpochStartTimestamp() external view returns (uint256) {
+        return CURRENT_EPOCH_START_TIME;
+    }
+
+    function getNextEpochStartTimestamp() external view returns (uint256) {
+        return NEXT_EPOCH_START_TIME;
+    }
+
+    function getEpochZeroTimestamp() external view returns (uint256) {
+        return EPOCH_ZERO_TIMESTAMP;
+    }
+
+    function getEpochDuration() external view returns (uint256) {
+        return EpochMath.EPOCH_DURATION;
+    }
+
+// ------------------------------ Internal --------------------------------
 
     function _updateEpoch() internal {
         if(block.timestamp >= NEXT_EPOCH_START_TIME) {

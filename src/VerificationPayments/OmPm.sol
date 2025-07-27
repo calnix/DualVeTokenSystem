@@ -7,15 +7,19 @@ import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/Safe
 import "openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker, ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/SignatureChecker.sol";
 
+// risk management
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
+// libraries
 import {Constants} from "../Constants.sol";
 import {EpochController} from "../EpochController.sol";
 
+// interfaces
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
 import {IEscrowedMoca} from "../interfaces/IEscrowedMoca.sol";
 
-contract OweMoneyPayMoney is EIP712, AccessControl {
+contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     using SafeERC20 for IERC20;
     using SignatureChecker for address;
 
