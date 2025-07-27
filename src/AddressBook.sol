@@ -20,6 +20,10 @@ contract AddressBook is Ownable {
     
     bytes32 private constant TREASURY = 'TREASURY';
 
+    // admin roles
+    bytes32 private constant ACL_ADMIN = 'ACL_ADMIN';   // DEFAULT_ADMIN_ROLE
+    //bytes32 private constant ACL_MANAGER = 'ACL_MANAGER';
+
     // Map of registered addresses
     mapping(bytes32 identifier => address registeredAddress) private _addresses;
 
@@ -28,6 +32,7 @@ contract AddressBook is Ownable {
 
 
 // ------------------------------ Getters --------------------------------
+
     function getAddress(bytes32 identifier) external view returns (address) {
         return _addresses[identifier];
     }
@@ -58,6 +63,10 @@ contract AddressBook is Ownable {
 
     function getTreasury() external view returns (address) {
         return _addresses[TREASURY];
+    }
+
+    function getACLAdmin() external view returns (address) {
+        return _addresses[ACL_ADMIN];
     }
 
 // ------------------------------ Setters --------------------------------

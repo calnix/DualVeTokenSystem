@@ -3,7 +3,8 @@ pragma solidity 0.8.27;
 
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
-
+// interfaces
+import {IAddressBook} from "./interfaces/IAddressBook.sol";
 
 /**
  * @title AccessControlLayer
@@ -11,9 +12,10 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
  * @notice Centralized access control layer managing all system roles and permissions.
  */
 
+//note: get addresses from address book
 contract AccessControlLayer is AccessControl {
 
-    IAddressBook internal _addressBook;
+    IAddressBook internal immutable _addressBook;
 
     /**
         for privileged calls, other contract would refer to this to check permissioning. 
@@ -35,37 +37,62 @@ contract AccessControlLayer is AccessControl {
     bytes32 public constant override EMERGENCY_ADMIN_ROLE = keccak256('EMERGENCY_ADMIN');
 
 
-
     /**
     * @dev Constructor
-    * @dev The ACL admin should be initialized at the addressesProvider beforehand
-    * @param provider The address of the PoolAddressesProvider
+    * @dev Admin addresses should be initialized at the AddressBook beforehand
+    * @param _addressBook The address of the AddressBook
     */
-    constructor(IPoolAddressesProvider provider) {
-        ADDRESSES_PROVIDER = provider;
-        address aclAdmin = provider.getACLAdmin();
+    constructor(address addressBook_) {
+        // address book
+        _addressBook = IAddressBook(addressBook_);
+
+        // acl admin
+        address aclAdmin = _addressBook.getACLAdmin();
         require(aclAdmin != address(0), Errors.AclAdminCannotBeZero());
         _setupRole(DEFAULT_ADMIN_ROLE, aclAdmin);
     }
 
+    /**
+     * @notice Set the role as admin of a specific role.
+     * @dev By default the admin role for all roles is `DEFAULT_ADMIN_ROLE`.
+     * @param role The role to be managed by the admin role
+     * @param adminRole The admin role
+    */
     function setRoleAdmin(bytes32 role, bytes32 adminRole) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRoleAdmin(role, adminRole);
     }
 
-    /// @inheritdoc IACLManager
-    function addPoolAdmin(address admin) external override {
-        grantRole(POOL_ADMIN_ROLE, admin);
+// ----- MONITOR ROLE -----
+    function addMonitorAdmin(address admin) external {
+        grantRole(MONITOR_ROLE, admin);
     }
 
-    /// @inheritdoc IACLManager
-    function removePoolAdmin(address admin) external override {
-        revokeRole(POOL_ADMIN_ROLE, admin);
+    function removeMonitorAdmin(address admin) external {
+        revokeRole(MONITOR_ROLE, admin);
     }
 
-    /// @inheritdoc IACLManager
-    function isPoolAdmin(address admin) external view override returns (bool) {
-        return hasRole(POOL_ADMIN_ROLE, admin);
+    function isMonitorAdmin(address admin) external view returns (bool) {
+        return hasRole(MONITOR_ROLE, admin);
     }
+
+// ----- OPERATOR ROLE -----
+
+    function addOperatorAdmin(address admin) external {
+        grantRole(OPERATOR_ROLE, admin);
+    }
+
+    function removeOperatorAdmin(address admin) external {
+        revokeRole(OPERATOR_ROLE, admin);
+    }
+
+    function isOperatorAdmin(address admin) external view returns (bool) {
+        return hasRole(OPERATOR_ROLE, admin);
+    }
+
+// ----- CRON JOB ROLE -----
+
+
+
 
 }
 

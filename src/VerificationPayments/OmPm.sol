@@ -13,19 +13,19 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
 
 // libraries
 import {Constants} from "../Constants.sol";
-import {EpochController} from "../EpochController.sol";
 
 // interfaces
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
 import {IEscrowedMoca} from "../interfaces/IEscrowedMoca.sol";
+import {IEpochController} from "../interfaces/IEpochController.sol";
 
 contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     using SafeERC20 for IERC20;
     using SignatureChecker for address;
 
-    // addresses
-    IAddressBook internal _addressBook;
-    EpochController public epochController;
+    // immutable
+    IAddressBook internal immutable _addressBook;
+    IEpochController internal immutable _epochController;
 
     // fees
     uint256 private PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
@@ -113,7 +113,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         require(delayPeriod_ > 0, "Invalid delay period");
         DELAY_PERIOD = delayPeriod_;
         
-        epochController = EpochController(epochController_);
+        _epochController = IEpochController(epochController_);
     }
 
 
@@ -343,7 +343,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         ++credentials[credentialId].totalIssued;
         
         // treasury + voters accounting
-        uint256 currentEpoch = epochController.getCurrentEpoch();
+        uint256 currentEpoch = _epochController.getCurrentEpoch();
         epochs[currentEpoch].feesAccruedToTreasury += treasuryFee;
         epochs[currentEpoch].feesAccruedToVoters += voterFee;  
 
