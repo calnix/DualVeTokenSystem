@@ -19,4 +19,5 @@ library Constants {
     uint256 public constant MAX_PENALTY_PCT = 50; // Default 50% maximum penalty
     uint256 public constant PRECISION_BASE = 100; // 100%: 100, 1%: 1 | no decimal places
     
+    //note precisionbase to 2 dp universal?
 }

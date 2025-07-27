@@ -118,7 +118,7 @@ Early redemption is blockable by admin. enable/disable.
 
 Users can opt for rewards to be auto-staked to the same lock
 
-1. claim on a per lock basis and autocompound
+1. claim on a per lock basis and auto-compound
 2. claimAll()
 
 ## 7-Day Unbonding Delay (Archived)

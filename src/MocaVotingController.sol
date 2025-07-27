@@ -334,18 +334,14 @@ contract MocaVotingController is AccessControl {
 
 //-------------------------------verifiers: claiming subsidies-----------------------------------------
 
-    function claimSubsidies(uint256 epochNumber, bytes32[] calldata poolIds) external {
+    // called by verifiers
+    function claimIncentives(uint128 epoch, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, "No pools specified");
 
-        uint128 currentEpoch = _getCurrentEpoch();
-        // can only claim incentives for epoch that has ended
-        require(epochNumber < currentEpoch, "Can only claim incentives for past epochs");
+        require(epoch < getCurrentEpoch(), "Cannot claim for current or future epochs");
+        require(epochs[epoch].isFullyFinalized, "Epoch not finalized");
 
-        // get epoch DATA 
-        EpochData storage epoch = epochs[epochNumber];
-        require(epoch.isFullyFinalized, "Epoch not finalized");
-
-        //TODO? epoch: calculate incentives if not already done: so can front-run finalizeEpoch()
+        //TODO[maybe]: epoch: calculate incentives if not already done; so can front-run finalizeEpoch()
 
         uint128 totalClaimableSubsidies;    
         for (uint256 i; i < poolIds.length; ++i) {
