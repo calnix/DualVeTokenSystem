@@ -13,6 +13,7 @@ import {Constants} from "../Constants.sol";
 
 contract OweMoneyPayMoney is EIP712, AccessControl {
     using SafeERC20 for IERC20;
+    using SignatureChecker for address;
 
     // tokens
     IERC20 public immutable USD8;   // note: 6 dp like M?
@@ -303,13 +304,16 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         verifiers[verifierId].totalExpenditure += amount;
 
         // issuer accounting
-        issuers[issuerId].totalEarned += amount;
-        ++issuer[issuerId].totalIssuances;
+        issuers[issuerId].totalEarned += (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
+        ++issuers[issuerId].totalIssuances;
 
         // credential accounting
         credentials[credentialId].totalFeesAccrued += amount;
         ++credentials[credentialId].totalIssued;
         
+        //treasury accounting
+        //TODO
+
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
     }
 
