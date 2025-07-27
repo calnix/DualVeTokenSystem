@@ -353,6 +353,16 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         2. When to swap USD8 for MOCA?
             - end of Epoch,
             - OR, per txn, in deductBalance()
+
+        If swapping end of Epoch, we need to:
+         1. swap USD8 to MOCA, for that epoch
+         2. convert Moca to esMoca
+         3. set esMoca::approve for VotingController to do transferFrom() to pay Voters
+
+        If swapping per txn, we need to:
+         1. swap USD8 to MOCA, for that txn
+         2. convert Moca to esMoca, at end of Epoch
+         3. set esMoca::approve for VotingController to do transferFrom() to pay Voters
     */
 
     // set approval for VotingController
