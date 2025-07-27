@@ -20,18 +20,52 @@ contract AddressBook is Ownable {
     bytes32 private constant TREASURY = 'TREASURY';
 
     // Map of registered addresses
-    mapping(bytes32 identifier => address registeredAddress) public addresses;
+    mapping(bytes32 identifier => address registeredAddress) private _addresses;
 
 
     constructor() Ownable(msg.sender) {
     }
 
 
-    // Setters
-    function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner {
-        addresses[identifier] = registeredAddress;
+    function getAddress(bytes32 identifier) external view returns (address) {
+        return _addresses[identifier];
     }
 
+    function getMocaToken() external view returns (address) {
+        return _addresses[MOCA_TOKEN];
+    }
+
+    function getEscrowedMoca() external view returns (address) {
+        return _addresses[ES_MOCA];
+    }
+
+    function getVotingEscrowMoca() external view returns (address) {
+        return _addresses[VOTING_ESCROW_MOCA];
+    }
+
+    function getVotingController() external view returns (address) {
+        return _addresses[VOTING_CONTROLLER];
+    }
+
+    function getEpochController() external view returns (address) {
+        return _addresses[EPOCH_CONTROLLER];
+    }
+
+    function getTreasury() external view returns (address) {
+        return _addresses[TREASURY];
+    }
+
+
+    // Setters
+    function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner {
+        _addresses[identifier] = registeredAddress;
+
+        // emit AddressSet(identifier, registeredAddress);
+    }
+
+
+
+    // TODO MOVE TO ROUTER
     /// @dev Allows batched call to self (this contract).
     /// @param calls An array of inputs for each call.
     /// note: batch is also an issue if you use msg.value inside it

@@ -12,17 +12,21 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
 import {Constants} from "../Constants.sol";
 import {EpochController} from "../EpochController.sol";
 
+import {IAddressBook} from "../interfaces/IAddressBook.sol";
+import {IEscrowedMoca} from "../interfaces/IEscrowedMoca.sol";
+
 contract OweMoneyPayMoney is EIP712, AccessControl {
     using SafeERC20 for IERC20;
     using SignatureChecker for address;
 
+    // addresses
+    IAddressBook internal _addressBook;
+    EpochController public epochController;
+    
     // tokens
     IERC20 public immutable USD8;   // note: 6 dp like M?
     IERC20 public immutable MOCA;   // note: 18 dp
 
-    // addresses
-    //address public treasury; ---> use addressBook
-    EpochController public epochController;
 
     uint256 private PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint256 private VOTER_FEE_PERCENTAGE;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
@@ -363,7 +367,27 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
          1. swap USD8 to MOCA, for that txn
          2. convert Moca to esMoca, at end of Epoch
          3. set esMoca::approve for VotingController to do transferFrom() to pay Voters
+
+         in either scenario, we convert Moca to esMoca, at end of Epoch
+
     */
+
+    // convert Moca to esMoca 
+    function escrowMocaForEpoch(uint256 epoch) external {
+        // check if msg.sender is VotingController
+        require(msg.sender == _addressBook.getVotingController(), "Only callable by VotingController");
+
+        // get amount of Moca to escrow
+        uint256 amount = epochs[epoch].feesAccruedToVoters;
+
+        // check if amount is greater than 0
+        require(amount > 0, "No Moca to escrow");
+
+        // convert Moca to esMoca
+        IEscrowedMoca(_addressBook.getEscrowedMoca()).escrow(amount);
+
+        // emit MocaEscrowed(amount);
+    }
 
     // set approval for VotingController
     function setApproval(uint256 amount) external {

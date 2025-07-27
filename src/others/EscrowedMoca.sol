@@ -9,13 +9,9 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
     esMoca is given out to:
     1. validators as direct emissions
     2. voters gets esMoca from verification fee split
-    3. voters gets esMoca from early esMoca redemption penalties
-    4. verifiers claim subsidies as esMoca
+    3. verifiers claim subsidies as esMoca
 
-    this contract caters to validators and their direct emissions.
-
-    voters+verifiers will have to initiate claim through voting contract,
-    which will then call this contract to claim esMoca
+    voters+verifiers will have to initiate claim through voting contract
  */
 
 contract EscrowedMoca is ERC20, AccessControl {
@@ -60,13 +56,20 @@ contract EscrowedMoca is ERC20, AccessControl {
 
 //-------------------------------user functions------------------------------------------
 
+    //convert moca to esMoca
+    function escrow(uint256 amount) external {
+        mocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        _mint(msg.sender, amount);
+    }
+
+
     /**
      * @notice Allows users to redeem esMOCA for MOCA with different redemption options
      * @dev Cannot cancel redemption once initiated
      * @param redemptionAmount The amount of esMOCA to redeem
      * @param redemptionOption The redemption option (0: Standard, 1: Early, 2: Instant)
      */
-    function initiateRedemption(uint256 redemptionAmount, uint256 redemptionOption) external {
+    function redeem(uint256 redemptionAmount, uint256 redemptionOption) external {
         require(redemptionAmount > 0, "Amount must be greater than zero");
         require(redemptionOption <= 2, "Invalid redemption option");
         require(balanceOf(msg.sender) >= redemptionAmount, "Insufficient esMOCA balance");
