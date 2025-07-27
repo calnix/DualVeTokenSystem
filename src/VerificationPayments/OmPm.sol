@@ -310,7 +310,6 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         credentials[credentialId].totalFeesAccrued += amount;
         ++credentials[credentialId].totalIssued;
         
-
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
     }
 
