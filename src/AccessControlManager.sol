@@ -3,7 +3,15 @@ pragma solidity 0.8.27;
 
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
-contract ACLManager is AccessControl {
+
+
+/**
+ * @title AccessControlLayer
+ * @author Calnix
+ * @notice Centralized access control layer managing all system roles and permissions.
+ */
+
+contract AccessControlLayer is AccessControl {
 
     /**
         for privileged calls, other contract would refer to this to check permissioning. 
@@ -18,9 +26,10 @@ contract ACLManager is AccessControl {
             );
     */
     
-    // roles
-    bytes32 public constant override POOL_ADMIN_ROLE = keccak256('POOL_ADMIN');
-    bytes32 public constant override ASSET_LISTING_ADMIN_ROLE = keccak256('ASSET_LISTING_ADMIN');
+    // ROLES
+    bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params
+    bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // stakeOnBehalf
     bytes32 public constant override EMERGENCY_ADMIN_ROLE = keccak256('EMERGENCY_ADMIN');
 
 

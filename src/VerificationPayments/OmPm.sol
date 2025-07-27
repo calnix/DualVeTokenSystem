@@ -96,11 +96,11 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         string memory name, string memory version) EIP712(name, version) {
 
         // check if addresses are valid
-        require(treasury_ != address(0), "Invalid treasury address");
-        require(usd8_ != address(0), "Invalid USD8 address");
+        //require(treasury_ != address(0), "Invalid treasury address");
+        //require(usd8_ != address(0), "Invalid USD8 address");
 
-        USD8 = IERC20(usd8_);
-        treasury = treasury_;
+        //USD8 = IERC20(usd8_);
+        //treasury = treasury_;
 
         require(protocolFeePercentage_ < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
         require(protocolFeePercentage_ > 0, "Invalid protocol fee percentage");
