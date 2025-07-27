@@ -32,7 +32,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         //uint128 stakedMoca;
         
         // credentials
-        uint128 credentialsIssued; // incremented on each verification
+        uint128 totalIssuances; // incremented on each verification
         
         // USD8
         uint128 totalEarned;
@@ -304,6 +304,12 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
 
         // issuer accounting
         issuers[issuerId].totalEarned += amount;
+        ++issuer[issuerId].totalIssuances;
+
+        // credential accounting
+        credentials[credentialId].totalFeesAccrued += amount;
+        ++credentials[credentialId].totalIssued;
+        
 
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
     }
