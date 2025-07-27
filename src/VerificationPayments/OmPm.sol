@@ -294,7 +294,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         // emit SignerAddressUpdated(verifierId, signerAddress);
     }
 
-    // sig
+    // make this fn as gas optimized as possible
     function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 credentialId, uint256 amount, uint256 expiry, bytes calldata signature) external {
         //if(expiry < block.timestamp) revert Errors.SignatureExpired();
 
@@ -315,8 +315,11 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), "Invalid signature");
 
         // calc. fee split
-        uint256 protocolFee = (PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
-        uint256 voterFee = (VOTER_FEE_PERCENTAGE > 0) ? (protocolFee * VOTER_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+        unchecked{
+            uint256 protocolFee = (PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+            uint256 voterFee = (VOTER_FEE_PERCENTAGE > 0) ? (protocolFee * VOTER_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+            uint256 treasuryFee = (protocolFee - voterFee);
+        }
 
         // update nonce
         ++verifierNonces[signerAddress];
@@ -333,9 +336,9 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         credentials[credentialId].totalFeesAccrued += amount;
         ++credentials[credentialId].totalIssued;
         
-        //treasury accounting
+        // treasury + voters accounting
         uint256 currentEpoch = epochController.getCurrentEpoch();
-        epochs[currentEpoch].feesAccruedToTreasury += protocolFee;
+        epochs[currentEpoch].feesAccruedToTreasury += treasuryFee;
         epochs[currentEpoch].feesAccruedToVoters += voterFee;  
 
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
