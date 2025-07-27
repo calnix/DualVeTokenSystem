@@ -10,6 +10,7 @@ import {SignatureChecker, ECDSA} from "openzeppelin-contracts/contracts/utils/cr
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
 import {Constants} from "../Constants.sol";
+import {EpochController} from "../EpochController.sol";
 
 contract OweMoneyPayMoney is EIP712, AccessControl {
     using SafeERC20 for IERC20;
@@ -20,9 +21,11 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
     IERC20 public immutable MOCA;   // note: 18 dp
 
     // addresses
-    address public treasury;
+    //address public treasury; ---> use addressBook
+    EpochController public epochController;
 
-    uint256 private PROTOCOL_FEE_PERCENTAGE; // 100%: 100, 1%: 1 | no decimal places
+    uint256 private PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    uint256 private VOTER_FEE_PERCENTAGE;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint256 private DELAY_PERIOD;            // in seconds
 
 
@@ -71,14 +74,23 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
 
 
     bytes32 public constant TYPEHASH = keccak256("DeductBalance(bytes32 issuerId,bytes32 verifierId,bytes32 credentialId,uint256 amount,uint256 expiry,uint256 nonce)");
-
     // nonces for preventing race conditions [ECDSA.sol::recover handles sig.mal]
     mapping(address verifier => uint256 nonce) public verifierNonces;
+
+
+
+    // epoch accounting: treasury + voters
+    struct Epoch {
+        uint128 feesAccruedToTreasury;
+        uint128 feesAccruedToVoters;
+    }
+    mapping(uint256 epoch => Epoch epoch) public epochs;
+
 
 //-------------------------------constructor-----------------------------------------
 
     constructor(
-        address usd8_, address treasury_, uint256 protocolFeePercentage_, uint256 delayPeriod_, 
+        address usd8_, address treasury_, uint256 protocolFeePercentage_, uint256 delayPeriod_, address epochController_,
         string memory name, string memory version) EIP712(name, version) {
 
         // check if addresses are valid
@@ -94,6 +106,8 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
 
         require(delayPeriod_ > 0, "Invalid delay period");
         DELAY_PERIOD = delayPeriod_;
+        
+        epochController = EpochController(epochController_);
     }
 
 
@@ -284,6 +298,10 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
     function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 credentialId, uint256 amount, uint256 expiry, bytes calldata signature) external {
         //if(expiry < block.timestamp) revert Errors.SignatureExpired();
 
+        // check if amount matches credential fee set by issuer
+        uint256 credentialFee = credentials[credentialId].currentFee;
+        require(amount == credentialFee, "Amount does not match credential fee");
+
         // check if sufficient balance
         require(verifiers[verifierId].balance >= amount, "Insufficient balance");
 
@@ -296,6 +314,10 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         // handles both EOA and contract signatures | returns true if signature is valid
         require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), "Invalid signature");
 
+        // calc. fee split
+        uint256 protocolFee = (PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+        uint256 voterFee = (VOTER_FEE_PERCENTAGE > 0) ? (protocolFee * VOTER_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+
         // update nonce
         ++verifierNonces[signerAddress];
 
@@ -304,7 +326,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         verifiers[verifierId].totalExpenditure += amount;
 
         // issuer accounting
-        issuers[issuerId].totalEarned += (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
+        issuers[issuerId].totalEarned += (amount - protocolFee);
         ++issuers[issuerId].totalIssuances;
 
         // credential accounting
@@ -312,9 +334,12 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         ++credentials[credentialId].totalIssued;
         
         //treasury accounting
-        //TODO
+        uint256 currentEpoch = epochController.getCurrentEpoch();
+        epochs[currentEpoch].feesAccruedToTreasury += protocolFee;
+        epochs[currentEpoch].feesAccruedToVoters += voterFee;  
 
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
+        // do we need more events for the other accounting actions
     }
 
 

@@ -3,11 +3,6 @@ pragma solidity ^0.8.27;
 
 library Constants {
 
-    // PERIODICITY:  does not account for leap year or leap seconds
-    uint128 public constant WEEK = 7 days;   // note: remove this after confirmation to 4 week epoch
-    uint128 public constant EPOCH_DURATION = 4 weeks;      // 28 days           
-    uint256 public constant MIN_LOCK_DURATION = EPOCH_DURATION;
-    uint256 public constant MAX_LOCK_DURATION = 104 weeks; // ~2 years
 
     // ROLES
     bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause
@@ -16,8 +11,7 @@ library Constants {
 
     
     // veMoca: early redemption penalty
-    uint256 public constant MAX_PENALTY_PCT = 50; // Default 50% maximum penalty
-    uint256 public constant PRECISION_BASE = 100; // 100%: 100, 1%: 1 | no decimal places
-    
-    //note precisionbase to 2 dp universal?
+    uint256 public constant MAX_PENALTY_PCT = 50;      // Default 50% maximum penalty
+    uint256 public constant PRECISION_BASE = 10_000;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+
 }
