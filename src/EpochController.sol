@@ -12,6 +12,14 @@ import "./libraries/EpochMath.sol";
     epochZeroTimestamp is the startTime of Epoch 0
     - allows us to let Epoch 0 start in some future time if needed
     - epochZeroTimestamp is the anchor for all other epochs
+
+    by having this contract as a standalone epoch tracker,
+    we can plug in other contracts as needed and upgrade them,
+    while keeping epoch alignment.
+
+    i don't expect the need to redeploy this contract, 
+    so other contracts call on this contract for their queries, instead of going thru AddressBook
+
  */
 
 contract EpochController {
