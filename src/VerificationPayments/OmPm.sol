@@ -396,7 +396,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
 
         // get VotingController address from AddressBook
         //address votingController = AddressBook.getAddress("VotingController");
-        USD8.approve(address(VotingController), amount);
+        USD8.approve(_addressBook.getVotingController(), amount);
     }
 
 

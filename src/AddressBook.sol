@@ -22,11 +22,11 @@ contract AddressBook is Ownable {
     // Map of registered addresses
     mapping(bytes32 identifier => address registeredAddress) private _addresses;
 
-
     constructor() Ownable(msg.sender) {
     }
 
 
+// ------------------------------ Getters --------------------------------
     function getAddress(bytes32 identifier) external view returns (address) {
         return _addresses[identifier];
     }
@@ -55,15 +55,14 @@ contract AddressBook is Ownable {
         return _addresses[TREASURY];
     }
 
-
-    // Setters
+// ------------------------------ Setters --------------------------------
     function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner {
         _addresses[identifier] = registeredAddress;
 
         // emit AddressSet(identifier, registeredAddress);
     }
 
-
+// ------------------------------ Batch --------------------------------
 
     // TODO MOVE TO ROUTER
     /// @dev Allows batched call to self (this contract).
