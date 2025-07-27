@@ -22,14 +22,12 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
     // addresses
     IAddressBook internal _addressBook;
     EpochController public epochController;
-    
-    // tokens
-    IERC20 public immutable USD8;   // note: 6 dp like M?
-    IERC20 public immutable MOCA;   // note: 18 dp
 
-
+    // fees
     uint256 private PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint256 private VOTER_FEE_PERCENTAGE;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+
+    // issuer fee delay
     uint256 private DELAY_PERIOD;            // in seconds
 
 
@@ -267,7 +265,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         // emit Deposit(verifierId, amount);
 
         // transfer funds to verifier
-        USD8.safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(_addressBook.getUSD8Token()).safeTransferFrom(msg.sender, address(this), amount);
     }
 
     function withdraw(bytes32 verifierId, uint256 amount) external {
@@ -284,7 +282,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         // emit Withdraw(verifierId, amount);
 
         // transfer funds to verifier
-        USD8.safeTransfer(msg.sender, amount);
+        IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, amount);
     }
 
     // must be called from old signerAddress
@@ -396,7 +394,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
 
         // get VotingController address from AddressBook
         //address votingController = AddressBook.getAddress("VotingController");
-        USD8.approve(_addressBook.getVotingController(), amount);
+        IERC20(_addressBook.getUSD8Token()).approve(_addressBook.getVotingController(), amount);
     }
 
 

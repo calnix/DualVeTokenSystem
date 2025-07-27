@@ -9,7 +9,8 @@ contract AddressBook is Ownable {
     //using SafeERC20 for IERC20;
 
     // Main identifiers
-    bytes32 private constant MOCA_TOKEN = 'MOCA_TOKEN';
+    bytes32 private constant USD8 = 'USD8';
+    bytes32 private constant MOCA = 'MOCA';
     bytes32 private constant ES_MOCA = 'ES_MOCA';
     bytes32 private constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
     
@@ -31,8 +32,12 @@ contract AddressBook is Ownable {
         return _addresses[identifier];
     }
 
+    function getUSD8Token() external view returns (address) {
+        return _addresses[USD8];
+    }
+
     function getMocaToken() external view returns (address) {
-        return _addresses[MOCA_TOKEN];
+        return _addresses[MOCA];
     }
 
     function getEscrowedMoca() external view returns (address) {
