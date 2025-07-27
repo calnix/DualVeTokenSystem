@@ -10,7 +10,7 @@ import {Constants} from "./Constants.sol";
 
 //TODO: standardize naming conventions: {subsidy,incentive}
 
-contract MocaVotingController is AccessControl {
+contract VotingController is AccessControl {
     using SafeERC20 for IERC20;
 
     VotingEscrowMoca public immutable veMoca;

@@ -18,7 +18,7 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
     which will then call this contract to claim esMoca
  */
 
-contract esMOCA is ERC20, AccessControl {
+contract EscrowedMoca is ERC20, AccessControl {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable mocaToken;

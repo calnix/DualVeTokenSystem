@@ -5,15 +5,18 @@ import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 
 import {RevertMsgExtractor} from "./utils/RevertMsgExtractor.sol";
 
-contract AddressesProvider is Ownable {
+contract AddressBook is Ownable {
     //using SafeERC20 for IERC20;
 
     // Main identifiers
     bytes32 private constant MOCA_TOKEN = 'MOCA_TOKEN';
-    bytes32 private constant VE_MOCA_TOKEN = 'VE_MOCA_TOKEN';
-    bytes32 private constant ES_MOCA_TOKEN = 'ES_MOCA_TOKEN';
-    bytes32 private constant MOCA_VOTING_ESCROW = 'MOCA_VOTING_ESCROW';
-    bytes32 private constant MOCA_VOTING_CONTROLLER = 'MOCA_VOTING_CONTROLLER';
+    bytes32 private constant ES_MOCA = 'ES_MOCA';
+    bytes32 private constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
+    
+    // controllers
+    bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
+    bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
+    
     bytes32 private constant TREASURY = 'TREASURY';
 
     // Map of registered addresses

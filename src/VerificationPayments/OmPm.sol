@@ -345,6 +345,26 @@ contract OweMoneyPayMoney is EIP712, AccessControl {
         // do we need more events for the other accounting actions?
     }
 
+//-------------------------------VotingController functions-----------------------------------------
+
+    /** NOTE:
+
+        1. How to swap USD8 to MOCA?
+        2. When to swap USD8 for MOCA?
+            - end of Epoch,
+            - OR, per txn, in deductBalance()
+    */
+
+    // set approval for VotingController
+    function setApproval(uint256 amount) external {
+        // 1. swap voters' fee of USD8 for MOCA
+
+
+        // get VotingController address from AddressBook
+        //address votingController = AddressBook.getAddress("VotingController");
+        USD8.approve(address(VotingController), amount);
+    }
+
 
 //-------------------------------internal functions-----------------------------------------
 
