@@ -13,7 +13,7 @@ import {IAddressBook} from "./interfaces/IAddressBook.sol";
  */
 
 //note: get addresses from address book
-contract AccessControlLayer is AccessControl {
+contract AccessController is AccessControl {
 
     IAddressBook internal immutable _addressBook;
 
@@ -32,61 +32,73 @@ contract AccessControlLayer is AccessControl {
     
     // ROLES
     bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause
-    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params
-    bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // stakeOnBehalf
-    bytes32 public constant override EMERGENCY_ADMIN_ROLE = keccak256('EMERGENCY_ADMIN');
+
+
+    //bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params
+    //bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // stakeOnBehalf
+    //bytes32 public constant EMERGENCY_ADMIN_ROLE = keccak256('EMERGENCY_ADMIN');
 
 
     /**
     * @dev Constructor
-    * @dev Admin addresses should be initialized at the AddressBook beforehand
+    * @dev Global admin address should be initialized at the AddressBook beforehand
+    * @dev Global admin is the DEFAULT_ADMIN_ROLE for this contract
     * @param _addressBook The address of the AddressBook
     */
     constructor(address addressBook_) {
+
         // address book
         _addressBook = IAddressBook(addressBook_);
 
-        // acl admin
-        address aclAdmin = _addressBook.getACLAdmin();
-        require(aclAdmin != address(0), Errors.AclAdminCannotBeZero());
-        _setupRole(DEFAULT_ADMIN_ROLE, aclAdmin);
+        // global admin: DEFAULT_ADMIN_ROLE
+        address globalAdmin = _addressBook.getGlobalAdmin();
+        require(globalAdmin != address(0), Errors.GlobalAdminCannotBeZero());
+
+        _setupRole(DEFAULT_ADMIN_ROLE, globalAdmin);
     }
 
+// ----- external -----
+
     /**
-     * @notice Set the role as admin of a specific role.
+     * @notice Sets the admin role for a specific role
      * @dev By default the admin role for all roles is `DEFAULT_ADMIN_ROLE`.
-     * @param role The role to be managed by the admin role
-     * @param adminRole The admin role
+     * @param role The role whose administrator is being updated
+     * @param adminRole The new administrator role for the specified role
     */
     function setRoleAdmin(bytes32 role, bytes32 adminRole) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRoleAdmin(role, adminRole);
     }
 
 // ----- MONITOR ROLE -----
-    function addMonitorAdmin(address admin) external {
-        grantRole(MONITOR_ROLE, admin);
+
+    //note: should probably set the roleAdmin for Monitors to be a different role [not 0x00]
+    //      so that we can manage the pause bots easily w/o GLOBAL_ADMIN
+    //      MONITOR_ROLE_ADMIN can be a 2/2 multisig, within just the engineers
+
+    function addMonitor(address addr) external {
+        grantRole(MONITOR_ROLE, addr);
     }
 
-    function removeMonitorAdmin(address admin) external {
-        revokeRole(MONITOR_ROLE, admin);
+    function removeMonitor(address addr) external {
+        revokeRole(MONITOR_ROLE, addr);
     }
 
-    function isMonitorAdmin(address admin) external view returns (bool) {
-        return hasRole(MONITOR_ROLE, admin);
+    function isMonitor(address addr) external view returns (bool) {
+        return hasRole(MONITOR_ROLE, addr);
     }
 
 // ----- OPERATOR ROLE -----
 
-    function addOperatorAdmin(address admin) external {
-        grantRole(OPERATOR_ROLE, admin);
+    function addOperator(address addr) external {
+        grantRole(OPERATOR_ROLE, addr);
     }
 
-    function removeOperatorAdmin(address admin) external {
-        revokeRole(OPERATOR_ROLE, admin);
+    function removeOperator(address addr) external {
+        revokeRole(OPERATOR_ROLE, addr);
     }
 
-    function isOperatorAdmin(address admin) external view returns (bool) {
-        return hasRole(OPERATOR_ROLE, admin);
+    function isOperator(address addr) external view returns (bool) {
+        return hasRole(OPERATOR_ROLE, addr);
     }
 
 // ----- CRON JOB ROLE -----

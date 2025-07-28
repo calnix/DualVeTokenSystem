@@ -24,6 +24,16 @@ It is assumed that `credentialId` is unique pairwise{issuerId, credentialType}.
 Opting to not bother tracking expenditure at a {verifier, credentialId} level.
 - can be tracked via events and displayed on dashboard
 
+## RISK
+
+Objective 
+- facilitate verifiers to retrieve remaining deposits
+- facilitate issuers to retrieve unclaimed fees
+
+However, we cannot rely on either party to act swiftly in a time-sensitive crisis.
+So we must exfil assets on their behalf, if possible.
+Onus is on us to react ASAP.
+
 # Problems
 
 ## 1. Dual Id system

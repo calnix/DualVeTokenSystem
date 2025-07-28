@@ -3,10 +3,13 @@ pragma solidity 0.8.27;
 
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 
-import {RevertMsgExtractor} from "./utils/RevertMsgExtractor.sol";
+/**
+ * @title AddressBook
+ * @author Calnix
+ * @notice Centralized address book for all system addresses.
+ */
 
 contract AddressBook is Ownable {
-    //using SafeERC20 for IERC20;
 
     // Main identifiers
     bytes32 private constant USD8 = 'USD8';
@@ -14,20 +17,25 @@ contract AddressBook is Ownable {
     bytes32 private constant ES_MOCA = 'ES_MOCA';
     bytes32 private constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
     
-    // controllers
+    // Controllers
     bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
     bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
+    bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
     
+    // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
 
-    // admin roles
-    bytes32 private constant ACL_ADMIN = 'ACL_ADMIN';   // DEFAULT_ADMIN_ROLE
-    //bytes32 private constant ACL_MANAGER = 'ACL_MANAGER';
+    // Admin roles
+    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
 
     // Map of registered addresses
     mapping(bytes32 identifier => address registeredAddress) private _addresses;
 
-    constructor() Ownable(msg.sender) {
+
+    constructor(address globalAdmin_) Ownable(globalAdmin_) {
+
+        // set global admin: DEFAULT_ADMIN_ROLE
+        _addresses[GLOBAL_ADMIN] = globalAdmin_;
     }
 
 
@@ -36,6 +44,7 @@ contract AddressBook is Ownable {
     function getAddress(bytes32 identifier) external view returns (address) {
         return _addresses[identifier];
     }
+
 
     function getUSD8Token() external view returns (address) {
         return _addresses[USD8];
@@ -53,44 +62,34 @@ contract AddressBook is Ownable {
         return _addresses[VOTING_ESCROW_MOCA];
     }
 
-    function getVotingController() external view returns (address) {
-        return _addresses[VOTING_CONTROLLER];
-    }
 
     function getEpochController() external view returns (address) {
         return _addresses[EPOCH_CONTROLLER];
     }
 
+    function getVotingController() external view returns (address) {
+        return _addresses[VOTING_CONTROLLER];
+    }
+
+    function getAccessController() external view returns (address) {
+        return _addresses[ACCESS_CONTROLLER];
+    }
+
+
     function getTreasury() external view returns (address) {
         return _addresses[TREASURY];
     }
 
-    function getACLAdmin() external view returns (address) {
-        return _addresses[ACL_ADMIN];
+    function getGlobalAdmin() external view returns (address) {
+        return _addresses[GLOBAL_ADMIN];
     }
 
 // ------------------------------ Setters --------------------------------
+
     function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner {
         _addresses[identifier] = registeredAddress;
 
         // emit AddressSet(identifier, registeredAddress);
-    }
-
-// ------------------------------ Batch --------------------------------
-
-    // TODO MOVE TO ROUTER
-    /// @dev Allows batched call to self (this contract).
-    /// @param calls An array of inputs for each call.
-    /// note: batch is also an issue if you use msg.value inside it
-    function batch(bytes[] calldata calls) external payable returns (bytes[] memory results) {
-        results = new bytes[](calls.length);
-
-        for (uint256 i; i < calls.length; i++) {
-
-            (bool success, bytes memory result) = address(this).delegatecall(calls[i]);
-            if (!success) revert(RevertMsgExtractor.getRevertMsg(result));
-            results[i] = result;
-        }
     }
 
 }
@@ -102,3 +101,12 @@ contract AddressBook is Ownable {
 // on batch:
 // https://samczsun.com/two-rights-might-make-a-wrong/
 // https://blog.trailofbits.com/2021/12/16/detecting-miso-and-opyns-msg-value-reuse-vulnerability-with-slither/
+
+/** NOTE TODO 
+    If I combine AddressBook and AccessController, it streamlines a fair bit on the calls
+    However, that means that i cannot redeploy AccessController separately.
+
+    Aave allows for repdloyment of ACL, and its latest address is updated in AddressBook.
+    - is this useful for us?
+
+ */

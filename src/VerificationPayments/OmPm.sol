@@ -18,6 +18,7 @@ import {Constants} from "../Constants.sol";
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
 import {IEscrowedMoca} from "../interfaces/IEscrowedMoca.sol";
 import {IEpochController} from "../interfaces/IEpochController.sol";
+import {IAccessController} from "../interfaces/IAccessController.sol";
 
 contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     using SafeERC20 for IERC20;
@@ -34,6 +35,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     // issuer fee delay
     uint256 private DELAY_PERIOD;            // in seconds
 
+    uint256 public isFrozen;
 
     struct Issuer {
         bytes32 issuerId;
@@ -408,6 +410,91 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     function _generateId(uint256 salt, address user) internal view returns (bytes32) {
         return bytes32(keccak256(abi.encode(user, block.timestamp, salt)));
     }
+
+//------------------------------- risk -------------------------------------------------------
+
+    /**
+     * @notice Pause contract. Cannot pause once frozen
+     */
+    function pause() external whenNotPaused onlyMonitor {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _pause();
+    }
+
+    /**
+     * @notice Unpause pool. Cannot unpause once frozen
+     */
+    function unpause() external whenPaused onlyMonitor {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _unpause();
+    }
+
+    /**
+     * @notice To freeze the pool in the event of something untoward occurring
+     * @dev Only callable from a paused state, affirming that staking should not resume
+     *      Nothing to be updated. Freeze as is.
+     *      Enables emergencyExit() to be called.
+     */
+    function freeze() external whenPaused onlyMonitor {
+        if(isFrozen == 1) revert Errors.IsFrozen();
+        isFrozen = 1;
+        emit ContractFrozen(block.timestamp);
+    }  
+
+    // exfil verifiers' balance to their stored addresses
+    function emergencyExitVerifiers(bytes32[] calldata verifierIds) external whenPaused {
+        //if(isFrozen == 0) revert Errors.NotFrozen();
+        //if(verifierIds.length == 0) revert Errors.InvalidInput();
+
+        // get USD8 address from AddressBook
+        address usd8 = _addressBook.getUSD8Token();
+    
+        for(uint256 i; i < verifierIds.length; ++i) {
+            address verifierWallet = verifiers[verifierIds[i]].wallet;
+            uint256 verifierBalance = verifiers[verifierIds[i]].balance;
+
+            // if no balance, skip
+            if(verifierBalance == 0) continue;
+
+            // transfer balance to verifier
+            IERC20(usd8).safeTransfer(verifierWallet, verifierBalance);
+        }
+    }
+
+    // exfil issuers' unclaimed fees to their stored addresses
+    function emergencyExitIssuers(bytes32[] calldata issuerIds) external whenPaused {
+        //if(isFrozen == 0) revert Errors.NotFrozen();
+        //if(issuerIds.length == 0) revert Errors.InvalidInput();
+
+        // get USD8 address from AddressBook
+        address usd8 = _addressBook.getUSD8Token();
+    
+        for(uint256 i; i < issuerIds.length; ++i) {
+            address issuerWallet = issuers[issuerIds[i]].wallet;    
+            uint256 issuerBalance = issuers[issuerIds[i]].totalEarned - issuers[issuerIds[i]].totalClaimed;
+
+            // if no unclaimed fees, skip
+            if(issuerBalance == 0) continue;
+
+            // transfer balance to issuer
+            IERC20(usd8).safeTransfer(issuerWallet, issuerBalance);
+        }
+    }
+
+
+//------------------------------- modifiers -------------------------------------------------------
+
+    modifier onlyMonitor() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isMonitor(msg.sender), "Only callable by Monitor");
+        _;
+    }
+
+    modifier onlyGlobalAdmin() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isGlobalAdmin(msg.sender), "Only callable by Global Admin");
+        _;
+    }   
 
 //-------------------------------view functions---------------------------------------------
 
