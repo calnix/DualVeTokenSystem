@@ -73,6 +73,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     struct Verifier {
         bytes32 verifierId;
         address signerAddress;
+        address depositAddress;
 
         uint128 balance;
         uint128 totalExpenditure;
@@ -449,16 +450,21 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         // get USD8 address from AddressBook
         address usd8 = _addressBook.getUSD8Token();
     
+        // if issuerId is given, will retrieve either empty or wrong struct
         for(uint256 i; i < verifierIds.length; ++i) {
-            address verifierWallet = verifiers[verifierIds[i]].wallet;
+            
+            // get balance: if 0, skip
             uint256 verifierBalance = verifiers[verifierIds[i]].balance;
-
-            // if no balance, skip
             if(verifierBalance == 0) continue;
 
+            // get deposit address
+            address verifierDepositAddress = verifiers[verifierIds[i]].depositAddress;
+
             // transfer balance to verifier
-            IERC20(usd8).safeTransfer(verifierWallet, verifierBalance);
+            IERC20(usd8).safeTransfer(verifierDepositAddress, verifierBalance);
         }
+
+        // emit EmergencyExitVerifiers(verifierIds);
     }
 
     // exfil issuers' unclaimed fees to their stored addresses
@@ -468,17 +474,22 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
 
         // get USD8 address from AddressBook
         address usd8 = _addressBook.getUSD8Token();
-    
-        for(uint256 i; i < issuerIds.length; ++i) {
-            address issuerWallet = issuers[issuerIds[i]].wallet;    
-            uint256 issuerBalance = issuers[issuerIds[i]].totalEarned - issuers[issuerIds[i]].totalClaimed;
 
-            // if no unclaimed fees, skip
+        // if verifierId is given, will retrieve either empty or wrong struct
+        for(uint256 i; i < issuerIds.length; ++i) {
+
+            // get unclaimed fees: if 0, skip
+            uint256 issuerBalance = issuers[issuerIds[i]].totalEarned - issuers[issuerIds[i]].totalClaimed;
             if(issuerBalance == 0) continue;
+
+            // get wallet address
+            address issuerWallet = issuers[issuerIds[i]].wallet;
 
             // transfer balance to issuer
             IERC20(usd8).safeTransfer(issuerWallet, issuerBalance);
         }
+
+        // emit EmergencyExitIssuers(issuerIds);
     }
 
 
