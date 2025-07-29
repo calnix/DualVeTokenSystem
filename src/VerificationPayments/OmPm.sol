@@ -32,7 +32,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     uint256 private PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint256 private VOTER_FEE_PERCENTAGE;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
 
-    // issuer fee delay
+    // issuer fee increase delay
     uint256 private DELAY_PERIOD;            // in seconds
 
     uint256 public isFrozen;
@@ -118,20 +118,6 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         
         _epochController = IEpochController(epochController_);
     }
-
-
-//-------------------------------admin functions-----------------------------------------
-
-// TODO: complete designing Global Access Control layer for all contracts | add modifiers here
-/*
-    // note: only admin can update delay period | add ACL modifier
-    function updateDelayPeriod(uint256 delayPeriod) external {
-        require(delayPeriod > 0, "Invalid delay period");
-        DELAY_PERIOD = delayPeriod;
-
-        // emit DelayPeriodUpdated(delayPeriod);
-    }
-*/
 
 //-------------------------------issuer functions-----------------------------------------
 
@@ -417,6 +403,35 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     function _generateId(uint256 salt, address user) internal view returns (bytes32) {
         return bytes32(keccak256(abi.encode(user, block.timestamp, salt)));
     }
+
+//-------------------------------admin functions-----------------------------------------
+
+    // note: only admin can update delay period | add ACL modifier
+    function updateDelayPeriod(uint256 delayPeriod) external {
+        require(delayPeriod > 0, "Invalid delay period");
+        DELAY_PERIOD = delayPeriod;
+
+        // emit DelayPeriodUpdated(delayPeriod);
+    }
+
+    // protocol fee can be 0
+    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external {
+        // protocol fee cannot be greater than 100%
+        require(protocolFeePercentage < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
+        PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
+
+        // emit ProtocolFeePercentageUpdated(protocolFeePercentage);
+    }
+
+    // voter fee can be 0
+    function updateVoterFeePercentage(uint256 voterFeePercentage) external {
+        // voter fee cannot be greater than 100%
+        require(voterFeePercentage < Constants.PRECISION_BASE, "Invalid voter fee percentage");
+        VOTER_FEE_PERCENTAGE = voterFeePercentage;
+
+        // emit VoterFeePercentageUpdated(voterFeePercentage);
+    }
+
 
 //------------------------------- risk -------------------------------------------------------
 
