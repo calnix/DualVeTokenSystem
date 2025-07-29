@@ -40,6 +40,7 @@ Onus is on us to react ASAP.
 
 For some pair of issuer & verifier they could have the same Id.
 *Does this matter; can it cause conflict?*
+*then emergencyExit how? can, but headache*
 
 **Solution**
 

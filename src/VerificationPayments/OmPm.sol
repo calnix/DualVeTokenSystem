@@ -143,7 +143,10 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         {
             uint256 salt = ++block.number; 
             issuerId = _generateId(salt, msg.sender);
-            while (issuers[issuerId].issuerId != bytes32(0)) issuerId = _generateId(++salt, msg.sender);  // If issuerId exists, generate new random Id
+            // If generated id is used by either issuer or verifier, generate new Id
+            while (issuers[issuerId].issuerId != bytes32(0) || verifiers[issuerId].verifierId != bytes32(0)) {
+                issuerId = _generateId(++salt, msg.sender); 
+            }
         }
 
         // setup issuer
@@ -246,7 +249,10 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         {
             uint256 salt = ++block.number; 
             verifierId = _generateId(salt, msg.sender);
-            while (verifiers[verifierId].verifierId != bytes32(0)) verifierId = _generateId(++salt, msg.sender);  // If verifierId exists, generate new random Id
+            // If generated id is used by either issuer or verifier, generate new Id
+            while (verifiers[verifierId].verifierId != bytes32(0) || issuers[verifierId].issuerId != bytes32(0)) {
+                verifierId = _generateId(++salt, msg.sender); 
+            }
         }
 
         // setup verifier
