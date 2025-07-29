@@ -183,7 +183,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
      * @param amountToRedeem Amount of principal to redeem
      * @param isMoca True to redeem MOCA tokens, false to redeem esMOCA tokens
      */
-    function earlyRedemption(bytes32 lockId, uint128 amountToRedeem, bool isMoca) external {
+    /*function earlyRedemption(bytes32 lockId, uint128 amountToRedeem, bool isMoca) external {
 
         // check lock exists
         DataTypes.Lock memory lock = locks[lockId];
@@ -213,7 +213,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
                     = [(initialVotingPower - currentVotingPower) / initialVotingPower] * MAX_PENALTY_PCT
                     = [(veBalance.bias - currentBias) / veBalance.bias] * MAX_PENALTY_PCT
         */
-        uint256 penaltyPct = (Constants.MAX_PENALTY_PCT * (veBalance.bias - currentBias)) / veBalance.bias;   
+        /*uint256 penaltyPct = (Constants.MAX_PENALTY_PCT * (veBalance.bias - currentBias)) / veBalance.bias;   
         
         // calculate total penalty based on total base amount (both MOCA and esMOCA contribute to veMoca)
         uint256 totalPenaltyInTokens = totalBase * penaltyPct / Constants.PRECISION_BASE;
@@ -248,7 +248,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         }
         
         // emit event
-    }
+    }*/
 
     // note: consider creating _updateAccount(). then can streamline w/ _updateGlobal, _updateAccount(user), _updateAccount(delegate) | but _updateAccount must be needed as a standalone
     function delegateLock(bytes32 lockId, address delegate) external {
