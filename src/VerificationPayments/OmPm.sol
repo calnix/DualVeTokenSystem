@@ -39,8 +39,9 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
 
     struct Issuer {
         bytes32 issuerId;
-        address wallet;            // for claiming fees | and updating contract params
-
+        address configAddress;     // for interacting w/ contract 
+        address wallet;            // for claiming fees 
+        
         //uint128 stakedMoca;
         
         // credentials
@@ -51,7 +52,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         uint128 totalClaimed;
     }
 
-    mapping(bytes32 issuerId => Issuer issuer) public issuers;
+    mapping(bytes32 issuerId => Issuer issuer) private _issuers;
 
     // each credential is unique pairwise {issuerId, credentialType}
     struct Credential {
@@ -68,7 +69,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         uint128 totalFeesAccrued;
     }
 
-    mapping(bytes32 credentialId => Credential credential) public credentials;
+    mapping(bytes32 credentialId => Credential credential) private _credentials;
 
     struct Verifier {
         bytes32 verifierId;
@@ -79,12 +80,12 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         uint128 totalExpenditure;
     }
 
-    mapping(bytes32 verifierId => Verifier verifier) public verifiers;
+    mapping(bytes32 verifierId => Verifier verifier) private _verifiers;
 
 
     bytes32 public constant TYPEHASH = keccak256("DeductBalance(bytes32 issuerId,bytes32 verifierId,bytes32 credentialId,uint256 amount,uint256 expiry,uint256 nonce)");
     // nonces for preventing race conditions [ECDSA.sol::recover handles sig.mal]
-    mapping(address verifier => uint256 nonce) public verifierNonces;
+    mapping(address verifier => uint256 nonce) private _verifierNonces;
 
 
 
@@ -93,7 +94,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         uint128 feesAccruedToTreasury;
         uint128 feesAccruedToVoters;
     }
-    mapping(uint256 epoch => Epoch epoch) public epochs;
+    mapping(uint256 epoch => Epoch epoch) private _epochs;
 
 
 //-------------------------------constructor-----------------------------------------
@@ -404,18 +405,21 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         return bytes32(keccak256(abi.encode(user, block.timestamp, salt)));
     }
 
+
 //-------------------------------admin functions-----------------------------------------
 
 
-    function updateDelayPeriod(uint256 delayPeriod) external onlyGlobalAdmin {
-        require(delayPeriod > , "Invalid delay period");
+    function updateDelayPeriod(uint256 delayPeriod) external onlyPaymentsAdmin {
+        require(delayPeriod > 0, "Invalid delay period");
+        require(delayPeriod % Constants.EPOCH_DURATION == 0, "Delay period must be a multiple of epoch duration");
+
         DELAY_PERIOD = delayPeriod;
 
         // emit DelayPeriodUpdated(delayPeriod);
     }
 
     // protocol fee can be 0
-    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyGlobalAdmin {
+    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyPaymentsAdmin {
         // protocol fee cannot be greater than 100%
         require(protocolFeePercentage < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
         PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
@@ -424,7 +428,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     }
 
     // voter fee can be 0
-    function updateVoterFeePercentage(uint256 voterFeePercentage) external onlyGlobalAdmin {
+    function updateVoterFeePercentage(uint256 voterFeePercentage) external onlyPaymentsAdmin {
         // voter fee cannot be greater than 100%
         require(voterFeePercentage < Constants.PRECISION_BASE, "Invalid voter fee percentage");
         VOTER_FEE_PERCENTAGE = voterFeePercentage;
@@ -462,6 +466,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         isFrozen = 1;
         emit ContractFrozen(block.timestamp);
     }  
+
 
     // exfil verifiers' balance to their stored addresses
     function emergencyExitVerifiers(bytes32[] calldata verifierIds) external whenPaused {
@@ -522,6 +527,12 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         _;
     }
 
+    modifier onlyPaymentsAdmin() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isPaymentsAdmin(msg.sender), "Only callable by Payments Admin");
+        _;
+    }
+
     modifier onlyGlobalAdmin() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
         require(accessController.isGlobalAdmin(msg.sender), "Only callable by Global Admin");
@@ -530,10 +541,52 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
 
 //-------------------------------view functions---------------------------------------------
 
-    
-    //note: if credentialId is unique pairwise,{issuerId, credentialType}; drop issuerId param
-    function getPrice(bytes32 issuerId, bytes32 credentialId) external view returns (uint256) {
+    function getIssuer(bytes32 issuerId) external view returns (Issuer memory) {
+        return _issuers[issuerId];
     }
+
+    function getCredential(bytes32 credentialId) external view returns (Credential memory) {
+        return _credentials[credentialId];
+    }
+
+    function getVerifier(bytes32 verifierId) external view returns (Verifier memory) {
+        return _verifiers[verifierId];
+    }
+
+    function getVerifierNonce(address verifier) external view returns (uint256) {
+        return _verifierNonces[verifier];
+    }
+
+    function getEpoch(uint256 epoch) external view returns (Epoch memory) {
+        return _epochs[epoch];
+    }
+
+    // nice to have
+    function getCredentialFee(bytes32 credentialId) external view returns (uint256) {
+        return _credentials[credentialId].currentFee;
+    }
+
+    function getProtocolFeePercentage() external view returns (uint256) {
+        return PROTOCOL_FEE_PERCENTAGE;
+    }
+
+    function getVoterFeePercentage() external view returns (uint256) {
+        return VOTER_FEE_PERCENTAGE;
+    }
+
+    function getDelayPeriod() external view returns (uint256) {
+        return DELAY_PERIOD;
+    }
+
+    /*
+    function getAddressBook() external view returns (IAddressBook) {
+        return _addressBook;
+    }
+
+    function getEpochController() external view returns (IEpochController) {
+        return _epochController;
+    }
+*/
 
 }
 

@@ -87,6 +87,20 @@ contract AccessController is AccessControl {
         return hasRole(MONITOR_ROLE, addr);
     }
 
+// ----- PaymentsController Admin: PaymentsAdmin -----
+
+    function addPaymentsAdmin(address addr) external {
+        grantRole(PAYMENTS_ADMIN_ROLE, addr);
+    }
+
+    function removePaymentsAdmin(address addr) external {
+        revokeRole(PAYMENTS_ADMIN_ROLE, addr);
+    }
+
+    function isPaymentsAdmin(address addr) external view returns (bool) {
+        return hasRole(PAYMENTS_ADMIN_ROLE, addr);
+    }
+
 // ----- OPERATOR ROLE -----
 
     function addOperator(address addr) external {

@@ -11,7 +11,9 @@ import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 
 contract AddressBook is Ownable {
 
-    // Main identifiers
+    // ..... Main identifiers .....
+
+    // Tokens
     bytes32 private constant USD8 = 'USD8';
     bytes32 private constant MOCA = 'MOCA';
     bytes32 private constant ES_MOCA = 'ES_MOCA';
@@ -19,8 +21,9 @@ contract AddressBook is Ownable {
     
     // Controllers
     bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
-    bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
     bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
+    bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
+    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER';
     
     // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
@@ -58,21 +61,21 @@ contract AddressBook is Ownable {
         return _addresses[ES_MOCA];
     }
 
-    function getVotingEscrowMoca() external view returns (address) {
-        return _addresses[VOTING_ESCROW_MOCA];
-    }
-
 
     function getEpochController() external view returns (address) {
         return _addresses[EPOCH_CONTROLLER];
+    }
+
+    function getAccessController() external view returns (address) {
+        return _addresses[ACCESS_CONTROLLER];
     }
 
     function getVotingController() external view returns (address) {
         return _addresses[VOTING_CONTROLLER];
     }
 
-    function getAccessController() external view returns (address) {
-        return _addresses[ACCESS_CONTROLLER];
+    function getPaymentsController() external view returns (address) {
+        return _addresses[PAYMENTS_CONTROLLER];
     }
 
 
