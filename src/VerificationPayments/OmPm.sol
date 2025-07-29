@@ -39,7 +39,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
 
     struct Issuer {
         bytes32 issuerId;
-        address wallet;            // for claiming fees | updatable
+        address wallet;            // for claiming fees | and updating contract params
 
         //uint128 stakedMoca;
         
@@ -406,16 +406,16 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
 
 //-------------------------------admin functions-----------------------------------------
 
-    // note: only admin can update delay period | add ACL modifier
-    function updateDelayPeriod(uint256 delayPeriod) external {
-        require(delayPeriod > 0, "Invalid delay period");
+
+    function updateDelayPeriod(uint256 delayPeriod) external onlyGlobalAdmin {
+        require(delayPeriod > , "Invalid delay period");
         DELAY_PERIOD = delayPeriod;
 
         // emit DelayPeriodUpdated(delayPeriod);
     }
 
     // protocol fee can be 0
-    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external {
+    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyGlobalAdmin {
         // protocol fee cannot be greater than 100%
         require(protocolFeePercentage < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
         PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
@@ -424,7 +424,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     }
 
     // voter fee can be 0
-    function updateVoterFeePercentage(uint256 voterFeePercentage) external {
+    function updateVoterFeePercentage(uint256 voterFeePercentage) external onlyGlobalAdmin {
         // voter fee cannot be greater than 100%
         require(voterFeePercentage < Constants.PRECISION_BASE, "Invalid voter fee percentage");
         VOTER_FEE_PERCENTAGE = voterFeePercentage;
@@ -446,7 +446,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     /**
      * @notice Unpause pool. Cannot unpause once frozen
      */
-    function unpause() external whenPaused onlyMonitor {
+    function unpause() external whenPaused onlyGlobalAdmin {
         if(isFrozen == 1) revert Errors.IsFrozen(); 
         _unpause();
     }
@@ -457,7 +457,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
      *      Nothing to be updated. Freeze as is.
      *      Enables emergencyExit() to be called.
      */
-    function freeze() external whenPaused onlyMonitor {
+    function freeze() external whenPaused onlyGlobalAdmin {
         if(isFrozen == 1) revert Errors.IsFrozen();
         isFrozen = 1;
         emit ContractFrozen(block.timestamp);
