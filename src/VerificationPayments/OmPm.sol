@@ -123,7 +123,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
 //-------------------------------issuer functions-----------------------------------------
 
     // new issuer: generate issuerId
-    function setupIssuer() external returns (bytes32) {
+    function setupIssuer(address wallet) external returns (bytes32) {
         
         // generate issuerId
         bytes32 issuerId;
@@ -139,7 +139,8 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         // setup issuer
         Issuer memory issuer;
             issuer.issuerId = issuerId;
-            issuer.wallet = msg.sender;
+            issuer.configAddress = msg.sender;
+            issuer.wallet = wallet;
         
         // store issuer
         issuers[issuerId] = issuer;
@@ -295,6 +296,9 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
 
         // emit SignerAddressUpdated(verifierId, signerAddress);
     }
+
+//-------------------------------VERIFIER CONTRACT CALL -----------------------------------------
+
 
     // make this fn as gas optimized as possible
     function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 credentialId, uint256 amount, uint256 expiry, bytes calldata signature) external {
