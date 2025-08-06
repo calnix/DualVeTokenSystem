@@ -5,15 +5,15 @@ library DataTypes {
 
     struct Lock {
         bytes32 lockId;
-        address creator;
-        address delegate;           // flag: zero = not delegated, nonzero = delegated
+        address owner;
+        address delegate;           // flag: zero = not delegated, non-zero = delegated
 
         // locked principal
         uint128 moca;    
         uint128 esMoca;
             
-        uint128 expiry;             // timestamp when lock ends
-        bool isWithdrawn;           // flag to indicate if the lock has been withdrawn
+        uint128 expiry;        // timestamp when lock ends
+        bool isUnlocked;       // indicates lock's principals are returned
     }
     
     // Checkpoint

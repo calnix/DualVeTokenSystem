@@ -17,10 +17,9 @@ import {Constants} from "../Constants.sol";
 // interfaces
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
 import {IEscrowedMoca} from "../interfaces/IEscrowedMoca.sol";
-import {IEpochController} from "../interfaces/IEpochController.sol";
 import {IAccessController} from "../interfaces/IAccessController.sol";
 
-contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
+contract PaymentsController is EIP712, AccessControl, Pausable {
     using SafeERC20 for IERC20;
     using SignatureChecker for address;
 
@@ -94,7 +93,7 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
         uint128 feesAccruedToTreasury;
         uint128 feesAccruedToVoters;
     }
-    mapping(uint256 epoch => Epoch epoch) private _epochs;
+    mapping(uint256 epoch => mapping(bytes32 credentialId => Epoch epoch)) private _epochs;
 
 
 //-------------------------------constructor-----------------------------------------
@@ -544,6 +543,17 @@ contract OweMoneyPayMoney is EIP712, AccessControl, Pausable {
     }   
 
 //-------------------------------view functions---------------------------------------------
+
+    /**
+     * @notice Returns the fees accrued to voters for a given epoch
+     * @param epoch The epoch number
+     * @param credentialId The credential id
+     * @return feesAccruedToVoters The amount of fees accrued to voters in the given epoch
+     */
+    function feesAccruedToVoters(uint256 epoch, bytes32 credentialId) external view returns (uint256) {
+        return _epochs[epoch][credentialId].feesAccruedToVoters;
+    }
+
 
     function getIssuer(bytes32 issuerId) external view returns (Issuer memory) {
         return _issuers[issuerId];

@@ -20,10 +20,10 @@ contract AddressBook is Ownable {
     bytes32 private constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
     
     // Controllers
-    bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
+    //bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
     bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
     bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
-    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER';
+    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER';   //OmPm.sol
     
     // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
@@ -61,9 +61,8 @@ contract AddressBook is Ownable {
         return _addresses[ES_MOCA];
     }
 
-
-    function getEpochController() external view returns (address) {
-        return _addresses[EPOCH_CONTROLLER];
+    function getVotingEscrowMoca() external view returns (address) {
+        return _addresses[VOTING_ESCROW_MOCA];
     }
 
     function getAccessController() external view returns (address) {
