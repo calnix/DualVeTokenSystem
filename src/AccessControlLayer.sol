@@ -71,6 +71,12 @@ contract AccessController is AccessControl {
 
 // ----- GLOBAL_ADMIN ROLE -----
 
+    /** note
+        do you want to have a separate global admin tt is not DEFAULT_ADMIN_ROLE[0x00]?
+        - how would it be useful?
+     */
+
+
     function addGlobalAdmin(address addr) external {
         grantRole(DEFAULT_ADMIN_ROLE, addr);
     }
