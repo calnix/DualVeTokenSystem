@@ -19,7 +19,7 @@ import {IAddressBook} from "../interfaces/IAddressBook.sol";
 import {IEscrowedMoca} from "../interfaces/IEscrowedMoca.sol";
 import {IAccessController} from "../interfaces/IAccessController.sol";
 
-contract PaymentsController is EIP712, AccessControl, Pausable {
+contract PaymentsController is EIP712, Pausable {
     using SafeERC20 for IERC20;
     using SignatureChecker for address;
 

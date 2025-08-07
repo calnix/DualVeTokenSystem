@@ -35,9 +35,9 @@ library EpochMath {
     }
     
 
-    ///@dev returns current epoch start time
-    function getCurrentEpochStart() internal view returns (uint256) {
-        return getEpochStartForTimestamp(block.timestamp);
+    ///@dev returns current epoch start time | uint128: Checkpoint{veBla, uint128 lastUpdatedAt}
+    function getCurrentEpochStart() internal view returns (uint128) {
+        return uint128(getEpochStartForTimestamp(block.timestamp));
     }
 
     ///@dev returns current epoch end time
@@ -51,8 +51,7 @@ library EpochMath {
         return (epoch + 1) * EPOCH_DURATION;
     }
 
-// ------------ needed?
-
+    // used in _createLockFor()
     function isValidEpochTime(uint256 timestamp) internal pure returns (bool) {
         return timestamp % EPOCH_DURATION == 0;
     }

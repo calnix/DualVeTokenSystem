@@ -28,9 +28,6 @@ contract AddressBook is Ownable {
     // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
 
-    // Admin roles
-    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
-
     // Map of registered addresses
     mapping(bytes32 identifier => address registeredAddress) private _addresses;
 

@@ -21,14 +21,12 @@ import {EpochMath} from "./EpochMath.sol";
     - Formula-based calculation determines veMOCA amount based on stake amount and duration
  */
 
-contract VotingEscrowMoca is ERC20, AccessControl {
+contract VotingEscrowMoca is ERC20, Pausable {
     using SafeERC20 for IERC20;
 
-    MocaVotingController public votingController;
+    // protocol yellow pages
+    IAddressBook internal immutable _addressBook;
 
-    IERC20 public immutable mocaToken;
-    IERC20 public immutable esMocaToken;
-    address public treasury;
 
     // global principal
     uint256 public totalLockedMoca;
@@ -42,7 +40,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
     uint256 public DELEGATE_REGISTRATION_FEE;
     uint256 public TOTAL_DELEGATE_REGISTRATION_FEES;
 
-//-------------------------------mapping------------------------------------------
+//-------------------------------mapping---------------------------------------------
 
     // lock
     mapping(bytes32 lockId => DataTypes.Lock lock) public locks;
@@ -74,47 +72,70 @@ contract VotingEscrowMoca is ERC20, AccessControl {
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address mocaToken_, address esMocaToken_, address owner_, address treasury_) ERC20("veMoca", "veMOCA") {
-        mocaToken = IERC20(mocaToken_);
-        esMocaToken = IERC20(esMocaToken_);
+    constructor(address addressBook_) ERC20("veMoca", "veMOCA") {
+        _addressBook = IAddressBook(addressBook_);
 
-        treasury = treasury_;
-
-        // roles
-        _grantRole(DEFAULT_ADMIN_ROLE, owner_);
-
+        // note: has to be done on AddressBook contract after deployment
+        //_addressBook.getAddress(Constants.VOTING_CONTROLLER);
     }
 
 //-------------------------------user functions------------------------------------------
 
-    // note: delegate is optional
+    // note: locks are booked to currentEpochStart
+    // TODO: take in both es and moca at once
+    /**
+     * @notice Creates a new lock with the specified amount, expiry, token type, and optional delegate.
+     * @dev The delegate parameter is optional and can be set to the zero address if not delegating.
+     * @param amount The amount of tokens to lock.
+     * @param expiry The timestamp when the lock will expire.
+     * @param isMoca Boolean indicating whether the lock is for MOCA (true) or esMOCA (false).
+     * @param delegate The address to delegate voting power to (optional).
+     * @return lockId The unique identifier of the created lock.
+     */
     function createLock(uint256 amount, uint128 expiry, bool isMoca, address delegate) external returns (bytes32) {
         return _createLockFor(msg.sender, amount, expiry, isMoca, delegate);
     }
 
+    //TODO:  confirm w/ P: must have at least 1 epoch left to increase amount?
     function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external {
         DataTypes.Lock memory oldLock = locks[lockId];
+
         require(oldLock.lockId != bytes32(0), "NoLockFound");
         require(oldLock.creator == msg.sender, "Only the creator can increase the amount");
-        require(oldLock.expiry > block.timestamp, "Lock has expired");      //note: must have at least 1 epoch - confirm w/ P
+        require(oldLock.expiry > block.timestamp, "Lock has expired");      
 
-        //note: check delegation
-        // insert code
+        // DELEGATED OR PERSONAL LOCK:
+        bool isDelegated = oldLock.delegate != address(0);
+        address account = isDelegated ? oldLock.delegate : msg.sender;
 
-        // UPDATE GLOBAL & USER
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
+        // update account and global: account is either delegate or user
+        (
+            DataTypes.VeBalance memory veGlobal_, 
+            DataTypes.VeBalance memory veAccount, 
+            uint128 currentEpochStart, 
+            mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping, 
+            mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping
+        
+        ) = _updateAccountAndGlobal(account, isDelegated);
+
+        /** if lock is delegated, then the lock has been loaned to the delegate
+            - must update delegateSlopeChanges, delegateHistory
+            - userHistory,userSLopeChanges do not track loaned locks
+            so no reason to update _updateUserAndGlobal -> no bearing.
+        */
 
         // copy old lock: update amount
-        DataTypes.Lock memory newLock = oldLock;
-            newLock.moca += mocaToIncrease;
-            newLock.esMoca += esMocaToIncrease;
+        DataTypes.Lock memory updatedLock = oldLock;
+            updatedLock.moca += mocaToIncrease;
+            updatedLock.esMoca += esMocaToIncrease;
             
-        // calc. delta and book new veBalance + schedule slope changes
-        DataTypes.VeBalance memory newVeBalance = _modifyPosition(veGlobal_, veUser, oldLock, newLock, currentWeekStart);
+        // calc. delta: schedule slope changes + book new veBalance 
+        // MINT: additional veMoca to account
+        DataTypes.VeBalance memory newVeBalance = _modifyPosition(veGlobal_, veAccount, oldLock, updatedLock, account, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
 
         // storage: update lock + checkpoint lock
-        locks[lockId] = newLock;
-        _pushCheckpoint(lockHistory[lockId], newVeBalance, currentWeekStart);        
+        locks[lockId] = updatedLock;
+        _pushCheckpoint(lockHistory[lockId], newVeBalance, currentEpochStart);        
 
         // emit event
 
@@ -123,32 +144,51 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         if(esMocaToIncrease > 0) esMocaToken.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
     }
     
+    //TODO:  confirm w/ P: must have at least 1 epoch left to increase amount?
     function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external {
+        // cannot extend duration arbitrarily; must be step-wise matching epoch boundaries
+        require(EpochMath.isValidEpochTime(durationToIncrease), "Duration must be on a epoch boundary");
+
         DataTypes.Lock memory oldLock = locks[lockId];
+
         require(oldLock.lockId != bytes32(0), "NoLockFound");
         require(oldLock.creator == msg.sender, "Only the creator can increase the duration");
         require(oldLock.expiry > block.timestamp, "Lock has expired");
+        
+        // Ensure the new expiry is at least MIN_LOCK_DURATION from now
+        uint256 newExpiry = oldLock.expiry + durationToIncrease;
+        require(newExpiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, "New expiry too short");
 
-        require(WeekMath.isValidWTime(oldLock.expiry + durationToIncrease), "Expiry must be a valid week beginning");
+        // DELEGATED OR PERSONAL LOCK:
+        bool isDelegated = oldLock.delegate != address(0);
+        address account = isDelegated ? oldLock.delegate : msg.sender;
 
-        //note: for extending lock duration: must meet min duration
-        require(oldLock.expiry + durationToIncrease >= block.timestamp + Constants.MIN_LOCK_DURATION, "Lock duration too short");
+        // update account and global: account is either delegate or user
+        (
+            DataTypes.VeBalance memory veGlobal_, 
+            DataTypes.VeBalance memory veAccount, 
+            uint128 currentEpochStart, 
+            mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping, 
+            mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping
+        
+        ) = _updateAccountAndGlobal(account, isDelegated);
 
-        //note: check delegation
-
-        // UPDATE GLOBAL & USER
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentWeekStart) = _updateUserAndGlobal(msg.sender);
+        /** if lock is delegated, then the lock has been loaned to the delegate
+            - must update delegateSlopeChanges, delegateHistory
+            - userHistory,userSLopeChanges do not track loaned locks
+            so no reason to update _updateUserAndGlobal -> no bearing.
+        */
 
         // copy old lock: update amount and/or duration
-        DataTypes.Lock memory newLock = oldLock;
-            newLock.expiry += durationToIncrease;
+        DataTypes.Lock memory updatedLock = oldLock;
+            updatedLock.expiry = newExpiry;
 
-        // calc. delta and book new veBalance + schedule slope changes
-        DataTypes.VeBalance memory newVeBalance = _modifyPosition(veGlobal_, veUser, oldLock, newLock, currentWeekStart);
+        // calc. delta: schedule slope changes + book new veBalance + mints additional veMoca to account
+        DataTypes.VeBalance memory newVeBalance = _modifyPosition(veGlobal_, veAccount, oldLock, updatedLock, account, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
 
         // storage: update lock + checkpoint lock
-        locks[lockId] = newLock;
-        _pushCheckpoint(lockHistory[lockId], newVeBalance, currentWeekStart);        
+        locks[lockId] = updatedLock;
+        _pushCheckpoint(lockHistory[lockId], newVeBalance, currentEpochStart);        
 
         // emit event
     }
@@ -185,13 +225,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         if(lock.esMoca > 0) esMocaToken.safeTransfer(msg.sender, lock.esMoca);        
     }
 
-    /**
-        delegating a lock is essentially "loaning" it away to the delegate
-        - user cannot vote w/ delegated lock
-        - delegated lock is removed from user's purview: userHistory, userSlopeChanges [will be handled under delegated address]
-        - 
-    
-     */
+
     // note: consider creating _updateAccount(). then can streamline w/ _updateGlobal, _updateAccount(user), _updateAccount(delegate) | 
     //       but there must be a strong case for need to have _updateAccount as a standalone beyond delegate
     //       as gas diff is not significant
@@ -363,10 +397,9 @@ contract VotingEscrowMoca is ERC20, AccessControl {
 
 //-------------------------------delegate functions------------------------------------------
    
-    //note: registration fees were collected by VotingController
-    function registerAsDelegate(address delegate) external {
-        require(msg.sender == address(votingController), "Only voting controller can register delegates");
-        //require(delegate != address(0), "Invalid address"); note: should not be needed since external contract call
+    // note: registration fees were collected by VotingController
+    // require(delegate != address(0) not needed since external contract call
+    function registerAsDelegate(address delegate) external onlyVotingControllerContract {
         require(!isRegisteredDelegate[delegate], "Already registered");
 
         // storage: register delegate
@@ -376,8 +409,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         //emit DelegateRegistered(delegate);
     }
 
-    function unregisterAsDelegate(address delegate) external {
-        require(msg.sender == address(votingController), "Only voting controller can unregister delegates");
+    function unregisterAsDelegate(address delegate) external onlyVotingControllerContract {
         require(isRegisteredDelegate[delegate], "Delegate not registered");
         isRegisteredDelegate[delegate] = false;
 
@@ -387,7 +419,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
 
 //-------------------------------admin functions---------------------------------------------
 
-    // when creating lock onBehalof - we will not delegate for the user
+    // when creating lock onBehalOf - we will not delegate for the user
     function createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca) external onlyRole(Constants.CRON_JOB_ROLE) returns (bytes32) { 
         return _createLockFor(user, amount, expiry, isMoca, address(0));
     }
@@ -400,7 +432,7 @@ contract VotingEscrowMoca is ERC20, AccessControl {
     function _createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca, address delegate) internal returns (bytes32) {
         require(user != address(0), "Invalid user");
         require(amount > 0, "Amount must be greater than zero");
-        require(WeekMath.isValidWTime(expiry), "Expiry must be a valid week beginning");
+        require(EpochMath.isValidEpochTime(expiry), "Expiry timestamp must lie on an epoch boundary");
 
         require(expiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, "Lock duration too short");
         require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, "Lock duration too long");
@@ -431,62 +463,47 @@ contract VotingEscrowMoca is ERC20, AccessControl {
             // STORAGE: book lock
             locks[lockId] = newLock;
 
-            // get lock's veBalance
+            // STORAGE: get lock's veBalance + book checkpoint into lockHistory mapping 
             DataTypes.VeBalance memory veIncoming = _convertToVeBalance(newLock);
-            // STORAGE: update lock history
-            _pushCheckpoint(lockHistory[lockId], veIncoming, EpochMath.getCurrentEpochStart());
+            _pushCheckpoint(lockHistory[lockId], veIncoming, EpochMath.getCurrentEpochStart()); 
 
             // EMIT LOCK CREATED
+            // emit LockCreated(lockId, user, delegate, amount, expiry, isMoca);
 
         // --------- conditional updates based on delegation ---------
 
-        if(delegate != address(0)) {
-        
-            // DELEGATED LOCK: update delegate and global
-            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint128 currentEpochStart) = _updateAccountAndGlobal(delegate, true);
-        
-            // add new lock to global state
-            veGlobal_.bias += veIncoming.bias;
-            veGlobal_.slope += veIncoming.slope;
+        // DELEGATED OR PERSONAL LOCK:
+        bool isDelegated = delegate != address(0);
+        address account = isDelegated ? delegate : user;
 
-            // STORAGE: book updated veGlobal & schedule slope change
-            veGlobal = veGlobal_;
-            slopeChanges[expiry] += veIncoming.slope;
+        // Apply scheduled slope reductions & decay up to current epoch
+        (
+            DataTypes.VeBalance memory veGlobal_, 
+            DataTypes.VeBalance memory veAccount, 
+            uint128 currentEpochStart, 
+            mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping, 
+            mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping
+        ) = _updateAccountAndGlobal(account, isDelegated);
 
-            // add new lock to delegate's aggregated veBalance
-            veDelegate.bias += veIncoming.bias;
-            veDelegate.slope += veIncoming.slope;
-            
-            // STORAGE: book updated veDelegate & schedule slope change
-            delegateHistory[delegate][currentEpochStart] = veDelegate;
-            delegateSlopeChanges[delegate][expiry] += veIncoming.slope;
+        // Add new lock to global state
+        veGlobal_.bias += veIncoming.bias;
+        veGlobal_.slope += veIncoming.slope;
 
-            // Mint to delegate
-            _mint(delegate, veIncoming.bias);
+        // STORAGE: book updated veGlobal & schedule slope change
+        veGlobal = veGlobal_;
+        slopeChanges[expiry] += veIncoming.slope;
 
-        } else {
-            // PERSONAL LOCK: update user and global
-            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentEpochStart) = _updateAccountAndGlobal(msg.sender, false);
-            
-            // add new lock to global state
-            veGlobal_.bias += veIncoming.bias;
-            veGlobal_.slope += veIncoming.slope;
-            
-            // STORAGE: book updated veGlobal & schedule slope change
-            veGlobal = veGlobal_;
-            slopeChanges[expiry] += veIncoming.slope;
 
-            // add new lock to user's aggregated veBalance
-            veUser.bias += veIncoming.bias;
-            veUser.slope += veIncoming.slope;
-            
-            // STORAGE: book updated veUser & schedule slope change
-            userHistory[user][currentEpochStart] = veUser;
-            userSlopeChanges[user][expiry] += veIncoming.slope;
+        // Add new lock to account's aggregated veBalance
+        veAccount.bias += veIncoming.bias;
+        veAccount.slope += veIncoming.slope;
 
-            // MINT to user
-            _mint(user, veIncoming.bias);
-        }
+        // STORAGE: book updated veAccount & schedule slope change
+        accountHistoryMapping[account][currentEpochStart] = veAccount;
+        accountSlopeChangesMapping[account][expiry] += veIncoming.slope;
+
+        // MINT to account
+        _mint(account, veIncoming.bias);
 
         // EMIT LOCK CREATED
 
@@ -521,14 +538,14 @@ contract VotingEscrowMoca is ERC20, AccessControl {
             return veGlobal_;
         }
 
-        // update global veBalance
+        // there are updates to be done: update global veBalance
         while (lastUpdatedAt < currentEpochStart) {
             // advance 1 epoch
             lastUpdatedAt += EpochMath.EPOCH_DURATION;                  
 
-            // remove any scheduled slope changes from expiring locks
-            veGlobal_ = subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
-            // subtract decay for this epoch & book
+            // apply scheduled slope reductions and handle decay for expiring locks
+            veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
+            // after removing expired locks, calc. and book current ve supply for the epoch
             totalSupplyAt[lastUpdatedAt] = _getValueAt(veGlobal_, lastUpdatedAt);
         }
 
@@ -538,13 +555,20 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         return (veGlobal_);
     }
 
+    //note: we do not call _updateGlobal() within the while loop when updating account, to reduce stacking of while loops: `while (accountLastUpdatedAt < currentEpochStart)`
     /**
         - user.lastUpdatedAt either matches the global.lastUpdatedAt OR is behind it
         - the global never lags behind the user
 
         returns: veGlobal_, veAccount, currentEpochStart
      */
-    function _updateAccountAndGlobal(address account, bool isDelegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
+    function _updateAccountAndGlobal(address account, bool isDelegate) internal 
+        returns ( 
+                DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128,
+                mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage, // accountHistoryMapping
+                mapping(address => mapping(uint128 => uint128)) storage // accountSlopeChangesMapping
+            )
+    {
         // cache global veBalance
         DataTypes.VeBalance memory veGlobal_ = veGlobal;
         uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
@@ -552,13 +576,16 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         // init account veBalance
         DataTypes.VeBalance memory veAccount;
 
-        // mapping lookups to get the appropriate mappings based on account type
-        mapping(address => uint128) storage lastUpdatedMapping = isDelegate ? delegateLastUpdatedTimestamp : userLastUpdatedTimestamp;
-        mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage historyMapping = isDelegate ? delegateHistory : userHistory;
-        mapping(address => mapping(uint128 => uint128)) storage slopeChangesMapping = isDelegate ? delegateSlopeChanges : userSlopeChanges;
+        // Streamlined mapping lookups based on account type
+        (
+            mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping,
+            mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping,
+            mapping(address => uint128) storage accountLastUpdatedMapping
+        ) 
+            = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
 
-        // Get the appropriate last updated timestamp
-        uint128 accountLastUpdatedAt = lastUpdatedMapping[account];
+        // get lastUpdatedTimestamp: {user | delegate}
+        uint128 accountLastUpdatedAt = accountLastUpdatedMapping[account];
         
         // get current epoch start
         uint128 currentEpochStart = EpochMath.getCurrentEpochStart(); 
@@ -567,25 +594,26 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         if (accountLastUpdatedAt == 0) {
             
             // set account's lastUpdatedTimestamp and veBalance
-            lastUpdatedMapping[account] = currentEpochStart;
+            accountLastUpdatedMapping[account] = currentEpochStart;
             veAccount = DataTypes.VeBalance(0, 0);
 
             // update global: updates lastUpdatedTimestamp | may or may not have updates
-            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentWeekStart);
+            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
 
-            return (veGlobal_, veAccount, currentWeekStart);
+            return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
         }
                 
         // load account's previous veBalance: if both global and account are up to date, return
-        veAccount = historyMapping[account][accountLastUpdatedAt];
-        if(accountLastUpdatedAt >= currentEpochStart) return (veGlobal_, veAccount, currentEpochStart); 
+        veAccount = accountHistoryMapping[account][accountLastUpdatedAt];
+        if(accountLastUpdatedAt >= currentEpochStart)
+            return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
 
-        // update both global and account veBalance to current epoch
+        // Updating needed: global and account veBalance to current epoch
         while (accountLastUpdatedAt < currentEpochStart) {
             // advance 1 epoch
             accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
 
-            // update global: if needed 
+            // Update global: if needed 
             if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
                 
                 // subtract decay for this epoch && remove any scheduled slope changes from expiring locks
@@ -593,49 +621,52 @@ contract VotingEscrowMoca is ERC20, AccessControl {
                 // book ve state for the new epoch
                 totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
             }
-
-            // update account: apply decay for this epoch & remove any scheduled slope changes from expiring locks
-            uint128 expiringSlope = slopeChangesMapping[account][accountLastUpdatedAt];    
-            veAccount = subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
+            
+            // Update account: apply scheduled slope reductions & decay for this epoch | cumulative of account's expired locks
+            uint128 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];    
+            veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
             
             // book account checkpoint 
-            historyMapping[account][accountLastUpdatedAt] = veAccount;
+            accountHistoryMapping[account][accountLastUpdatedAt] = veAccount;
         }
 
         // set final lastUpdatedTimestamp: for global and account
         lastUpdatedTimestamp = accountLastUpdatedAt;
-        lastUpdatedMapping[account] = accountLastUpdatedAt;        
+        accountLastUpdatedMapping[account] = accountLastUpdatedAt;        
 
         // return
-        return (veGlobal_, veAccount, currentWeekStart);
+        return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
     }
 
     // note: any possible rounding errors due to calc. of delta; instead of removed old then add new?
     function _modifyPosition(
-        DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, 
-        DataTypes.Lock memory oldLock, DataTypes.Lock memory newLock, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory) {
+        DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veAccount, 
+        DataTypes.Lock memory oldLock, DataTypes.Lock memory updatedLock, 
+        address account, uint128 currentEpochStart,
+
+        mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping,
+        mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping
+
+        ) internal returns (DataTypes.VeBalance memory) {
 
         // convert old and new lock to veBalance
         DataTypes.VeBalance memory oldVeBalance = _convertToVeBalance(oldLock);
-        DataTypes.VeBalance memory newVeBalance = _convertToVeBalance(newLock);
+        DataTypes.VeBalance memory newVeBalance = _convertToVeBalance(updatedLock);
 
         // get delta btw veBalance of old and new lock
         DataTypes.VeBalance memory increaseInVeBalance = _sub(newVeBalance, oldVeBalance);
 
-        // update global
-        veGlobal_ = _add(veGlobal_, increaseInVeBalance);
+        // STORAGE: update global
+        veGlobal = _add(veGlobal_, increaseInVeBalance);
         slopeChanges[newLock.expiry] += increaseInVeBalance.slope;
 
-        // update user
-        veUser = _add(veUser, increaseInVeBalance);
-        userSlopeChanges[msg.sender][newLock.expiry] += increaseInVeBalance.slope;
-
-        // storage
-        veGlobal = veGlobal_;
-        userHistory[msg.sender][currentWeekStart] = veUser;
+        // STORAGE: update account
+        veAccount = _add(veAccount, increaseInVeBalance);
+        accountHistoryMapping[account][currentEpochStart] = veAccount;
+        accountSlopeChangesMapping[account][newLock.expiry] += increaseInVeBalance.slope;
 
         // mint the delta (difference between old and new veBalance)
-        _mint(msg.sender, newVeBalance.bias - oldVeBalance.bias);
+        _mint(account, newVeBalance.bias - oldVeBalance.bias);
         
         return newVeBalance;
     }
@@ -653,6 +684,27 @@ contract VotingEscrowMoca is ERC20, AccessControl {
     function _updateDelegateAndGlobal(address delegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
         return _updateAccountAndGlobal(delegate, true);
     }
+
+//------------------------------- modifiers ---------------------------------------------
+
+    modifier onlyVotingControllerContract() {
+        address votingController = _addressBook.getVotingController();
+        require(msg.sender == votingController, "Caller not voting controller");
+        _;
+    }
+
+    modifier onlyMonitorRole(){
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isMonitor(msg.sender), "Caller not monitor");
+        _;
+    }
+
+    modifier onlyGlobalAdminRole(){
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isGlobalAdmin(msg.sender), "Caller not global admin");
+        _;
+    }
+
 
 //-------------------------------internal: view-----------------------------------------------------
 
@@ -831,17 +883,14 @@ contract VotingEscrowMoca is ERC20, AccessControl {
 //-------------------------------lib-----------------------------------------------------
 
     // removed expired locks from veBalance | does not set lastUpdatedAt
-    function subtractExpired(DataTypes.VeBalance memory a, uint128 expiringSlope, uint128 expiry) internal pure returns (DataTypes.VeBalance memory) {
-        uint128 bias = a.bias - (expiringSlope * expiry);       // remove decayed ve
-        uint128 slope = a.slope - expiringSlope;                 // remove expiring slope
+    function _subtractExpired(DataTypes.VeBalance memory a, uint128 expiringSlopes, uint128 expiry) internal pure returns (DataTypes.VeBalance memory) {
+        a.bias -= (expiringSlopes * expiry);       // remove decayed ve
+        a.slope -= expiringSlopes;                 // remove expiring slopes
 
-        DataTypes.VeBalance memory res;
-            res.bias = bias;
-            res.slope = slope;
-
-        return res;
+        return a;
     }
 
+    // subtracts b from a
     function _sub(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
         DataTypes.VeBalance memory res;
             res.bias = a.bias - b.bias;
@@ -858,22 +907,20 @@ contract VotingEscrowMoca is ERC20, AccessControl {
         return res;
     }
 
-    // time is timestamp, not duration | forward-lookingl; not historical search
-    function _getValueAt(DataTypes.VeBalance memory a, uint128 time) internal pure returns (uint128) {
-        if(a.bias < (a.slope * time)) {
+    // forward-looking; not historical search
+    function _getValueAt(DataTypes.VeBalance memory a, uint128 timestamp) internal pure returns (uint128) {
+        if(a.bias < (a.slope * timestamp)) {
             return 0;
         }
-
-        return a.bias - (a.slope * time);
+        // offset inception inflation
+        return a.bias - (a.slope * timestamp);
     }
 
-    // calc. veBalance{bias,slope} from lock; based on expiry time
+    // calc. veBalance{bias,slope} from lock; based on expiry time | inception offset is handled by balanceOf() queries
     function _convertToVeBalance(DataTypes.Lock memory lock) internal pure returns (DataTypes.VeBalance memory) {
         DataTypes.VeBalance memory veBalance;
 
-        uint128 totalAmount = lock.moca + lock.esMoca;
-
-        veBalance.slope = totalAmount / EpochMath.MAX_LOCK_DURATION;
+        veBalance.slope = (lock.moca + lock.esMoca) / EpochMath.MAX_LOCK_DURATION;
         veBalance.bias = veBalance.slope * lock.expiry;
 
         return veBalance;
@@ -882,12 +929,12 @@ contract VotingEscrowMoca is ERC20, AccessControl {
     function _pushCheckpoint(DataTypes.Checkpoint[] storage lockHistory_, DataTypes.VeBalance memory veBalance, uint128 currentEpochStart) internal {
         uint256 length = lockHistory_.length;
 
-        // if last checkpoint is in the same week as incoming; overwrite
-        if(length > 0 && lockHistory_[length - 1].lastUpdatedAt == currentWeekStart) {
+        // if last checkpoint is in the same epoch as incoming; overwrite
+        if(length > 0 && lockHistory_[length - 1].lastUpdatedAt == currentEpochStart) {
             lockHistory_[length - 1].veBalance = veBalance;
         } else {
-            // new checkpoint for new week: set lastUpdatedAt
-            lockHistory_.push(DataTypes.Checkpoint(veBalance, currentWeekStart));
+            // new checkpoint for new epoch: set lastUpdatedAt
+            lockHistory_.push(DataTypes.Checkpoint(veBalance, currentEpochStart));
         }
     }
 
@@ -903,6 +950,39 @@ contract VotingEscrowMoca is ERC20, AccessControl {
     function transferFrom(address, address, uint256) public pure override returns (bool) {
         revert("veMOCA is non-transferable");
     }
+
+
+//------------------------------- risk -------------------------------------------------------
+
+    /**
+     * @notice Pause contract. Cannot pause once frozen
+     */
+    function pause() external whenNotPaused onlyMonitorRole {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _pause();
+    }
+
+    /**
+     * @notice Unpause pool. Cannot unpause once frozen
+     */
+    function unpause() external whenPaused onlyGlobalAdminRole {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _unpause();
+    }
+
+    /**
+     * @notice To freeze the pool in the event of something untoward occurring
+     * @dev Only callable from a paused state, affirming that staking should not resume
+     *      Nothing to be updated. Freeze as is.
+     *      Enables emergencyExit() to be called.
+     */
+    function freeze() external whenPaused onlyGlobalAdminRole {
+        if(isFrozen == 1) revert Errors.IsFrozen();
+        isFrozen = 1;
+        emit ContractFrozen(block.timestamp);
+    }  
+
+    //function emergencyExit
 
 //-------------------------------view functions-----------------------------------------
 

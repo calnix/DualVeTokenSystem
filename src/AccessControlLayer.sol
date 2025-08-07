@@ -31,8 +31,8 @@ contract AccessController is AccessControl {
     */
     
     // ROLES
-    bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause
-
+    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause
+    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
 
     //bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params
     //bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // stakeOnBehalf
@@ -40,10 +40,10 @@ contract AccessController is AccessControl {
 
 
     /**
-    * @dev Constructor
-    * @dev Global admin address should be initialized at the AddressBook beforehand
-    * @dev Global admin is the DEFAULT_ADMIN_ROLE for this contract
-    * @param _addressBook The address of the AddressBook
+        * @dev Constructor
+        * @dev Global admin address should be initialized at the AddressBook beforehand
+        * @dev Global admin is the DEFAULT_ADMIN_ROLE for this contract
+        * @param _addressBook The address of the AddressBook
     */
     constructor(address addressBook_) {
 
@@ -67,6 +67,20 @@ contract AccessController is AccessControl {
     */
     function setRoleAdmin(bytes32 role, bytes32 adminRole) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRoleAdmin(role, adminRole);
+    }
+
+// ----- GLOBAL_ADMIN ROLE -----
+
+    function addGlobalAdmin(address addr) external {
+        grantRole(DEFAULT_ADMIN_ROLE, addr);
+    }
+
+    function removeGlobalAdmin(address addr) external {
+        revokeRole(DEFAULT_ADMIN_ROLE, addr);
+    }
+
+    function isGlobalAdmin(address addr) external view returns (bool) {
+        return hasRole(DEFAULT_ADMIN_ROLE, addr);
     }
 
 // ----- MONITOR ROLE -----
