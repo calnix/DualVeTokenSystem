@@ -8,6 +8,8 @@
 - contract type defined by bytes32
 - Known contracts are set as constants. E.g.: ` bytes32 private constant USD8 = 'USD8';`
 
+Every time a contract is deployed it must be updated to AddressBook.
+
 ## AccessControlLayer is like a firewall handling permissioning
 - contains list of roles 
 - E.g.: `bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE")`
@@ -42,6 +44,9 @@ Example: where we want to check that caller is a specific contract. Does not inv
         _;
     }
 ```
+
+**Implementation-wise, contracts do not need to inherit AccessControl**
+- they will just make external queries to ACL
 
 ## Why is AddressBook immutable but ACL can be redeployed
 
