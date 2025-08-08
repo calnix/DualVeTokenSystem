@@ -32,10 +32,11 @@ contract AccessController is AccessControl {
     
     // ROLES
     bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause
+    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // createLockFor
+    
     bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
 
     //bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params
-    //bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // stakeOnBehalf
     //bytes32 public constant EMERGENCY_ADMIN_ROLE = keccak256('EMERGENCY_ADMIN');
 
 
@@ -104,6 +105,21 @@ contract AccessController is AccessControl {
     function isMonitor(address addr) external view returns (bool) {
         return hasRole(MONITOR_ROLE, addr);
     }
+
+// ----- CRON_JOB ROLE -----
+
+    function addCronJob(address addr) external {
+        grantRole(CRON_JOB_ROLE, addr);
+    }
+
+    function removeCronJob(address addr) external {
+        revokeRole(CRON_JOB_ROLE, addr);
+    }
+
+    function isCronJob(address addr) external view returns (bool) {
+        return hasRole(CRON_JOB_ROLE, addr);
+    }
+
 
 // ----- PaymentsController Admin: PaymentsAdmin -----
 
