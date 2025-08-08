@@ -24,3 +24,10 @@ contract Router {
         }
     }
 }
+
+
+
+
+// on batch:
+// https://samczsun.com/two-rights-might-make-a-wrong/
+// https://blog.trailofbits.com/2021/12/16/detecting-miso-and-opyns-msg-value-reuse-vulnerability-with-slither/

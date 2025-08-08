@@ -1,27 +1,33 @@
-    // SPDX-License-Identifier: BUSL-1.1
-    pragma solidity 0.8.27;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
 
-    //import {VotingEscrowTokenBase} from "./VotingEscrowTokenBase.sol";
-    import {WeekMath} from "./WeekMath.sol";
-    import {Constants} from "./Constants.sol";
-    import {DataTypes} from "./DataTypes.sol";
+// External: OZ
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-    import {MocaVotingController} from "./MocaVotingController.sol";
+// libraries
+import {Constants} from "./libraries/Constants.sol";
+import {EpochMath} from "./libraries/EpochMath.sol";
+import {DataTypes} from "./libraries/DataTypes.sol";
 
-    import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
-    import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-    import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+// interfaces
+import {IAddressBook} from "./interfaces/IAddressBook.sol";
+import {IAccessController} from "./interfaces/IAccessController.sol";
 
-    import {EpochMath} from "./libraries/EpochMath.sol";
 
-    /**
-        - Stake MOCA tokens to receive veMOCA (voting power)
-        - Longer lock periods result in higher veMOCA allocation
-        - veMOCA decays linearly over time, reducing voting power
-        - Formula-based calculation determines veMOCA amount based on stake amount and duration
-    */
+/**
+ * @title VotingEscrowMoca
+ * @author Calnix [@cal_nix]
+ * @notice VotingEscrowMoca is a dual-token, quad-accounting type veToken system.
+ * @dev
+ *      - VotingEscrowMoca is a non-transferable token representing voting power.
+ *      - The amount of veMOCA received increases with both the amount of MOCA locked and the length of the lock period, and decays linearly as the lock approaches expiry.
+ *      - This contract supports delegation, historical checkpointing, and integration with protocol governance.
+*/
 
-    contract VotingEscrowMoca is ERC20, Pausable {
+
+contract VotingEscrowMoca is ERC20, Pausable {
         using SafeERC20 for IERC20;
 
         // protocol yellow pages

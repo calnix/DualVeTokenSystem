@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+// External: OZ
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-import {veMoca} from "./VotingEscrowMoca.sol";
+// libraries
+import {Constants} from "./libraries/Constants.sol";
+import {EpochMath} from "./libraries/EpochMath.sol";
 
-import {Constants} from "./Constants.sol";
-import {EpochMath} from "./utils/EpochMath.sol";
-
-import {IOmPm} from "./interfaces/IOmPm.sol";
-import {IAddressBook} from "../interfaces/IAddressBook.sol";
-import
-import {IEscrowedMoca} from "../interfaces/IEscrowedMoca.sol";
-import {IAccessController} from "../interfaces/IAccessController.sol";
+// interfaces
+import {IAddressBook} from "./interfaces/IAddressBook.sol";
+import {IAccessController} from "./interfaces/IAccessController.sol";
+import {IEscrowedMoca} from "./interfaces/IEscrowedMoca.sol";
+import {IPaymentsController} from "./interfaces/IPaymentsController.sol";
 
 //TODO: standardize naming conventions: {subsidy,incentive}
 
-contract VotingController is AccessControl {
+contract VotingController is Pausable {
     using SafeERC20 for IERC20;
 
     VotingEscrowMoca public immutable veMoca;
