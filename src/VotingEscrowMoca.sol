@@ -193,36 +193,34 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // emit event
     }
 
-    //note: now tt earlyRedemption has been removed, can rename to redeem/unlock
-    // Withdraws an expired lock position, returning the principal and veMoca
+    // Withdraws principals of an expired lock | ve will be burnt, altho veBalance will return 0 on expiry
+    // @follow-up allowing anyone to unlock a lock.
     function unlock(bytes32 lockId) external {
         DataTypes.Lock memory lock = locks[lockId];
-        require(lock.lockId != bytes32(0), "NoLockFound");
-        require(lock.creator == msg.sender, "Only the creator can withdraw");
-        require(lock.expiry < block.timestamp, "Lock has not expired");
-        require(lock.isEnded == false, "Lock has ended");
 
+        require(lock.lockId != bytes32(0), "LockNotFound");
+        require(lock.expiry < block.timestamp, "Lock not expired");
+        require(lock.isUnlocked == false, "Lock already unlocked");
+
+        //require(lock.creator == msg.sender, "Only creator can unlock");
+        
         // UPDATE GLOBAL & USER
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentEpochStart) = _updateUserAndGlobal(msg.sender);
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentEpochStart) = _updateAccountAndGlobal(lock.owner, false);
 
-        // get old veBalance
-        DataTypes.VeBalance memory veBalance = _convertToVeBalance(lock);
-        require(veBalance.bias == 0, "No veMoca to withdraw");
-
-        // note: book final checkpoint, since we do not delete the lock
-        // STORAGE: update lock + book final checkpoint
-        lock.isEnded = true;    
+        // STORAGE: update lock + book final checkpoint | note: book final checkpoint, since we do not delete the lock
+        lock.isUnlocked = true;    
         locks[lockId] = lock;
-        _pushCheckpoint(lockHistory[lockId], veBalance, currentEpochStart);  
+        _pushCheckpoint(lockHistory[lockId], veUser, currentEpochStart);  
 
         // burn originally issued veMoca
-        _burn(msg.sender, veBalance.bias);
+        uint256 mintedVeMoca = _convertToVeBalance(lock).bias;
+        _burn(lock.owner, mintedVeMoca);
 
         // emit event
 
-        // return principals to user
-        if(lock.moca > 0) mocaToken.safeTransfer(msg.sender, lock.moca);
-        if(lock.esMoca > 0) esMocaToken.safeTransfer(msg.sender, lock.esMoca);        
+        // return principals to lock.owner
+        if(lock.moca > 0) mocaToken.safeTransfer(lock.owner, lock.moca);
+        if(lock.esMoca > 0) esMocaToken.safeTransfer(lock.owner, lock.esMoca);        
     }
 
 
@@ -613,7 +611,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // advance 1 epoch
             accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
 
-            // Update global: if needed 
+            // --- Update global: if required ---
             if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
                 
                 // subtract decay for this epoch && remove any scheduled slope changes from expiring locks

@@ -40,10 +40,8 @@ contract AccessController is AccessControl {
 
 
     /**
-        * @dev Constructor
-        * @dev Global admin address should be initialized at the AddressBook beforehand
-        * @dev Global admin is the DEFAULT_ADMIN_ROLE for this contract
-        * @param _addressBook The address of the AddressBook
+     * @dev Constructor
+     * @param addressBook_ The address of the AddressBook
     */
     constructor(address addressBook_) {
 
