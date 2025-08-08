@@ -13,7 +13,7 @@ library DataTypes {
         uint128 esMoca;
             
         uint128 expiry;        // timestamp when lock ends
-        bool isUnlocked;       // indicates lock's principals are returned
+        bool isUnlocked;       // flag: indicates lock's principals are returned
     }
     
     // Checkpoint
