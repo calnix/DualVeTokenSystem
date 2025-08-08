@@ -895,35 +895,43 @@
             return (veGlobal_);
         }
 
-        // forDelegated: true = query user's delegated account, false = user's personal account
+        // _updateAccount, but w/o the storage changes | forDelegated: user's {true:delegatedAccount, false: personalAccount}
         function _viewAccount(address account, bool forDelegated) internal view returns (DataTypes.VeBalance memory) {
             // init account veBalance
             DataTypes.VeBalance memory veBalance;
 
-            // Get the appropriate last updated timestamp based on account type
-            uint128 lastUpdatedAt = forDelegated ? delegateLastUpdatedTimestamp[account] : userLastUpdatedTimestamp[account];
+            // Select storage pointers based on account type; to avoid repeated checks
+            (
+                mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistory,
+                mapping(address => mapping(uint128 => uint128)) storage accountSlopeChanges,
+                mapping(address => uint128) storage accountLastUpdatedTimestamp
+            ) = forDelegated
+                ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp)
+                : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
+
+            // Get the appropriate last updated timestamp
+            uint128 lastUpdatedAt = accountLastUpdatedTimestamp[account];
             
-            // if account's first time: no prior updates to execute 
+            // account has no locks created: return empty veBalance
             if(lastUpdatedAt == 0) return veBalance;
 
-            // load account's previous veBalance from appropriate history
-            veBalance = forDelegate ? delegateHistory[account][lastUpdatedAt] : userHistory[account][lastUpdatedAt];
+            // load account's previous veBalance from history
+            veBalance = accountHistory[account][lastUpdatedAt];
             
-            // get current week start
-            uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
+            // get current epoch start
+            uint128 currentEpochStart = EpochMath.getCurrentEpochStart(); 
             
             // already up to date: return
-            if(lastUpdatedAt >= currentWeekStart) return veBalance;
+            if(lastUpdatedAt >= currentEpochStart) return veBalance;
 
-            // update account veBalance to current week
-            while (lastUpdatedAt < currentWeekStart) {
-                lastUpdatedAt += Constants.WEEK;
-                // Use appropriate slope changes mapping based on account type
-                uint128 expiringSlope = forDelegate ? 
-                    delegateSlopeChanges[account][lastUpdatedAt] : 
-                    userSlopeChanges[account][lastUpdatedAt];
-                
-                veBalance = subtractExpired(veBalance, expiringSlope, lastUpdatedAt);
+            // update account veBalance to current epoch
+            while (lastUpdatedAt < currentEpochStart) {
+                // advance 1 epoch
+                lastUpdatedAt += EpochMath.EPOCH_DURATION;
+
+                // decrement decay for this epoch & apply scheduled slope changes
+                uint128 expiringSlope = accountSlopeChanges[account][lastUpdatedAt];
+                veBalance = _subtractExpired(veBalance, expiringSlope, lastUpdatedAt);
             }
 
             return veBalance;
