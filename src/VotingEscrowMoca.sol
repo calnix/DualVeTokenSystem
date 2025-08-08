@@ -12,7 +12,7 @@
     import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
     import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
-    import {EpochMath} from "./EpochMath.sol";
+    import {EpochMath} from "./libraries/EpochMath.sol";
 
     /**
         - Stake MOCA tokens to receive veMOCA (voting power)
@@ -444,9 +444,7 @@
             //emit DelegateUnregistered(delegate);
         }
 
-    //-------------------------------internal: update functions----------------------------------------------------
-
-        // delegate can be address(0)
+    //-------------------------------internal: update functions----------------------------------------------        // delegate can be address(0)
         function _createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca, address delegate) internal returns (bytes32) {
             require(user != address(0), "Invalid user");
             require(amount > 0, "Amount must be greater than zero");
@@ -698,7 +696,7 @@
             return newVeBalance;
         }
 
-    //-------------------------------internal: library functions -------------------------------------------------
+    //-------------------------------internal: library functions --------------------------------------------
 
         // removed expired locks from veBalance | does not set lastUpdatedAt
         function _subtractExpired(DataTypes.VeBalance memory a, uint128 expiringSlopes, uint128 expiry) internal pure returns (DataTypes.VeBalance memory) {
@@ -756,7 +754,7 @@
             }
         }
 
-    //------------------------------- modifiers -------------------------------------------------
+    //-------------------------------Modifiers -------------------------------------------------
 
         modifier onlyMonitorRole(){
             IAccessController accessController = IAccessController(_addressBook.getAccessController());
@@ -790,30 +788,110 @@
             _;
         }
 
+    //-------------------------------block: transfer/transferFrom -----------------------------------------
+
+        //note: white-list transfers? || incorporate ACL / or new layer for token transfers
+
+        function transfer(address, uint256) public pure override returns (bool) {
+            revert("veMOCA is non-transferable");
+        }
+
+        function transferFrom(address, address, uint256) public pure override returns (bool) {
+            revert("veMOCA is non-transferable");
+        }
+
+
+    //------------------------------- risk management ---------------------------------------------
+
+        /**
+        * @notice Pause contract. Cannot pause once frozen
+        */
+        function pause() external whenNotPaused onlyMonitorRole {
+            if(isFrozen == 1) revert Errors.IsFrozen(); 
+            _pause();
+        }
+
+        /**
+        * @notice Unpause pool. Cannot unpause once frozen
+        */
+        function unpause() external whenPaused onlyGlobalAdminRole {
+            if(isFrozen == 1) revert Errors.IsFrozen(); 
+            _unpause();
+        }
+
+        /**
+        * @notice To freeze the pool in the event of something untoward occurring
+        * @dev Only callable from a paused state, affirming that staking should not resume
+        *      Nothing to be updated. Freeze as is.
+        *      Enables emergencyExit() to be called.
+        */
+        function freeze() external whenPaused onlyGlobalAdminRole {
+            if(isFrozen) revert Errors.IsFrozen();
+
+            isFrozen = 1;
+            emit ContractFrozen(block.timestamp);
+        }  
+
+        // return principals{esMoca,Moca} to users
+        // not callable by anyone: calling this fn arbitrarily on the basis of "frozen" is not a good idea
+        // only callable by emergency exit handler: timing of calling exit could be critical
+        // disregard making updates to the contract: no need to update anything; system has failed. leave it as is.
+        // focus purely on returning principals
+        function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole {
+            require(isFrozen, "Contract is not frozen");
+            require(lockIds.length > 0, "No locks provided");
+
+            // get user's veBalance for each lock
+            for(uint256 i; i < lockIds.length; ++i) {
+                // get lock
+                DataTypes.Lock memory lock = locks[lockIds[i]];
+
+                //sanity: lock exists + principals not returned
+                require(lock.owner != address(0), "Invalid lockId");
+                require(lock.isUnlocked == false, "Principals already returned");                
+
+                // burn veMoca
+                _burn(lock.owner, lock.veMoca);
+
+                // transfer all tokens to the users
+                if(lock.moca > 0) mocaToken.safeTransfer(lock.owner, lock.moca);
+                if(lock.esMoca > 0) esMocaToken.safeTransfer(lock.owner, lock.esMoca);
+
+                // mark exited 
+                //delete lock.moca;   --> @follow-up do we want to keep this for record?
+                //delete lock.esMoca; --> @follow-up point-in-time value when exit occurred; how much was repatriated
+                lock.isUnlocked = true;
+    
+                locks[lockIds[i]] = lock;
+            }
+
+            // emit event
+            // emit EmergencyExit(lockIds);
+        }
 
     //-------------------------------internal: view-----------------------------------------------------
 
+        // _updateGlobal, but w/o the storage changes
+        function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint128 lastUpdatedAt, uint128 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {       
+            // if lastUpdate was within current epoch: no new epoch, no new checkpoint
+            if(lastUpdatedAt >= currentEpochStart) return (veGlobal_); 
 
-        function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint128 lastUpdatedAt, uint128 currentWeekStart) internal view returns (DataTypes.VeBalance memory) {       
-            // nothing to update: lastUpdate was within current week 
-            if(lastUpdatedAt >= currentWeekStart) return (veGlobal_); // no new week, no new checkpoint
-
-            // skip first time: no prior updates needed | set lastUpdatedAt | return
+            // if first time: no prior updates needed 
             if(lastUpdatedAt == 0) {
-                veGlobal_.lastUpdatedAt = currentWeekStart;   // move forward the anchor point to skip empty weeks
+                veGlobal_.lastUpdatedAt = currentEpochStart;   // move forward the anchor point to skip empty epochs
                 return veGlobal_;
             }
 
             // update global veBalance
-            while (lastUpdatedAt < currentWeekStart) {
-                // advance 1 week/epoch
-                lastUpdatedAt += Constants.WEEK;                  
+            while (lastUpdatedAt < currentEpochStart) {
+                // advance 1 epoch
+                lastUpdatedAt += EpochMath.EPOCH_DURATION;                  
 
-                // decrement decay for this week | remove any scheduled slope changes from expiring locks
-                veGlobal_ = subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
+                // decrement decay for this epoch & apply scheduled slope changes
+                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
             }
 
-            // return
+            // return updated global veBalance
             return (veGlobal_);
         }
 
@@ -965,106 +1043,30 @@
                 return veBalance;
             }
 
-    //-------------------------------block: transfer/transferFrom -----------------------------------------
-
-        //note: white-list transfers? || incorporate ACL / or new layer for token transfers
-
-        function transfer(address, uint256) public pure override returns (bool) {
-            revert("veMOCA is non-transferable");
-        }
-
-        function transferFrom(address, address, uint256) public pure override returns (bool) {
-            revert("veMOCA is non-transferable");
-        }
-
-
-    //------------------------------- risk -------------------------------------------------------
-
-        /**
-        * @notice Pause contract. Cannot pause once frozen
-        */
-        function pause() external whenNotPaused onlyMonitorRole {
-            if(isFrozen == 1) revert Errors.IsFrozen(); 
-            _pause();
-        }
-
-        /**
-        * @notice Unpause pool. Cannot unpause once frozen
-        */
-        function unpause() external whenPaused onlyGlobalAdminRole {
-            if(isFrozen == 1) revert Errors.IsFrozen(); 
-            _unpause();
-        }
-
-        /**
-        * @notice To freeze the pool in the event of something untoward occurring
-        * @dev Only callable from a paused state, affirming that staking should not resume
-        *      Nothing to be updated. Freeze as is.
-        *      Enables emergencyExit() to be called.
-        */
-        function freeze() external whenPaused onlyGlobalAdminRole {
-            if(isFrozen) revert Errors.IsFrozen();
-
-            isFrozen = 1;
-            emit ContractFrozen(block.timestamp);
-        }  
-
-        // return principals{esMoca,Moca} to users
-        // not callable by anyone: calling this fn arbitrarily on the basis of "frozen" is not a good idea
-        // only callable by emergency exit handler: timing of calling exit could be critical
-        // disregard making updates to the contract: no need to update anything; system has failed. leave it as is.
-        // focus purely on returning principals
-        function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole {
-            require(isFrozen, "Contract is not frozen");
-            require(lockIds.length > 0, "No locks provided");
-
-            // get user's veBalance for each lock
-            for(uint256 i; i < lockIds.length; ++i) {
-                // get lock
-                DataTypes.Lock memory lock = locks[lockIds[i]];
-
-                //sanity: lock exists + principals not returned
-                require(lock.owner != address(0), "Invalid lockId");
-                require(lock.isUnlocked == false, "Principals already returned");                
-
-                // burn veMoca
-                _burn(lock.owner, lock.veMoca);
-
-                // transfer all tokens to the users
-                if(lock.moca > 0) mocaToken.safeTransfer(lock.owner, lock.moca);
-                if(lock.esMoca > 0) esMocaToken.safeTransfer(lock.owner, lock.esMoca);
-
-                // mark exited 
-                //delete lock.moca;   --> @follow-up do we want to keep this for record?
-                //delete lock.esMoca; --> @follow-up point-in-time value when exit occurred; how much was repatriated
-                lock.isUnlocked = true;
-    
-                locks[lockIds[i]] = lock;
-            }
-
-            // emit event
-            // emit EmergencyExit(lockIds);
-        }
 
     //-------------------------------view functions-----------------------------------------
 
-        // totalSupplyCurrent: update from last to now; return current veBalance
-        // override: ERC20 totalSupply()
+        /**
+         * @notice Returns current total supply of voting escrowed tokens (veTokens), up to date with the latest epoch
+         * @dev Overrides the ERC20 `totalSupply()` and brings the global veBalance up to the current epoch before returning the value.
+         * @return The current total supply of veTokens
+         */
         function totalSupply() public view override returns (uint256) {
-            DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, WeekMath.getWeekStartTimestamp(uint128(block.timestamp)));
+            // update global veBalance to current epoch
+            DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, EpochMath.getCurrentEpochStart());
+            // return value at current timestamp
             return _getValueAt(veGlobal_, uint128(block.timestamp));
         }
 
-        // note: do we really needs this?
-        // forward-looking; not historical search | for historical search, use totalSupplyAt[]; limited to weekly checkpoints
+        // forward-looking; not historical search | for historical search, use totalSupplyAt[] mapping; limited to epoch boundaries
         function totalSupplyInFuture(uint128 time) public view returns (uint256) {
-            require(time <= block.timestamp, "Timestamp is in the future");
+            require(time >= block.timestamp, "Timestamp is in the past");
 
-            DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, WeekMath.getWeekStartTimestamp(time));
+            DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, EpochMath.getEpochStartForTimestamp(time));
             return _getValueAt(veGlobal_, time);
         }
 
-    // ------ user: balanceOf, balanceOfAt ---------
+        //-------------------------------user: balanceOf, balanceOfAt -----------------------------------------
 
         //note: overrides ERC20 balanceOf()
         function balanceOf(address user) public view override returns (uint128) {
