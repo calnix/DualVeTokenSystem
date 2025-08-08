@@ -1018,21 +1018,37 @@
 
     // ------ lock: getLockHistoryLength, getLockCurrentVeBalance, getLockCurrentVotingPower, getLockVeBalanceAt ---------
 
-
+        /// @notice Returns the number of checkpoints in the lock's history
         function getLockHistoryLength(bytes32 lockId) external view returns (uint256) {
             return lockHistory[lockId].length;
         }
 
-        //note: isn't _convertToVeBalance(locks[lockId]) == lockHistory[lockId][lockHistory.length - 1].veBalance?
+        /**
+         * @notice Returns the current veBalance of a lock.
+         * @dev
+         *   - Converts the lock's principal amounts to veBalance using _convertToVeBalance.
+         *   - Returns the veBalance at the current timestamp.
+         * @param lockId The ID of the lock whose veBalance is being queried.
+         * @return The current veBalance of the lock as a DataTypes.VeBalance struct.
+         */
         function getLockCurrentVeBalance(bytes32 lockId) external view returns (DataTypes.VeBalance memory) {
+            // equivalent to lockHistory[lockId][lockHistory.length - 1].veBalance | save on calc. array length
             return _convertToVeBalance(locks[lockId]);
         }
 
+        /** @follow-up should remove, since voting does not operate on point-in-time values
+         * @notice Returns the current voting power of a lock.
+         * @dev
+         *   - Converts the lock's principal amounts to veBalance using _convertToVeBalance.
+         *   - Returns the voting power at the current timestamp using _getValueAt.
+         * @param lockId The ID of the lock whose voting power is being queried.
+         * @return The current voting power of the lock as a uint256.
+         */
         function getLockCurrentVotingPower(bytes32 lockId) external view returns (uint256) {
             return _getValueAt(_convertToVeBalance(locks[lockId]), uint128(block.timestamp));
         }
 
-        //note: historical search. veBalances are stored weekly, find the closest week boundary to the timestamp and interpolate from there
+        //note: historical search. veBalances are stored epoch-wise, find the closest epoch boundary to the timestamp and interpolate from there
         function getLockVeBalanceAt(bytes32 lockId, uint128 timestamp) external view returns (uint256) {
             require(timestamp <= block.timestamp, "Timestamp is in the future");
 
@@ -1041,7 +1057,7 @@
             if(length == 0) return 0;
             
             // binary search to find the checkpoint with timestamp closest, but not larger than the input time
-            uint256 min = 0;
+            uint256 min;
             uint256 max = length - 1;
             
             // if timestamp is earlier than the first checkpoint, return zero balance
