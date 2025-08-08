@@ -937,121 +937,6 @@
             return veBalance;
         }
 
-
-        // ---- my original ref: before combining. -------
-
-            function _viewUserAndGlobal(address user) internal view returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
-                // cache global veBalance
-                DataTypes.VeBalance memory veGlobal_ = veGlobal;
-                uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
-
-                // init user veUser
-                DataTypes.VeBalance memory veUser;
-
-                // user's lastUpdatedTimestamp either matches global or lags behind it
-                uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
-
-                // get current week start
-                uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
-
-
-                // user's first time: no prior updates to execute 
-                if (userLastUpdatedAt == 0) {
-                    userLastUpdatedTimestamp[user] = currentWeekStart;
-                    veUser = DataTypes.VeBalance(0, 0);
-
-                    // if global also not started: set lastUpdatedAt to now
-                    if (lastUpdatedTimestamp_ == 0) {
-                        //lastUpdatedTimestamp = currentWeekStart;
-                    } else{
-                        // note: global started; update and return
-                        veGlobal_ = _viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentWeekStart);
-                    }
-
-                    return (veGlobal_, veUser, currentWeekStart);
-                }
-
-                // load user's previous veBalance: if both global and user are up to date, return
-                veUser = userHistory[user][userLastUpdatedAt];
-                if(userLastUpdatedAt >= currentWeekStart) return (veGlobal_, veUser, currentWeekStart); 
-
-                // update both global and user veBalance to current week
-                while (userLastUpdatedAt < currentWeekStart) {
-
-                    // advance 1 week
-                    userLastUpdatedAt += Constants.WEEK;
-
-                    // update global: if needed 
-                    if(lastUpdatedTimestamp_ < userLastUpdatedAt) {
-                        
-                        // apply decay for this week && remove any scheduled slope changes from expiring locks
-                        veGlobal_ = subtractExpired(veGlobal_, slopeChanges[userLastUpdatedAt], userLastUpdatedAt);
-                    }
-
-                    // update user: decrement decay for this week & remove any scheduled slope changes from expiring locks
-                    veUser = subtractExpired(veUser, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
-                }
-                
-                return (veGlobal_, veUser, currentWeekStart);
-            }
-
-            function _viewUserOld(address user) internal view returns (DataTypes.VeBalance memory) {
-                // init user veUser
-                DataTypes.VeBalance memory veUser;
-
-                uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
-                // if user's first time: no prior updates to execute 
-                if(userLastUpdatedAt == 0) return veUser;
-
-                // load user's previous veBalance
-                veUser = userHistory[user][userLastUpdatedAt];
-                
-                // get current week start
-                uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
-                // already up to date: return
-                if(userLastUpdatedAt >= currentWeekStart) return veUser;
-
-                // update user veBalance to current week
-                while (userLastUpdatedAt < currentWeekStart) {
-                    userLastUpdatedAt += Constants.WEEK;
-                    veUser = subtractExpired(veUser, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
-                }
-
-                return veUser;
-            }
-
-            function _viewDelegateOld(address delegate) internal view returns (DataTypes.VeBalance memory) {
-                // init account veBalance
-                DataTypes.VeBalance memory veBalance;
-
-                // Get the appropriate last updated timestamp based on account type
-                uint128 lastUpdatedAt = delegateLastUpdatedTimestamp[delegate];
-                
-                // if account's first time: no prior updates to execute 
-                if(lastUpdatedAt == 0) return veBalance;
-
-                // load account's previous veBalance from appropriate history
-                veBalance = delegateHistory[delegate][lastUpdatedAt];
-                
-                // get current week start
-                uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
-                
-                // already up to date: return
-                if(lastUpdatedAt >= currentWeekStart) return veBalance;
-
-                // update account veBalance to current week
-                while (lastUpdatedAt < currentWeekStart) {
-                    lastUpdatedAt += Constants.WEEK;
-                    // Use appropriate slope changes mapping based on account type
-                    uint128 expiringSlope = delegateSlopeChanges[delegate][lastUpdatedAt];
-                    
-                    veBalance = subtractExpired(veBalance, expiringSlope, lastUpdatedAt);
-                }
-
-                return veBalance;
-            }
-
-
     //-------------------------------view functions-----------------------------------------
 
         /**
@@ -1076,16 +961,16 @@
 
         //-------------------------------user: balanceOf, balanceOfAt -----------------------------------------
 
-        //note: overrides ERC20 balanceOf()
+        //note: Need to keep this fn to match and override ERC20::balanceOf() fn selector
         function balanceOf(address user) public view override returns (uint128) {
             // Only personal voting power (non-delegated locks)
             return balanceOf(user, false);
         }
 
-
         /** note: we combine balanceOf and delegatedBalanceOf into a single function; similarly w/ balanceOfAt and delegatedBalanceOfAt
             - but we need to override the ERC20 balanceOf() fn, so that wallets querying will readily display a user's personal voting power - decaying in real-time.
             - this is a bit of a hack, but it's the only way to get the desired functionality without breaking the ERC20 interface.
+            - @follow-up
         */
 
         function balanceOf(address user, bool isDelegated) external view returns (uint128) {
@@ -1094,33 +979,40 @@
             return _getValueAt(veBalance, uint128(block.timestamp));
         }
 
-        // historical search. since veBalances are stored per epoch, find the closest epoch boundary to the timestamp and interpolate from there
+        /// @notice historical search. veBalances are stored per epoch; find the closest epoch boundary to the timestamp and interpolate from there
         function balanceOfAt(address user, uint128 time, bool isDelegated) external view returns (uint128) {
             require(time <= block.timestamp, "Timestamp is in the future");
 
-            // find the closest weekly boundary (wTime) that is not larger than the input time
-            uint128 wTime = WeekMath.getWeekStartTimestamp(time);
+            // find the closest epoch boundary (eTime) that is not larger than the input time
+            uint128 eTime = EpochMath.getEpochStartForTimestamp(time);
             
-            // get the appropriate veBalance at that weekly boundary
-            DataTypes.VeBalance memory veBalance = isDelegated ? delegateHistory[user][wTime] : userHistory[user][wTime];
+            // get the appropriate veBalance at that epoch boundary
+            DataTypes.VeBalance memory veBalance = isDelegated ? delegateHistory[user][eTime] : userHistory[user][eTime];
             
-            // calculate the voting power at the exact timestamp using the veBalance from the closest past weekly boundary
+            // calc. voting power at the exact timestamp using the veBalance from the closest past epoch boundary
             return _getValueAt(veBalance, time);
         }
 
-        //note: do we really need this? BE can handle it
-        function getTotalBalance(address user) external view returns (uint128){} // personal + delegated
-
-
-        function getDelegatedBalance(address user, address delegate) external view returns (uint256) {
+        /// @notice Returns a user's total delegated balance, aggregated across all delegates
+        function getUserTotalDelegatedBalance(address user, address delegate) external view returns (uint256) {
+            //veBalance is valued at now
             return _getValueAt(delegatedAggregationHistory[user][delegate][uint128(block.timestamp)], uint128(block.timestamp));
         }
 
-        // 1. get user's delegation for an epoch: reference epoch start time
-        // 2. voting power is benchmarked to end of epoch: so _getValue to calc. on epochEnd
+        /** @notice Retrieves the delegated veBalance of a user for a specific delegate at the end of a given epoch.
+         *  @dev
+         *   1. Gets the user's delegated veBalance for the specified epoch by referencing the epoch start time.
+         *   2. Calculates the voting power at the end of the epoch using _getValueAt.
+         *  @param user The address of the user whose delegated balance is being queried.
+         *  @param delegate The address of the delegate to whom the balance is delegated.
+         *  @param epoch The epoch number for which the delegated balance is requested.
+         *  @return The delegated voting power at the end of the specified epoch.
+         */
         function getDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
             uint256 epochStart = EpochMath.getEpochStartTimestamp(epoch);
             uint256 epochEnd = epochStart + EpochMath.EPOCH_DURATION;
+            // 1. get user's delegated veBalance for specified epoch: reference epoch start time
+            // 2. voting power is benchmarked to end of epoch: so _getValue to calc. on epochEnd
             return _getValueAt(delegatedAggregationHistory[user][delegate][epochStart], epochEnd);
         }
 
