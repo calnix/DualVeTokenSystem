@@ -40,7 +40,7 @@
         uint256 public DELEGATE_REGISTRATION_FEE;
         uint256 public TOTAL_DELEGATE_REGISTRATION_FEES;
 
-    //-------------------------------mapping---------------------------------------------
+    //-------------------------------mapping-----------------------------------------------------
 
         // lock
         mapping(bytes32 lockId => DataTypes.Lock lock) public locks;
@@ -72,7 +72,7 @@
         mapping(address user => mapping(address delegate => mapping(uint256 epoch => DataTypes.VeBalance veBalance))) public delegatedAggregationHistory; 
 
 
-    //-------------------------------constructor------------------------------------------
+    //-------------------------------constructor-------------------------------------------------
 
         constructor(address addressBook_) ERC20("veMoca", "veMOCA") {
             _addressBook = IAddressBook(addressBook_);
@@ -81,7 +81,7 @@
             //_addressBook.getAddress(Constants.VOTING_CONTROLLER);
         }
 
-    //-------------------------------user functions------------------------------------------
+    //-------------------------------user functions---------------------------------------------
 
         // note: locks are booked to currentEpochStart
         // TODO: take in both es and moca at once
@@ -141,9 +141,15 @@
 
             // emit event
 
-            // transfer tokens to contract
-            if(mocaToIncrease > 0) mocaToken.safeTransferFrom(msg.sender, address(this), mocaToIncrease);
-            if(esMocaToIncrease > 0) esMocaToken.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
+            // STORAGE: update global totalLockedMoca/EsMoca + transfer tokens to contract
+            if(mocaToIncrease){
+                totalLockedMoca += mocaToIncrease;
+                mocaToken.safeTransferFrom(msg.sender, address(this), mocaToIncrease);
+            }
+            if(esMocaToIncrease){
+                totalLockedEsMoca += esMocaToIncrease;
+                esMocaToken.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
+            }
         }
         
         //TODO:  confirm w/ P: must have at least 1 epoch left to increase amount?
@@ -228,7 +234,7 @@
             if(lock.esMoca > 0) esMocaToken.safeTransfer(lock.owner, lock.esMoca);        
         }
 
-    //-------------------------------user delegate functions------------------------------------------
+    //-------------------------------user delegate functions-------------------------------------
 
         /** note: consider creating _updateAccount(). then can streamline w/ _updateGlobal, _updateAccount(user), _updateAccount(delegate) | 
             but there must be a strong case for need to have _updateAccount as a standalone beyond delegate
@@ -409,8 +415,14 @@
         }
 
 
+    //-------------------------------admin functions---------------------------------------------
 
-    //-------------------------------delegate functions------------------------------------------
+        // when creating lock onBehalfOf - we will not delegate for the user
+        function createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca) external onlyCronJobRole returns (bytes32) { 
+            return _createLockFor(user, amount, expiry, isMoca, address(0));
+        }
+
+    //-------------------------------VotingController functions------------------------------------------
     
         // note: registration fees were collected by VotingController
         // require(delegate != address(0) not needed since external contract call
@@ -432,16 +444,7 @@
             //emit DelegateUnregistered(delegate);
         }
 
-    //-------------------------------admin functions---------------------------------------------
-
-        // when creating lock onBehalfOf - we will not delegate for the user
-        function createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca) external onlyCronJobRole returns (bytes32) { 
-            return _createLockFor(user, amount, expiry, isMoca, address(0));
-        }
-
-
-
-    //-------------------------------internal----------------------------------------------------
+    //-------------------------------internal: update functions----------------------------------------------------
 
         // delegate can be address(0)
         function _createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca, address delegate) internal returns (bytes32) {
@@ -464,8 +467,8 @@
                 bytes32 lockId;
                 {
                     uint256 salt = block.number;
-                    lockId = _generateVaultId(salt, msg.sender);
-                    while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, msg.sender);      // If lockId exists, generate new random Id
+                    lockId = _generateVaultId(salt, user);
+                    while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, user);      // If lockId exists, generate new random Id
                 }
 
                 DataTypes.Lock memory newLock;
@@ -516,6 +519,10 @@
             // STORAGE: book updated veAccount & schedule slope change
             accountHistoryMapping[account][currentEpochStart] = veAccount;
             accountSlopeChangesMapping[account][expiry] += veIncoming.slope;
+
+            // STORAGE: increment global totalLockedMoca/EsMoca
+            if (isMoca) totalLockedMoca += amount;
+            else totalLockedEsMoca += amount;
 
             // MINT to account
             _mint(account, veIncoming.bias);
@@ -658,7 +665,7 @@
         }
 
 
-        // note: any possible rounding errors due to calc. of delta; instead of removed old then add new?
+        // TODO: any possible rounding errors due to calc. of delta; instead of removed old then add new?
         function _modifyPosition(
             DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veAccount, 
             DataTypes.Lock memory oldLock, DataTypes.Lock memory updatedLock, 
@@ -749,17 +756,6 @@
             }
         }
 
-/*
-        // NOTE: NOT NEEDED; CONFIRM AND REMOVE
-        function _updateUserAndGlobal(address user) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
-            return _updateAccountAndGlobal(user, false);
-        }
-
-        // NOTE: NOT NEEDED; CONFIRM AND REMOVE
-        function _updateDelegateAndGlobal(address delegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
-            return _updateAccountAndGlobal(delegate, true);
-        }
-*/
     //------------------------------- modifiers -------------------------------------------------
 
         modifier onlyMonitorRole(){
