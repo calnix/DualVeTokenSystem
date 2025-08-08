@@ -30,14 +30,15 @@ contract AccessController is AccessControl {
             );
     */
     
-    // ROLES
-    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause
-    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // createLockFor
+    // ROLES w/ scripts
+    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause | attached to script
+    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // createLockFor | attached to script
+    bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // emergencyExit | attached to script
     
-    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
+    //bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params | attached to script
 
-    //bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params
-    //bytes32 public constant EMERGENCY_ADMIN_ROLE = keccak256('EMERGENCY_ADMIN');
+    // ROLES w/o scripts
+    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
 
 
     /**
@@ -118,6 +119,21 @@ contract AccessController is AccessControl {
 
     function isCronJob(address addr) external view returns (bool) {
         return hasRole(CRON_JOB_ROLE, addr);
+    }
+
+
+// ----- EMERGENCY_EXIT ROLE -----
+
+    function addEmergencyExitHandler(address addr) external {
+        grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    }
+
+    function removeEmergencyExitHandler(address addr) external {
+        revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    }
+
+    function isEmergencyExitHandler(address addr) external view returns (bool) {
+        return hasRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
     }
 
 

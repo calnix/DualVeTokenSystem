@@ -4,8 +4,8 @@ pragma solidity ^0.8.27;
 library DataTypes {
 
     struct Lock {
-        bytes32 lockId;
-        address owner;
+        bytes32 lockId;             // can i remove lockId since ownerAddress can be the flag
+        address owner;              
         address delegate;           // flag: zero = not delegated, non-zero = delegated
 
         // locked principal

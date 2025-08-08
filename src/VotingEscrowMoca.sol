@@ -86,13 +86,13 @@
         // note: locks are booked to currentEpochStart
         // TODO: take in both es and moca at once
         /**
-        * @notice Creates a new lock with the specified amount, expiry, token type, and optional delegate.
-        * @dev The delegate parameter is optional and can be set to the zero address if not delegating.
-        * @param amount The amount of tokens to lock.
-        * @param expiry The timestamp when the lock will expire.
-        * @param isMoca Boolean indicating whether the lock is for MOCA (true) or esMOCA (false).
-        * @param delegate The address to delegate voting power to (optional).
-        * @return lockId The unique identifier of the created lock.
+         * @notice Creates a new lock with the specified amount, expiry, token type, and optional delegate.
+         * @dev The delegate parameter is optional and can be set to the zero address if not delegating.
+         * @param amount The amount of tokens to lock.
+         * @param expiry The timestamp when the lock will expire.
+         * @param isMoca Boolean indicating whether the lock is for MOCA (true) or esMOCA (false).
+         * @param delegate The address to delegate voting power to (optional).
+         * @return lockId The unique identifier of the created lock.
         */
         function createLock(uint256 amount, uint128 expiry, bool isMoca, address delegate) external returns (bytes32) {
             return _createLockFor(msg.sender, amount, expiry, isMoca, delegate);
@@ -691,10 +691,65 @@
             return newVeBalance;
         }
 
+    //-------------------------------internal: library functions -------------------------------------------------
 
+        // removed expired locks from veBalance | does not set lastUpdatedAt
+        function _subtractExpired(DataTypes.VeBalance memory a, uint128 expiringSlopes, uint128 expiry) internal pure returns (DataTypes.VeBalance memory) {
+            a.bias -= (expiringSlopes * expiry);       // remove decayed ve
+            a.slope -= expiringSlopes;                 // remove expiring slopes
 
+            return a;
+        }
 
+        // subtracts b from a
+        function _sub(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
+            DataTypes.VeBalance memory res;
+                res.bias = a.bias - b.bias;
+                res.slope = a.slope - b.slope;
 
+            return res;
+        }
+
+        function _add(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
+            DataTypes.VeBalance memory res;
+                res.bias = a.bias + b.bias;
+                res.slope = a.slope + b.slope;
+
+            return res;
+        }
+
+        // forward-looking; not historical search
+        function _getValueAt(DataTypes.VeBalance memory a, uint128 timestamp) internal pure returns (uint128) {
+            if(a.bias < (a.slope * timestamp)) {
+                return 0;
+            }
+            // offset inception inflation
+            return a.bias - (a.slope * timestamp);
+        }
+
+        // calc. veBalance{bias,slope} from lock; based on expiry time | inception offset is handled by balanceOf() queries
+        function _convertToVeBalance(DataTypes.Lock memory lock) internal pure returns (DataTypes.VeBalance memory) {
+            DataTypes.VeBalance memory veBalance;
+
+            veBalance.slope = (lock.moca + lock.esMoca) / EpochMath.MAX_LOCK_DURATION;
+            veBalance.bias = veBalance.slope * lock.expiry;
+
+            return veBalance;
+        }
+
+        function _pushCheckpoint(DataTypes.Checkpoint[] storage lockHistory_, DataTypes.VeBalance memory veBalance, uint128 currentEpochStart) internal {
+            uint256 length = lockHistory_.length;
+
+            // if last checkpoint is in the same epoch as incoming; overwrite
+            if(length > 0 && lockHistory_[length - 1].lastUpdatedAt == currentEpochStart) {
+                lockHistory_[length - 1].veBalance = veBalance;
+            } else {
+                // new checkpoint for new epoch: set lastUpdatedAt
+                lockHistory_.push(DataTypes.Checkpoint(veBalance, currentEpochStart));
+            }
+        }
+
+/*
         // NOTE: NOT NEEDED; CONFIRM AND REMOVE
         function _updateUserAndGlobal(address user) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
             return _updateAccountAndGlobal(user, false);
@@ -704,8 +759,8 @@
         function _updateDelegateAndGlobal(address delegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
             return _updateAccountAndGlobal(delegate, true);
         }
-
-    //------------------------------- modifiers ---------------------------------------------
+*/
+    //------------------------------- modifiers -------------------------------------------------
 
         modifier onlyMonitorRole(){
             IAccessController accessController = IAccessController(_addressBook.getAccessController());
@@ -722,6 +777,12 @@
         modifier onlyGlobalAdminRole(){
             IAccessController accessController = IAccessController(_addressBook.getAccessController());
             require(accessController.isGlobalAdmin(msg.sender), "Caller not global admin");
+            _;
+        }
+
+        modifier onlyEmergencyExitHandlerRole(){
+            IAccessController accessController = IAccessController(_addressBook.getAccessController());
+            require(accessController.isEmergencyExitHandler(msg.sender), "Caller not emergency exit");
             _;
         }
 
@@ -795,177 +856,118 @@
         }
 
 
-    // ---- my original ref: before combining. -------
+        // ---- my original ref: before combining. -------
 
-        function _viewUserAndGlobal(address user) internal view returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
-            // cache global veBalance
-            DataTypes.VeBalance memory veGlobal_ = veGlobal;
-            uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
+            function _viewUserAndGlobal(address user) internal view returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, uint128) {
+                // cache global veBalance
+                DataTypes.VeBalance memory veGlobal_ = veGlobal;
+                uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
 
-            // init user veUser
-            DataTypes.VeBalance memory veUser;
+                // init user veUser
+                DataTypes.VeBalance memory veUser;
 
-            // user's lastUpdatedTimestamp either matches global or lags behind it
-            uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
+                // user's lastUpdatedTimestamp either matches global or lags behind it
+                uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
 
-            // get current week start
-            uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
+                // get current week start
+                uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
 
 
-            // user's first time: no prior updates to execute 
-            if (userLastUpdatedAt == 0) {
-                userLastUpdatedTimestamp[user] = currentWeekStart;
-                veUser = DataTypes.VeBalance(0, 0);
+                // user's first time: no prior updates to execute 
+                if (userLastUpdatedAt == 0) {
+                    userLastUpdatedTimestamp[user] = currentWeekStart;
+                    veUser = DataTypes.VeBalance(0, 0);
 
-                // if global also not started: set lastUpdatedAt to now
-                if (lastUpdatedTimestamp_ == 0) {
-                    //lastUpdatedTimestamp = currentWeekStart;
-                } else{
-                    // note: global started; update and return
-                    veGlobal_ = _viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentWeekStart);
+                    // if global also not started: set lastUpdatedAt to now
+                    if (lastUpdatedTimestamp_ == 0) {
+                        //lastUpdatedTimestamp = currentWeekStart;
+                    } else{
+                        // note: global started; update and return
+                        veGlobal_ = _viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentWeekStart);
+                    }
+
+                    return (veGlobal_, veUser, currentWeekStart);
                 }
 
+                // load user's previous veBalance: if both global and user are up to date, return
+                veUser = userHistory[user][userLastUpdatedAt];
+                if(userLastUpdatedAt >= currentWeekStart) return (veGlobal_, veUser, currentWeekStart); 
+
+                // update both global and user veBalance to current week
+                while (userLastUpdatedAt < currentWeekStart) {
+
+                    // advance 1 week
+                    userLastUpdatedAt += Constants.WEEK;
+
+                    // update global: if needed 
+                    if(lastUpdatedTimestamp_ < userLastUpdatedAt) {
+                        
+                        // apply decay for this week && remove any scheduled slope changes from expiring locks
+                        veGlobal_ = subtractExpired(veGlobal_, slopeChanges[userLastUpdatedAt], userLastUpdatedAt);
+                    }
+
+                    // update user: decrement decay for this week & remove any scheduled slope changes from expiring locks
+                    veUser = subtractExpired(veUser, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
+                }
+                
                 return (veGlobal_, veUser, currentWeekStart);
             }
 
-            // load user's previous veBalance: if both global and user are up to date, return
-            veUser = userHistory[user][userLastUpdatedAt];
-            if(userLastUpdatedAt >= currentWeekStart) return (veGlobal_, veUser, currentWeekStart); 
+            function _viewUserOld(address user) internal view returns (DataTypes.VeBalance memory) {
+                // init user veUser
+                DataTypes.VeBalance memory veUser;
 
-            // update both global and user veBalance to current week
-            while (userLastUpdatedAt < currentWeekStart) {
+                uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
+                // if user's first time: no prior updates to execute 
+                if(userLastUpdatedAt == 0) return veUser;
 
-                // advance 1 week
-                userLastUpdatedAt += Constants.WEEK;
+                // load user's previous veBalance
+                veUser = userHistory[user][userLastUpdatedAt];
+                
+                // get current week start
+                uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
+                // already up to date: return
+                if(userLastUpdatedAt >= currentWeekStart) return veUser;
 
-                // update global: if needed 
-                if(lastUpdatedTimestamp_ < userLastUpdatedAt) {
-                    
-                    // apply decay for this week && remove any scheduled slope changes from expiring locks
-                    veGlobal_ = subtractExpired(veGlobal_, slopeChanges[userLastUpdatedAt], userLastUpdatedAt);
+                // update user veBalance to current week
+                while (userLastUpdatedAt < currentWeekStart) {
+                    userLastUpdatedAt += Constants.WEEK;
+                    veUser = subtractExpired(veUser, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
                 }
 
-                // update user: decrement decay for this week & remove any scheduled slope changes from expiring locks
-                veUser = subtractExpired(veUser, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
-            }
-            
-            return (veGlobal_, veUser, currentWeekStart);
-        }
-
-        function _viewUserOld(address user) internal view returns (DataTypes.VeBalance memory) {
-            // init user veUser
-            DataTypes.VeBalance memory veUser;
-
-            uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
-            // if user's first time: no prior updates to execute 
-            if(userLastUpdatedAt == 0) return veUser;
-
-            // load user's previous veBalance
-            veUser = userHistory[user][userLastUpdatedAt];
-            
-            // get current week start
-            uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
-            // already up to date: return
-            if(userLastUpdatedAt >= currentWeekStart) return veUser;
-
-            // update user veBalance to current week
-            while (userLastUpdatedAt < currentWeekStart) {
-                userLastUpdatedAt += Constants.WEEK;
-                veUser = subtractExpired(veUser, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
+                return veUser;
             }
 
-            return veUser;
-        }
+            function _viewDelegateOld(address delegate) internal view returns (DataTypes.VeBalance memory) {
+                // init account veBalance
+                DataTypes.VeBalance memory veBalance;
 
-        function _viewDelegateOld(address delegate) internal view returns (DataTypes.VeBalance memory) {
-            // init account veBalance
-            DataTypes.VeBalance memory veBalance;
-
-            // Get the appropriate last updated timestamp based on account type
-            uint128 lastUpdatedAt = delegateLastUpdatedTimestamp[delegate];
-            
-            // if account's first time: no prior updates to execute 
-            if(lastUpdatedAt == 0) return veBalance;
-
-            // load account's previous veBalance from appropriate history
-            veBalance = delegateHistory[delegate][lastUpdatedAt];
-            
-            // get current week start
-            uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
-            
-            // already up to date: return
-            if(lastUpdatedAt >= currentWeekStart) return veBalance;
-
-            // update account veBalance to current week
-            while (lastUpdatedAt < currentWeekStart) {
-                lastUpdatedAt += Constants.WEEK;
-                // Use appropriate slope changes mapping based on account type
-                uint128 expiringSlope = delegateSlopeChanges[delegate][lastUpdatedAt];
+                // Get the appropriate last updated timestamp based on account type
+                uint128 lastUpdatedAt = delegateLastUpdatedTimestamp[delegate];
                 
-                veBalance = subtractExpired(veBalance, expiringSlope, lastUpdatedAt);
+                // if account's first time: no prior updates to execute 
+                if(lastUpdatedAt == 0) return veBalance;
+
+                // load account's previous veBalance from appropriate history
+                veBalance = delegateHistory[delegate][lastUpdatedAt];
+                
+                // get current week start
+                uint128 currentWeekStart = WeekMath.getWeekStartTimestamp(uint128(block.timestamp)); 
+                
+                // already up to date: return
+                if(lastUpdatedAt >= currentWeekStart) return veBalance;
+
+                // update account veBalance to current week
+                while (lastUpdatedAt < currentWeekStart) {
+                    lastUpdatedAt += Constants.WEEK;
+                    // Use appropriate slope changes mapping based on account type
+                    uint128 expiringSlope = delegateSlopeChanges[delegate][lastUpdatedAt];
+                    
+                    veBalance = subtractExpired(veBalance, expiringSlope, lastUpdatedAt);
+                }
+
+                return veBalance;
             }
-
-            return veBalance;
-        }
-
-    //-------------------------------lib-----------------------------------------------------
-
-        // removed expired locks from veBalance | does not set lastUpdatedAt
-        function _subtractExpired(DataTypes.VeBalance memory a, uint128 expiringSlopes, uint128 expiry) internal pure returns (DataTypes.VeBalance memory) {
-            a.bias -= (expiringSlopes * expiry);       // remove decayed ve
-            a.slope -= expiringSlopes;                 // remove expiring slopes
-
-            return a;
-        }
-
-        // subtracts b from a
-        function _sub(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
-            DataTypes.VeBalance memory res;
-                res.bias = a.bias - b.bias;
-                res.slope = a.slope - b.slope;
-
-            return res;
-        }
-
-        function _add(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
-            DataTypes.VeBalance memory res;
-                res.bias = a.bias + b.bias;
-                res.slope = a.slope + b.slope;
-
-            return res;
-        }
-
-        // forward-looking; not historical search
-        function _getValueAt(DataTypes.VeBalance memory a, uint128 timestamp) internal pure returns (uint128) {
-            if(a.bias < (a.slope * timestamp)) {
-                return 0;
-            }
-            // offset inception inflation
-            return a.bias - (a.slope * timestamp);
-        }
-
-        // calc. veBalance{bias,slope} from lock; based on expiry time | inception offset is handled by balanceOf() queries
-        function _convertToVeBalance(DataTypes.Lock memory lock) internal pure returns (DataTypes.VeBalance memory) {
-            DataTypes.VeBalance memory veBalance;
-
-            veBalance.slope = (lock.moca + lock.esMoca) / EpochMath.MAX_LOCK_DURATION;
-            veBalance.bias = veBalance.slope * lock.expiry;
-
-            return veBalance;
-        }
-
-        function _pushCheckpoint(DataTypes.Checkpoint[] storage lockHistory_, DataTypes.VeBalance memory veBalance, uint128 currentEpochStart) internal {
-            uint256 length = lockHistory_.length;
-
-            // if last checkpoint is in the same epoch as incoming; overwrite
-            if(length > 0 && lockHistory_[length - 1].lastUpdatedAt == currentEpochStart) {
-                lockHistory_[length - 1].veBalance = veBalance;
-            } else {
-                // new checkpoint for new epoch: set lastUpdatedAt
-                lockHistory_.push(DataTypes.Checkpoint(veBalance, currentEpochStart));
-            }
-        }
-
 
     //-------------------------------block: transfer/transferFrom -----------------------------------------
 
@@ -1005,12 +1007,48 @@
         *      Enables emergencyExit() to be called.
         */
         function freeze() external whenPaused onlyGlobalAdminRole {
-            if(isFrozen == 1) revert Errors.IsFrozen();
+            if(isFrozen) revert Errors.IsFrozen();
+
             isFrozen = 1;
             emit ContractFrozen(block.timestamp);
         }  
 
-        //function emergencyExit
+        // return principals{esMoca,Moca} to users
+        // not callable by anyone: calling this fn arbitrarily on the basis of "frozen" is not a good idea
+        // only callable by emergency exit handler: timing of calling exit could be critical
+        // disregard making updates to the contract: no need to update anything; system has failed. leave it as is.
+        // focus purely on returning principals
+        function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole {
+            require(isFrozen, "Contract is not frozen");
+            require(lockIds.length > 0, "No locks provided");
+
+            // get user's veBalance for each lock
+            for(uint256 i; i < lockIds.length; ++i) {
+                // get lock
+                DataTypes.Lock memory lock = locks[lockIds[i]];
+
+                //sanity: lock exists + principals not returned
+                require(lock.owner != address(0), "Invalid lockId");
+                require(lock.isUnlocked == false, "Principals already returned");                
+
+                // burn veMoca
+                _burn(lock.owner, lock.veMoca);
+
+                // transfer all tokens to the users
+                if(lock.moca > 0) mocaToken.safeTransfer(lock.owner, lock.moca);
+                if(lock.esMoca > 0) esMocaToken.safeTransfer(lock.owner, lock.esMoca);
+
+                // mark exited 
+                //delete lock.moca;   --> @follow-up do we want to keep this for record?
+                //delete lock.esMoca; --> @follow-up point-in-time value when exit occurred; how much was repatriated
+                lock.isUnlocked = true;
+    
+                locks[lockIds[i]] = lock;
+            }
+
+            // emit event
+            // emit EmergencyExit(lockIds);
+        }
 
     //-------------------------------view functions-----------------------------------------
 
