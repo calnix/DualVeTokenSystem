@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
-import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+// External: OZ
+import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
 
 // interfaces
 import {IAddressBook} from "./interfaces/IAddressBook.sol";

@@ -46,6 +46,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
         uint256 public DELEGATE_REGISTRATION_FEE;
         uint256 public TOTAL_DELEGATE_REGISTRATION_FEES;
 
+        uint256 internal _isFrozen;
+
     //-------------------------------mapping-----------------------------------------------------
 
         // lock
@@ -90,27 +92,28 @@ contract VotingEscrowMoca is ERC20, Pausable {
     //-------------------------------user functions---------------------------------------------
 
         // note: locks are booked to currentEpochStart
-        // TODO: take in both es and moca at once
         /**
-         * @notice Creates a new lock with the specified amount, expiry, token type, and optional delegate.
+         * @notice Creates a new lock with the specified expiry, moca, esMoca, and optional delegate.
          * @dev The delegate parameter is optional and can be set to the zero address if not delegating.
-         * @param amount The amount of tokens to lock.
          * @param expiry The timestamp when the lock will expire.
-         * @param isMoca Boolean indicating whether the lock is for MOCA (true) or esMOCA (false).
+         * @param moca The amount of MOCA to lock.
+         * @param esMoca The amount of esMOCA to lock.
          * @param delegate The address to delegate voting power to (optional).
          * @return lockId The unique identifier of the created lock.
         */
-        function createLock(uint256 amount, uint128 expiry, bool isMoca, address delegate) external returns (bytes32) {
-            return _createLockFor(msg.sender, amount, expiry, isMoca, delegate);
+        function createLock(uint128 expiry, uint256 moca, uint256 esMoca, address delegate) external whenNotPaused returns (bytes32) {
+            return _createLockFor(msg.sender, expiry, moca, esMoca, delegate);
         }
 
-        //TODO:  confirm w/ P: must have at least 1 epoch left to increase amount?
-        function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external {
+        // Users can only stake more into locks that have at least 1 Epoch left
+        function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external whenNotPaused {
             DataTypes.Lock memory oldLock = locks[lockId];
 
             require(oldLock.lockId != bytes32(0), "NoLockFound");
             require(oldLock.creator == msg.sender, "Only the creator can increase the amount");
-            require(oldLock.expiry > block.timestamp, "Lock has expired");      
+            
+            // must have at least 1 Epoch left to increase amount
+            require(oldLock.expiry > block.timestamp + EpochMath.EPOCH_DURATION, "Lock has less than 1 Epoch left");
 
             // DELEGATED OR PERSONAL LOCK:
             bool isDelegated = oldLock.delegate != address(0);
@@ -147,19 +150,20 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             // emit event
 
-            // STORAGE: update global totalLockedMoca/EsMoca + transfer tokens to contract
-            if(mocaToIncrease){
+            // STORAGE: increment global totalLockedMoca/EsMoca
+            // TRANSFER: tokens to contract
+            if(mocaToIncrease > 0){
                 totalLockedMoca += mocaToIncrease;
-                mocaToken.safeTransferFrom(msg.sender, address(this), mocaToIncrease);
+                _mocaToken().safeTransferFrom(msg.sender, address(this), mocaToIncrease);
             }
-            if(esMocaToIncrease){
+            if(esMocaToIncrease > 0){
                 totalLockedEsMoca += esMocaToIncrease;
-                esMocaToken.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
+                _esMocaToken().safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
             }
         }
         
-        //TODO:  confirm w/ P: must have at least 1 epoch left to increase amount?
-        function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external {
+        // must have at least 1 epoch left to increase duration; newExpiry must be on a epoch boundary
+        function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external whenNotPaused {
             // cannot extend duration arbitrarily; must be step-wise matching epoch boundaries
             require(EpochMath.isValidEpochTime(durationToIncrease), "Duration must be on a epoch boundary");
 
@@ -172,6 +176,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // Ensure the new expiry is at least MIN_LOCK_DURATION from now
             uint256 newExpiry = oldLock.expiry + durationToIncrease;
             require(newExpiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, "New expiry too short");
+            //require(EpochMath.isValidEpochTime(newExpiry), "New expiry must be on a epoch boundary");
 
             // DELEGATED OR PERSONAL LOCK:
             bool isDelegated = oldLock.delegate != address(0);
@@ -208,36 +213,42 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
         // Withdraws principals of an expired lock | ve will be burnt, altho veBalance will return 0 on expiry
-        // @follow-up allowing anyone to unlock a lock.
-        function unlock(bytes32 lockId) external {
+        function unlock(bytes32 lockId) external whenNotPaused {
             DataTypes.Lock memory lock = locks[lockId];
 
             require(lock.lockId != bytes32(0), "LockNotFound");
-            require(lock.expiry < block.timestamp, "Lock not expired");
+            require(lock.expiry > block.timestamp, "Lock not expired");
             require(lock.isUnlocked == false, "Lock already unlocked");
+            require(lock.creator == msg.sender, "Only creator can unlock");
 
-            // what if the lock is delegated?
-            require(lock.delegate == address(0), "Lock is delegated");
+            // DELEGATED OR PERSONAL LOCK:
+            bool isDelegated = lock.delegate != address(0);
+            address account = isDelegated ? lock.delegate : msg.sender;
+
+            // update account and global: account is either delegate or user
+            (
+                DataTypes.VeBalance memory veGlobal_, 
+                DataTypes.VeBalance memory veAccount, 
+                uint128 currentEpochStart, 
+                /*mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping, 
+                mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping*/
             
-            //require(lock.creator == msg.sender, "Only creator can unlock");
-            
-            // UPDATE GLOBAL & USER
-            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentEpochStart) = _updateAccountAndGlobal(lock.owner, false);
+            ) = _updateAccountAndGlobal(account, isDelegated);
 
             // STORAGE: update lock + book final checkpoint | note: book final checkpoint, since we do not delete the lock
             lock.isUnlocked = true;    
             locks[lockId] = lock;
-            _pushCheckpoint(lockHistory[lockId], veUser, currentEpochStart);  
+            _pushCheckpoint(lockHistory[lockId], veAccount, currentEpochStart);  
 
             // burn originally issued veMoca
             uint256 mintedVeMoca = _convertToVeBalance(lock).bias;
-            _burn(lock.owner, mintedVeMoca);
+            _burn(account, mintedVeMoca);
 
             // emit event
 
             // return principals to lock.owner
-            if(lock.moca > 0) mocaToken.safeTransfer(lock.owner, lock.moca);
-            if(lock.esMoca > 0) esMocaToken.safeTransfer(lock.owner, lock.esMoca);        
+            if(lock.moca > 0) _mocaToken().safeTransfer(lock.owner, lock.moca);
+            if(lock.esMoca > 0) _esMocaToken().safeTransfer(lock.owner, lock.esMoca);        
         }
 
     //-------------------------------user delegate functions-------------------------------------
@@ -248,7 +259,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
         */
 
 
-
         /** Problem: user can vote, then delegate
             ⦁	sub their veBal, add to delegate veBal
             ⦁	_vote only references `veMoca.balanceOfAt(caller, epochEnd, isDelegated)`
@@ -256,22 +266,33 @@ contract VotingEscrowMoca is ERC20, Pausable {
             Solution: forward-delegate. impacts on next epoch.
             This problem does not occur when users' are createLock(isDelegated) 
         */
-        function delegateLock(bytes32 lockId, address delegate) external {
+
+        /**
+         * @notice Delegates a lock's voting power to a registered delegate
+         * @dev Only the lock creator can delegate. The lock must not be expired or already delegated
+         *      Updates user and delegate veBalance, slope changes, and aggregation history
+         *      Prevents double-voting by forward-booking the delegation to the next epoch 
+         *      Users can vote with the delegated lock for the current epoch, but no longer from the next epoch onwards
+         * @param lockId The unique identifier of the lock to delegate
+         * @param delegate The address of the registered delegate to receive voting power
+         */
+        function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
             // sanity check: delegate
             require(delegate != msg.sender, "Cannot delegate to self");
-            require(isRegisteredDelegate[delegate], "Delegate not registered");
+            require(isRegisteredDelegate[delegate], "Delegate not registered"); // implicit address(0) check: newDelegate != address(0)
 
             DataTypes.Lock memory lock = locks[lockId];
             
             // sanity check: lock
             require(lock.lockId != bytes32(0), "LockNotFound");
             require(lock.creator == msg.sender, "Only the creator can delegate");
-            require(lock.expiry > block.timestamp, "Lock has not expired");     //@follow-up min. lock duration for delegation?
-            require(lock.delegate == address(0), "Lock already delegated");   
 
+            // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]    
+            // allow the delegate to meaningfully vote for the next epoch        
+            require(lock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
 
-            // update user & global: account for decay since lastUpdate and any scheduled slope changes | false since lock is not yet delegated
-            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentEpochStart) = _updateAccountAndGlobal(msg.sender, false);
+            // Update user & global: account for decay since lastUpdate and any scheduled slope changes | false since lock is not yet delegated
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint128 currentEpochStart,,) = _updateAccountAndGlobal(msg.sender, false);
             uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
             // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
@@ -283,9 +304,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
             userSlopeChanges[msg.sender][lock.expiry] -= lockVeBalance.slope;
 
 
-            // Update delegate's delegated voting power (required before adding the lock to delegate's balance)
+            // Update delegate: required before adding the lock to delegate's balance [ignore global, since it was handled in earlier update]
             // true: update delegate's aggregated veBalance; not personal
-            (, DataTypes.VeBalance memory veDelegate, ) = _updateAccountAndGlobal(delegate, true);
+            (, DataTypes.VeBalance memory veDelegate, ,,,) = _updateAccountAndGlobal(delegate, true);
             
             // Add the lock to delegate's delegated balance
             veDelegate = _add(veDelegate, lockVeBalance);
@@ -295,7 +316,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // transfer veMoca tokens from user to delegate 
             _transfer(msg.sender, delegate, lockVeBalance.bias);
 
-            // STORAGE: update lock to mark it as delegated
+            // STORAGE: mark lock as delegated
             lock.delegate = delegate;
             locks[lockId] = lock;
 
@@ -311,23 +332,33 @@ contract VotingEscrowMoca is ERC20, Pausable {
             //emit LockDelegated(lockId, msg.sender, delegate);
         }
 
-        // a delegated lock can be expired
-        function undelegateLock(bytes32 lockId) external {
+        /**
+         * @notice Undelegates a lock's voting power from a registered delegate
+         * @dev Only the lock creator can undelegate. The lock must be currently delegated and not expired.
+         *      Updates user and delegate veBalance, slope changes, and aggregation history
+         *      Prevents double-voting by forward-booking the undelegation to the next epoch 
+         *      Delegate can vote with the lock for the current epoch, but no longer from the next epoch onwards
+         * @param lockId The unique identifier of the lock to undelegate
+         */
+        function undelegateLock(bytes32 lockId) external whenNotPaused {
             DataTypes.Lock memory lock = locks[lockId];
 
             // sanity checks
             require(lock.lockId != bytes32(0), "NoLockFound");
             require(lock.delegate != address(0), "Lock is not delegated");
             require(lock.creator == msg.sender, "Only creator can undelegate");
-            require(lock.isUnlocked == false, "Lock has ended");
+            require(lock.isUnlocked == false, "Principals returned");
 
             
-            //note: we do not implement this as delegate could have unregistered first; so we do not block users from clawing back
+            //note: intentionally not enforced: delegates may have unregistered, so users must always be able to reclaim their locks
             //require(isRegisteredDelegate[delegate], "Delegate not registered");
 
+            //note: intentionally not enforced: expired locks should be undelegated
+            //require(lock.expiry > block.timestamp, "Lock expired");
+
             
-            // [_updateDelegateAndGlobal]: apply decay since lastUpdate and any scheduled slope changes 
-            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint128 currentEpochStart) = _updateAccountAndGlobal(lock.delegate, true);
+            // Update delegate: apply decay since lastUpdate and any scheduled slope changes [required before removing the lock from delegate's balance]
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint128 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
             uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
             // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
@@ -338,15 +369,15 @@ contract VotingEscrowMoca is ERC20, Pausable {
             delegateHistory[lock.delegate][nextEpochStart] = veDelegate;
             delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
 
-            // [_updateUserAndGlobal]: false: update user's personal aggregated veBalance; not delegated veBalance
-            (, DataTypes.VeBalance memory veUser, ) = _updateAccountAndGlobal(msg.sender, false);
+            // Update user: false: update user's personal aggregated veBalance; not delegated veBalance [required before we can book lock's veBalance to user]
+            (, DataTypes.VeBalance memory veUser, ,,,) = _updateAccountAndGlobal(msg.sender, false);
 
             // Add the lock to user's personal aggregated veBalance
             veUser = _add(veUser, lockVeBalance);
             userHistory[msg.sender][nextEpochStart] = veUser;
             userSlopeChanges[msg.sender][lock.expiry] += lockVeBalance.slope;
 
-            // transfer veMoca tokens from delegate to user
+            // transfer veMoca tokens from user to delegate 
             _transfer(lock.delegate, msg.sender, lockVeBalance.bias);
 
             // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
@@ -363,25 +394,35 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // EMIT EVENT
             //emit LockUndelegated(lockId, msg.sender, lock.delegate);
         }
-
-        function switchDelegate(bytes32 lockId, address newDelegate) external {
+        
+        /**
+         * @notice Switches the delegate of a lock to another registered delegate
+         * @dev Only the lock creator can switch the delegate. The lock must not be expired and must be currently delegated.
+         *      Updates user and delegate veBalance, slope changes, and aggregation history
+         *      Prevents double-voting by forward-booking the delegation to the next epoch 
+         *      Current delegate can vote with the lock for the current epoch, but no longer from the next epoch onwards
+         * @param lockId The unique identifier of the lock
+         * @param newDelegate The address of the new delegate
+         */
+        function switchDelegate(bytes32 lockId, address newDelegate) external whenNotPaused {
             // sanity check: delegate
             require(newDelegate != msg.sender, "Cannot delegate to self");
-            require(isRegisteredDelegate[newDelegate], "Delegate not registered");
+            require(isRegisteredDelegate[newDelegate], "New delegate not registered");      // implicit address(0) check: newDelegate != address(0)
 
             DataTypes.Lock memory lock = locks[lockId];
 
+            // sanity check: lock
             require(lock.lockId != bytes32(0), "NoLockFound");
             require(lock.creator == msg.sender, "Only the creator can change delegate");
-            require(lock.expiry > block.timestamp, "Lock has expired");     //@follow-up min. lock duration for delegation?
-            
-            // sanity check: delegate
-            require(lock.delegate != address(0), "Lock must be delegated");
             require(lock.delegate != newDelegate, "Cannot switch to the same delegate");
 
-            // Update current delegate's delegated veBalance (required before removing the lock from the current delegate) | true: update delegate's aggregated veBalance; not personal
-            // [_updateDelegateAndGlobal]: account for decay since lastUpdate and any scheduled slope changes 
-            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veCurrentDelegate, uint128 currentEpochStart) = _updateAccountAndGlobal(lock.delegate, true);
+            // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]            
+            // allow the delegate to meaningfully vote for the next epoch
+            require(lock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
+
+            // Update current delegate: account for decay since lastUpdate and any scheduled slope changes [required before removing the lock from the current delegate]
+            // true: update current delegate's aggregated veBalance; not personal
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veCurrentDelegate, uint128 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
             uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
             // get lock's current veBalance [no checkpoint required as lock attributes have not changed]
@@ -392,9 +433,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
             delegateHistory[lock.delegate][nextEpochStart] = veCurrentDelegate;
             delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
 
-            // Update new delegate's delegated veBalance (required before adding the lock to the new delegate) | true: update delegate's aggregated veBalance; not personal
-            // [_updateDelegateAndGlobal]: account for decay since lastUpdate and any scheduled slope changes 
-            (, DataTypes.VeBalance memory veNewDelegate, ) = _updateAccountAndGlobal(newDelegate, true);
+            // Update new delegate: required before adding the lock to delegate's balance [ignore global, since it was handled in earlier update]
+            // true: update new delegate's aggregated veBalance; not personal
+            (, DataTypes.VeBalance memory veNewDelegate, ,,,) = _updateAccountAndGlobal(newDelegate, true);
             
             // Add lock to new delegate
             veNewDelegate = _add(veNewDelegate, lockVeBalance);
@@ -421,18 +462,18 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
 
-    //-------------------------------admin functions---------------------------------------------
+    //-------------------------------Admin function: createLockFor()---------------------------------------------
 
         // when creating lock onBehalfOf - we will not delegate for the user
-        function createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca) external onlyCronJobRole returns (bytes32) { 
-            return _createLockFor(user, amount, expiry, isMoca, address(0));
+        function createLockFor(address user, uint128 expiry, uint256 moca, uint256 esMoca) external onlyCronJobRole whenNotPaused returns (bytes32) { 
+            return _createLockFor(user, expiry, moca, esMoca, address(0));
         }
 
-    //-------------------------------VotingController functions------------------------------------------
+    //-------------------------------VotingController.sol functions------------------------------------------
     
         // note: registration fees were collected by VotingController
         // require(delegate != address(0) not needed since external contract call
-        function registerAsDelegate(address delegate) external onlyVotingControllerContract {
+        function registerAsDelegate(address delegate) external onlyVotingControllerContract whenNotPaused {
             require(!isRegisteredDelegate[delegate], "Already registered");
 
             // storage: register delegate
@@ -442,7 +483,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             //emit DelegateRegistered(delegate);
         }
 
-        function unregisterAsDelegate(address delegate) external onlyVotingControllerContract {
+        function unregisterAsDelegate(address delegate) external onlyVotingControllerContract whenNotPaused {
             require(isRegisteredDelegate[delegate], "Delegate not registered");
             isRegisteredDelegate[delegate] = false;
 
@@ -450,19 +491,23 @@ contract VotingEscrowMoca is ERC20, Pausable {
             //emit DelegateUnregistered(delegate);
         }
 
-    //-------------------------------internal: update functions----------------------------------------------        // delegate can be address(0)
-        function _createLockFor(address user, uint256 amount, uint128 expiry, bool isMoca, address delegate) internal returns (bytes32) {
+    //-------------------------------Internal: update functions----------------------------------------------       
+        
+        // delegate can be address(0)
+        function _createLockFor(address user, uint128 expiry, uint256 moca, uint256 esMoca, address delegate) internal returns (bytes32) {
             require(user != address(0), "Invalid user");
-            require(amount > 0, "Amount must be greater than zero");
+            require(moca > 0 || esMoca > 0, "Amount must be greater than zero");
             require(EpochMath.isValidEpochTime(expiry), "Expiry timestamp must lie on an epoch boundary");
 
             require(expiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, "Lock duration too short");
             require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, "Lock duration too long");
 
-            // Validate delegate if specified
-            if (delegate != address(0)) {
+            bool isDelegated;
+            // if delegate is specified: check that delegate is registered
+            if (delegate > address(0)) {
                 require(isRegisteredDelegate[delegate], "Delegate not registered");
                 require(delegate != user, "Cannot delegate to self");
+                isDelegated = true;
             }
 
             // --------- create lock ---------
@@ -479,8 +524,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
                     newLock.lockId = lockId; 
                     newLock.owner = user;
                     newLock.delegate = delegate;                //note: we might be setting this to zero; but no point doing if(delegate != address(0))
-                    if (isMoca) newLock.moca = uint128(amount);
-                    else newLock.esMoca = uint128(amount);
+                    newLock.moca = uint128(moca);
+                    newLock.esMoca = uint128(esMoca);
                     newLock.expiry = expiry;
                 // STORAGE: book lock
                 locks[lockId] = newLock;
@@ -490,12 +535,11 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 _pushCheckpoint(lockHistory[lockId], veIncoming, EpochMath.getCurrentEpochStart()); 
 
                 // EMIT LOCK CREATED
-                // emit LockCreated(lockId, user, delegate, amount, expiry, isMoca);
+                // emit LockCreated(lockId, user, delegate, moca, esMoca, expiry);
 
-            // --------- conditional updates based on delegation ---------
+            // --------- Conditional update: based on delegation ---------
 
             // DELEGATED OR PERSONAL LOCK:
-            bool isDelegated = delegate != address(0);
             address account = isDelegated ? delegate : user;
 
             // Apply scheduled slope reductions & decay up to current epoch
@@ -524,23 +568,19 @@ contract VotingEscrowMoca is ERC20, Pausable {
             accountHistoryMapping[account][currentEpochStart] = veAccount;
             accountSlopeChangesMapping[account][expiry] += veIncoming.slope;
 
-            // STORAGE: increment global totalLockedMoca/EsMoca
-            if (isMoca) totalLockedMoca += amount;
-            else totalLockedEsMoca += amount;
-
-            // MINT to account
+            // MINT: veMoca to account
             _mint(account, veIncoming.bias);
 
-            // EMIT LOCK CREATED
-
-            // transfer tokens to contract
-            if (isMoca) {
-                totalLockedMoca += amount;
-                mocaToken.safeTransferFrom(msg.sender, address(this), amount);
-            } else {
-                totalLockedEsMoca += amount;
-                esMocaToken.safeTransferFrom(msg.sender, address(this), amount);
-            }
+            // STORAGE: increment global totalLockedMoca/EsMoca
+            // TRANSFER: tokens to contract
+            if (moca > 0) {
+                totalLockedMoca += moca;
+                _mocaToken().safeTransferFrom(msg.sender, address(this), moca);
+            } 
+            if (esMoca > 0) {
+                totalLockedEsMoca += esMoca;
+                _esMocaToken().safeTransferFrom(msg.sender, address(this), esMoca);
+            } 
 
             return lockId;
         }
@@ -647,7 +687,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
                     
                     // subtract decay for this epoch && remove any scheduled slope changes from expiring locks
-                    veGlobal_ = subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
+                    veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
                     // book ve state for the new epoch
                     totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
                 }
@@ -667,7 +707,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // return
             return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
         }
-
 
         // TODO: any possible rounding errors due to calc. of delta; instead of removed old then add new?
         function _modifyPosition(
@@ -702,12 +741,12 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return newVeBalance;
         }
 
-    //-------------------------------internal: library functions --------------------------------------------
+    //-------------------------------Internal: library functions--------------------------------------------
 
         // removed expired locks from veBalance | does not set lastUpdatedAt
         function _subtractExpired(DataTypes.VeBalance memory a, uint128 expiringSlopes, uint128 expiry) internal pure returns (DataTypes.VeBalance memory) {
             a.bias -= (expiringSlopes * expiry);       // remove decayed ve
-            a.slope -= expiringSlopes;                 // remove expiring slopes
+            a.slope -= expiringSlopes;                  // remove expiring slopes
 
             return a;
         }
@@ -760,7 +799,15 @@ contract VotingEscrowMoca is ERC20, Pausable {
             }
         }
 
-    //-------------------------------Modifiers -------------------------------------------------
+        function _mocaToken() internal view returns (IERC20){
+            return IERC20(_addressBook.getMocaToken());
+        }
+
+        function _esMocaToken() internal view returns (IERC20){
+            return IERC20(_addressBook.getEscrowedMoca());
+        }
+
+    //-------------------------------Modifiers---------------------------------------------------------------
 
         modifier onlyMonitorRole(){
             IAccessController accessController = IAccessController(_addressBook.getAccessController());
@@ -796,7 +843,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
     //-------------------------------block: transfer/transferFrom -----------------------------------------
 
-        //note: white-list transfers? || incorporate ACL / or new layer for token transfers
+        //TODO: white-list transfers? || incorporate ACL / or new layer for token transfers
 
         function transfer(address, uint256) public pure override returns (bool) {
             revert("veMOCA is non-transferable");
@@ -813,7 +860,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         * @notice Pause contract. Cannot pause once frozen
         */
         function pause() external whenNotPaused onlyMonitorRole {
-            if(isFrozen == 1) revert Errors.IsFrozen(); 
+            if(_isFrozen == 1) revert Errors.IsFrozen(); 
             _pause();
         }
 
@@ -821,7 +868,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         * @notice Unpause pool. Cannot unpause once frozen
         */
         function unpause() external whenPaused onlyGlobalAdminRole {
-            if(isFrozen == 1) revert Errors.IsFrozen(); 
+            if(_isFrozen == 1) revert Errors.IsFrozen(); 
             _unpause();
         }
 
@@ -832,9 +879,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
         *      Enables emergencyExit() to be called.
         */
         function freeze() external whenPaused onlyGlobalAdminRole {
-            if(isFrozen) revert Errors.IsFrozen();
+            if(_isFrozen == 1) revert Errors.IsFrozen();
 
-            isFrozen = 1;
+            _isFrozen = 1;
             emit ContractFrozen(block.timestamp);
         }  
 
@@ -844,7 +891,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // disregard making updates to the contract: no need to update anything; system has failed. leave it as is.
         // focus purely on returning principals
         function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole {
-            require(isFrozen, "Contract is not frozen");
+            require(_isFrozen == 1, "Contract is not frozen");
             require(lockIds.length > 0, "No locks provided");
 
             // get user's veBalance for each lock
@@ -1084,5 +1131,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
             
             return _getValueAt(history[min].veBalance, timestamp);
         }
-            
+
+        function isFrozen() external view returns (uint256) {
+            return _isFrozen;
+        }
     }

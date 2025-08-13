@@ -1,6 +1,6 @@
 # Address Book and ACL
 
-- there will only 1 single deployment of addressbook
+- there will only 1 single deployment of AddressBook.sol
 - AccessControlLayer can be redeployed if needed, as its address on AddressBook updated
 
 ## AddressBook will track all contract addresses in our ecosystem/protocol.

@@ -2,8 +2,7 @@
 pragma solidity 0.8.27;
 
 // External: OZ
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-
+import {Ownable2Step, Ownable} from "./../lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 
 /**
  * @title AddressBook
@@ -31,14 +30,18 @@ contract AddressBook is Ownable2Step {
     // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
 
+    // TODO: Admin -> check for coherence against ACL
+    bytes32 private constant DEFAULT_ADMIN_ROLE = 0x00;
+
+
     // Map of registered addresses
     mapping(bytes32 identifier => address registeredAddress) private _addresses;
 
 
-    constructor(address globalAdmin_) Ownable2Step(globalAdmin_) {
+    constructor(address globalAdmin_) Ownable(globalAdmin_) {
 
         // set global admin: DEFAULT_ADMIN_ROLE
-        _addresses[GLOBAL_ADMIN] = globalAdmin_;
+        _addresses[DEFAULT_ADMIN_ROLE] = globalAdmin_;
     }
 
 
@@ -83,7 +86,7 @@ contract AddressBook is Ownable2Step {
     }
 
     function getGlobalAdmin() external view returns (address) {
-        return _addresses[GLOBAL_ADMIN];
+        return _addresses[DEFAULT_ADMIN_ROLE];
     }
 
 // ------------------------------ Setters --------------------------------

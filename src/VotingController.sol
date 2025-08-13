@@ -82,9 +82,9 @@ contract VotingController is Pausable {
         uint128 rewardsPerVote;         // verification fees per vote | get totol poolFees frm OmPm
 
         // verifier data
-        uint128 totalBaseIncentives;    // allocated esMOCA subsidies: based on EpochData.incentivePerVote
-        uint128 totalBonusIncentives;   // optional: any additional esMOCA subsidies granted to this pool, for this epoch
-        uint128 totalClaimed;           // total esMOCA subsidies claimed; for both base and bonus incentives
+        uint128 totalBaseIncentives;    // allocated esMoca subsidies: based on EpochData.incentivePerVote
+        uint128 totalBonusIncentives;   // optional: any additional esMoca subsidies granted to this pool, for this epoch
+        uint128 totalClaimed;           // total esMoca subsidies claimed; for both base and bonus incentives
     }
 
     struct Verifier {
@@ -154,7 +154,7 @@ contract VotingController is Pausable {
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address veMoca_, address esMoca_, address airKit, address owner) {
+    constructor(address airKit, address owner) {
         
 
         // roles

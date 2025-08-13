@@ -1,3 +1,49 @@
+# VotingEscrowMoca [veMoca]
+
+## Executive Summary
+
+- Users lock Moca or esMoca tokens to mint veMoca, granting them voting power within the protocol.
+- The amount of veMoca received increases with both the amount locked and the length of the lock period (up to a 2-year maximum).
+- veMoca voting power decays linearly every second from the moment of locking until the lock expires.
+- veMoca is non-transferable and can only be redeemed for Moca after the lock expires; early redemption of locks is not possible.
+- Delegation to multiple parties is possible, but on a per lock basis; locks cannot be split.
+
+> All calculations and updates are optimized for efficiency by aligning lock expiries to weekly epochs and standardizing decay rates.
+
+## Creating Locks 
+
+- When a user locks the principal assets, they are creating a lock, eacj with a unique lockId.
+- Each lock can be thought of as a fixed-term deposit position, granting veMoca proportional to the amount locked and the chosen lock duration (up to 2 years).
+- Locks are tracked as unique positions, and users can have multiple locks with different amounts, expiries and delegates.
+
+## Delegating Locks
+
+- Users can delegate individual locks to another address (delegate)
+- Target Delegate must be registered through `VotingController.sol`, as there is a registration fee to be paid.
+- Delegated voting power is tracked per lock and per delegate, and can be re-delegated or revoked by the lock owner.
+
+This dual-accounting system works via the following mappings:
+
+**Tracking personal locks**
+```solidity
+    // user personal data: perEpoch | perPoolPerEpoch
+    mapping(uint256 epoch => mapping(address user => Account userEpochData)) public usersEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account userPoolData))) public usersEpochPoolData;
+```
+
+**Tracking delegated locks**
+```solidity
+    // Delegate registration data
+    mapping(address delegate => DelegateGlobal delegate) public delegates;           
+    // Delegate aggregated data (delegated votes spent, rewards, commissions)
+    mapping(uint256 epoch => mapping(address delegate => Account delegate)) public delegateEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => Account delegate))) public delegateEpochPoolData;
+```
+
+In short, any address has two 'pockets', one aggregating for their own personal locks, and another aggregating that which has been delegated to them.
+
+
+
 # Locking tokens
 
 When someone locks tokens, they receive veTokens that decay over time.
@@ -107,3 +153,35 @@ Reason being that 1 core component of the system is a while loop that loops thro
 - so that the while loop can increment as a step-wise function to process calculations
 - this keeps it gas efficient and scalable
 
+# Mid-epoch created locks
+
+Consider 2 identical locks, identical amount and same expiry time [lock A and lock B]
+
+- lockA is created mid-way in Epoch 1 at 15th day.
+- lockB is created 5 days after lockA; still within Epoch 1.
+
+**Would they have the exact same veBalances?**
+- Yes
+
+```markdown
+    The slope is derived as principal / MAX_LOCK_DURATION.
+    The bias is derived as slope * expiry.
+    Neither the bias nor the slope depends on the lock's creation timestamp—only on the principal and expiry (which are identical for both locks).
+
+    The mid-epoch creation times (day 15 vs. day 20) do not affect the VeBalance struct, as the system does not store or factor in a creation timestamp for veBalance calculations. 
+    The earlier creation of lock A means it provided voting power for those extra 5 days, but from lock B's creation onward, both locks yield identical voting power at any given time (bias - slope * t), consistent with the identical structs.
+
+    Their voting power would not differ in epoch 2 (or any subsequent epoch). The difference in creation time does not result in a difference in the decay applied, as the veBalance for each lock (bias and slope) is derived solely from the principal amount and the absolute expiry timestamp—neither of which incorporates the creation timestamp. Consequently, at any given evaluation point (e.g., the end of epoch 2, as used for voting power benchmarking in the VotingController contract), both locks yield identical voting power values.
+```
+
+# Wishlist 
+
+## Auto-extender
+
+```Prakhar
+What do you think of 'Auto-Max Lock' similar to what aerodrome has?
+This mode when turned on lets users lock their tokens for the maximum period (2 years) while ensuring their voting power does not decay over time effectively keeping it at 100% for the full duration.
+
+They cant withdraw their locked tokens unless they disable 'Auto-Max Lock'. Once they disable this, they can withdraw the tokens once the lock expires
+Basically after every epoch, the expiry of the lock is auto-extended to 2 years
+```
