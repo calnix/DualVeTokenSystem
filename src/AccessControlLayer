@@ -4,6 +4,9 @@ pragma solidity 0.8.27;
 // External: OZ
 import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
 
+// libraries
+import {Errors} from "./libraries/Errors.sol";
+
 // interfaces
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
 
@@ -36,7 +39,7 @@ contract AccessController is AccessControl {
     bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // createLockFor | attached to script
     bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // emergencyExit | attached to script
     
-    //bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params | attached to script
+    bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params | attached to script
 
     // ROLES w/o scripts
     bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
@@ -55,7 +58,7 @@ contract AccessController is AccessControl {
         address globalAdmin = _addressBook.getGlobalAdmin();
         require(globalAdmin != address(0), Errors.GlobalAdminCannotBeZero());
 
-        _setupRole(DEFAULT_ADMIN_ROLE, globalAdmin);
+        _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
     }
 
 // ----- external -----
@@ -79,11 +82,11 @@ contract AccessController is AccessControl {
 
 
     function addGlobalAdmin(address addr) external {
-        grantRole(DEFAULT_ADMIN_ROLE, addr);
+        _grantRole(DEFAULT_ADMIN_ROLE, addr);
     }
 
     function removeGlobalAdmin(address addr) external {
-        revokeRole(DEFAULT_ADMIN_ROLE, addr);
+        _revokeRole(DEFAULT_ADMIN_ROLE, addr);
     }
 
     function isGlobalAdmin(address addr) external view returns (bool) {
@@ -166,7 +169,6 @@ contract AccessController is AccessControl {
         return hasRole(OPERATOR_ROLE, addr);
     }
 
-// ----- CRON JOB ROLE -----
 
 
 

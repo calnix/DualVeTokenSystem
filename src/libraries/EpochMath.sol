@@ -26,6 +26,7 @@ library EpochMath {
 
     ///@dev returns epoch start time for a given timestamp
     function getEpochStartForTimestamp(uint256 timestamp) internal pure returns (uint256) {
+        // intentionally divide first to "discard" remainder
         return (timestamp / EPOCH_DURATION) * EPOCH_DURATION;
     }
 
@@ -43,6 +44,10 @@ library EpochMath {
     ///@dev returns current epoch end time
     function getCurrentEpochEnd() internal view returns (uint256) {
         return getEpochEndTimestamp(getCurrentEpochNumber());
+    }
+
+    function getEpochStartTimestamp(uint256 epoch) internal pure returns (uint256) {
+        return epoch * EPOCH_DURATION;
     }
 
     ///@dev returns epoch end time for a given epoch number

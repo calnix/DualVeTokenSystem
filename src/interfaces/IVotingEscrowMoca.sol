@@ -1,4 +1,7 @@
-pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {DataTypes} from "../libraries/DataTypes.sol";
 
 interface IVotingEscrowMoca {
 

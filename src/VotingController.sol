@@ -8,6 +8,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 // libraries
 import {Constants} from "./libraries/Constants.sol";
 import {EpochMath} from "./libraries/EpochMath.sol";
+import {DataTypes} from "./libraries/DataTypes.sol";
 
 // interfaces
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
