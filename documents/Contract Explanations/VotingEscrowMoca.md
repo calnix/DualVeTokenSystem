@@ -2,45 +2,97 @@
 
 ## Executive Summary
 
+This is a dual-token Ve system, with dual-accounting system for multi-party delegation.
+
 - Users lock Moca or esMoca tokens to mint veMoca, granting them voting power within the protocol.
 - The amount of veMoca received increases with both the amount locked and the length of the lock period (up to a 2-year maximum).
 - veMoca voting power decays linearly every second from the moment of locking until the lock expires.
 - veMoca is non-transferable and can only be redeemed for Moca after the lock expires; early redemption of locks is not possible.
 - Delegation to multiple parties is possible, but on a per lock basis; locks cannot be split.
 
-> All calculations and updates are optimized for efficiency by aligning lock expiries to weekly epochs and standardizing decay rates.
+> All calculations and updates are optimized for efficiency by aligning lock expiries to epoch boundaries and standardizing decay rates.
+
+### Important Note: on lock's liveliness 
+
+In `VotingController`, voting power within an epoch is fixed; there is no intra-epoch decay. 
+This allows users to vote at any time during an epoch without rushing. 
+
+This is achieved by benchmarking voting power to the end of said epoch; i.e. everyone gets decayed forward.
+Put differently, users vote with the voting power they would have at the end of the Epoch.
+
+**Due to forward-decay with voting power benchmarked to the epochEnd, the last meaningful epoch of a lock is one less than its actual.**
+
+- Assume a lock ends at epoch N; it would have 0 veMoca at the end of epoch N. (would have non-zero veMoca at epochStart)
+- It cannot vote in Epoch N, since per `VotingController`, it has 0 votes [forward-decay].
+- It can vote last in Epoch N-1, where it would a non-zero bias for that epochEnd.
+
+This means that the last meaningful epoch of a lock, where it can participate in voting is `N-1` [where N is its final epoch].
+
+**Thus to prevents ineffective delegations, increases, or extensions where the added value decays to zero before usable in future voting, we implement the following check:**
+
+```solidity
+            // must have at least 2 Epoch left to increase amount: to meaningfully vote for the next epoch  
+            // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
+            require(oldLock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
+```
+
+This is found in the following functions:
+- delegateLock
+- switchDelegate
+
+- increaseAmount
+- increaseDuration
+
 
 ## Creating Locks 
 
-- When a user locks the principal assets, they are creating a lock, eacj with a unique lockId.
-- Each lock can be thought of as a fixed-term deposit position, granting veMoca proportional to the amount locked and the chosen lock duration (up to 2 years).
+- When a user locks the principal assets, they are creating a lock, each with a unique lockId.
+- Each lock grants veMoca proportional to the amount locked and the chosen lock duration (up to 2 years).
 - Locks are tracked as unique positions, and users can have multiple locks with different amounts, expiries and delegates.
 
 ## Delegating Locks
 
 - Users can delegate individual locks to another address (delegate)
+- This is to allow delegated voting, which will be handled by `VotingController.sol`
 - Target Delegate must be registered through `VotingController.sol`, as there is a registration fee to be paid.
 - Delegated voting power is tracked per lock and per delegate, and can be re-delegated or revoked by the lock owner.
 
-This dual-accounting system works via the following mappings:
+The dual-accounting system works via the following mappings:
 
 **Tracking personal locks**
 ```solidity
     // user personal data: perEpoch | perPoolPerEpoch
-    mapping(uint256 epoch => mapping(address user => Account userEpochData)) public usersEpochData;
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account userPoolData))) public usersEpochPoolData;
+    mapping(address user => mapping(uint256 eTime => uint256 slopeChange)) public userSlopeChanges;
+    mapping(address user => mapping(uint256 eTime => DataTypes.VeBalance veBalance)) public userHistory; // aggregated user veBalance
+    mapping(address user => uint256 lastUpdatedTimestamp) public userLastUpdatedTimestamp;
 ```
 
 **Tracking delegated locks**
 ```solidity
-    // Delegate registration data
-    mapping(address delegate => DelegateGlobal delegate) public delegates;           
-    // Delegate aggregated data (delegated votes spent, rewards, commissions)
-    mapping(uint256 epoch => mapping(address delegate => Account delegate)) public delegateEpochData;
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => Account delegate))) public delegateEpochPoolData;
+    // delegation data
+    mapping(address delegate => bool isRegistered) public isRegisteredDelegate;                             // note: payment to treasury
+    mapping(address delegate => mapping(uint256 eTime => uint256 slopeChange)) public delegateSlopeChanges;
+    mapping(address delegate => mapping(uint256 eTime => DataTypes.VeBalance veBalance)) public delegateHistory; // aggregated delegate veBalance
+    mapping(address delegate => uint256 lastUpdatedTimestamp) public delegateLastUpdatedTimestamp;
 ```
 
 In short, any address has two 'pockets', one aggregating for their own personal locks, and another aggregating that which has been delegated to them.
+
+Not only does this allow any address to be a delegate, it also allows them to vote with their personal holdings independently of that which has been delegated to them.
+
+## increaseAmount 
+
+Users can lock additional principal assets into a pre-existing lock, to increase its veBalance; no change to its expiry will be made. 
+
+- Requires that lock.expiry > 2 Epochs
+- This ensures that locks maintain at least two full epochs of duration, guaranteeing non-zero voting power for the next epoch after accounting for forward-decay benchmarking to epoch ends.
+- It prevents ineffective delegations, increases, or extensions where the added value decays to zero before usable in future voting,
+- otherwise, the increase would add principal to a lock that's already too close to expiry, making the additional veBalance ineffective for next-epoch voting
+
+
+## increaseDuration
+
+
 
 
 
@@ -143,7 +195,9 @@ Additionally, in the first epoch, locks created allow immediate voting and user 
 - but due to the forward-decay benchmarking, they would not be able to vote, since its zero-ed out
 - this is acceptable
 
-# Allowing for lock minDuration = 7 days
+# Others
+
+## Allowing for lock minDuration = 7 days
 
 We cannot do 7-day locks when the system operates on 28 day epochs.
 - min lock duration must always match the duration of an epoch.
@@ -153,7 +207,7 @@ Reason being that 1 core component of the system is a while loop that loops thro
 - so that the while loop can increment as a step-wise function to process calculations
 - this keeps it gas efficient and scalable
 
-# Mid-epoch created locks
+## Mid-epoch created locks
 
 Consider 2 identical locks, identical amount and same expiry time [lock A and lock B]
 

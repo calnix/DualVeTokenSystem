@@ -60,7 +60,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         mapping(uint256 eTime => uint256 totalSupply) public totalSupplyAt;
         
         
-        // user data: cannot use array as likely will get very large
+        // user personal data
         mapping(address user => mapping(uint256 eTime => uint256 slopeChange)) public userSlopeChanges;
         mapping(address user => mapping(uint256 eTime => DataTypes.VeBalance veBalance)) public userHistory; // aggregated user veBalance
         mapping(address user => uint256 lastUpdatedTimestamp) public userLastUpdatedTimestamp;
@@ -103,6 +103,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _createLockFor(msg.sender, expiry, moca, esMoca, delegate);
         }
 
+        // must have at least 2 Epoch left to increase amount; 
         // Users can only stake more into locks that have at least 1 Epoch left
         function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external whenNotPaused {
             DataTypes.Lock memory oldLock = locks[lockId];
@@ -110,8 +111,10 @@ contract VotingEscrowMoca is ERC20, Pausable {
             require(oldLock.lockId != bytes32(0), "NoLockFound");
             require(oldLock.owner == msg.sender, "Only the creator can increase the amount");
             
-            // must have at least 1 Epoch left to increase amount
-            require(oldLock.expiry > block.timestamp + EpochMath.EPOCH_DURATION, "Lock has less than 1 Epoch left");
+            // must have at least 2 Epoch left to increase amount: to meaningfully vote for the next epoch  
+            // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
+            require(oldLock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
+
 
             // DELEGATED OR PERSONAL LOCK:
             bool isDelegated = oldLock.delegate != address(0);
@@ -144,7 +147,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             // storage: update lock + checkpoint lock
             locks[lockId] = updatedLock;
-            _pushCheckpoint(lockHistory[lockId], newVeBalance, currentEpochStart);        
+            _pushCheckpoint(lockHistory[lockId], newVeBalance, uint128(currentEpochStart));        
 
             // emit event
 
@@ -160,7 +163,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
             }
         }
         
-        // must have at least 1 epoch left to increase duration; newExpiry must be on a epoch boundary
+        // must have at least 2 Epoch left to increase duration; 
+        // newExpiry must be on a epoch boundary
         function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external whenNotPaused {
             // cannot extend duration arbitrarily; must be step-wise matching epoch boundaries
             require(EpochMath.isValidEpochTime(durationToIncrease), "Duration must be on a epoch boundary");
@@ -171,10 +175,10 @@ contract VotingEscrowMoca is ERC20, Pausable {
             require(oldLock.owner == msg.sender, "Only the creator can increase the duration");
             require(oldLock.expiry > block.timestamp, "Lock has expired");
             
-            // Ensure the new expiry is at least MIN_LOCK_DURATION from now
+            // must have at least 2 Epoch left to increase amount: to meaningfully vote for the next epoch  
+            // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
             uint256 newExpiry = oldLock.expiry + durationToIncrease;
-            require(newExpiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, "New expiry too short");
-            //require(EpochMath.isValidEpochTime(newExpiry), "New expiry must be on a epoch boundary");
+            require(newExpiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
 
             // DELEGATED OR PERSONAL LOCK:
             bool isDelegated = oldLock.delegate != address(0);
@@ -205,7 +209,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             // storage: update lock + checkpoint lock
             locks[lockId] = updatedLock;
-            _pushCheckpoint(lockHistory[lockId], newVeBalance, currentEpochStart);        
+            _pushCheckpoint(lockHistory[lockId], newVeBalance, uint128(currentEpochStart));        
 
             // emit event
         }
@@ -234,7 +238,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // STORAGE: update lock + book final checkpoint | note: book final checkpoint, since we do not delete the lock
             lock.isUnlocked = true;    
             locks[lockId] = lock;
-            _pushCheckpoint(lockHistory[lockId], veAccount, currentEpochStart);  
+            _pushCheckpoint(lockHistory[lockId], veAccount, uint128(currentEpochStart));  
 
             // burn originally issued veMoca
             uint256 mintedVeMoca = _convertToVeBalance(lock).bias;
@@ -476,7 +480,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             isRegisteredDelegate[delegate] = true;
 
             // event
-            //emit DelegateRegistered(delegate);
+            emit Events.DelegateRegistered(delegate);
         }
 
         function unregisterAsDelegate(address delegate) external onlyVotingControllerContract whenNotPaused {
@@ -484,12 +488,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
             isRegisteredDelegate[delegate] = false;
 
             // event
-            //emit DelegateUnregistered(delegate);
+            emit Events.DelegateUnregistered(delegate);
         }
 
     //-------------------------------Internal: update functions----------------------------------------------       
         
         // delegate can be address(0)
+        // lock must last for at least 2 Epochs: to meaningfully vote for the next epoch [we are sure] 
         function _createLockFor(address user, uint128 expiry, uint256 moca, uint256 esMoca, address delegate) internal returns (bytes32) {
             require(user != address(0), "Invalid user");
             require(moca > 0 || esMoca > 0, "Amount must be greater than zero");
@@ -497,6 +502,10 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             require(expiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, "Lock duration too short");
             require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, "Lock duration too long");
+
+            // must have at least 2 Epoch left to create lock: to meaningfully vote for the next epoch  
+            // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
+            require(expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
 
             bool isDelegated;
             // if delegate is specified: check that delegate is registered
@@ -654,7 +663,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // init empty veBalance
             DataTypes.VeBalance memory veAccount;
 
-            // account's first time: no prior account updates to execute 
+            // account's first time: no prior account updates | only update global
             if (accountLastUpdatedAt == 0) {
                 
                 // set account's lastUpdatedTimestamp
@@ -677,7 +686,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // Updating needed: global and account veBalance to current epoch
             while (accountLastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
-                accountLastUpdatedAt += uint128(EpochMath.EPOCH_DURATION);
+                accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
 
                 // --- Update global: if required ---
                 if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
@@ -741,14 +750,14 @@ contract VotingEscrowMoca is ERC20, Pausable {
     //-------------------------------Internal: library functions--------------------------------------------
 
         // removed expired locks from veBalance | does not set lastUpdatedAt
+        // todo: do i really need safe cast? -> only removing what was added
         function _subtractExpired(DataTypes.VeBalance memory a, uint256 expiringSlope, uint256 expiry) internal pure returns (DataTypes.VeBalance memory) {
             a.bias -= uint128(expiringSlope * expiry);       // remove decayed ve
-            a.slope -= uint128(expiringSlope);                  // remove expiring slopes
-
+            a.slope -= uint128(expiringSlope);                // remove expiring slopes
             return a;
         }
 
-        // subtracts b from a
+        // subtracts b from a: a - b
         function _sub(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
             DataTypes.VeBalance memory res;
                 res.bias = a.bias - b.bias;
@@ -757,6 +766,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return res;
         }
 
+        // a + b
         function _add(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
             DataTypes.VeBalance memory res;
                 res.bias = a.bias + b.bias;
@@ -784,7 +794,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return veBalance;
         }
 
-        function _pushCheckpoint(DataTypes.Checkpoint[] storage lockHistory_, DataTypes.VeBalance memory veBalance, uint256 currentEpochStart) internal {
+        function _pushCheckpoint(DataTypes.Checkpoint[] storage lockHistory_, DataTypes.VeBalance memory veBalance, uint128 currentEpochStart) internal {
             uint256 length = lockHistory_.length;
 
             // if last checkpoint is in the same epoch as incoming; overwrite
@@ -792,7 +802,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 lockHistory_[length - 1].veBalance = veBalance;
             } else {
                 // new checkpoint for new epoch: set lastUpdatedAt
-                lockHistory_.push(DataTypes.Checkpoint(veBalance, uint128(currentEpochStart)));
+                lockHistory_.push(DataTypes.Checkpoint(veBalance, currentEpochStart));
             }
         }
 
@@ -931,7 +941,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // if lastUpdate was within current epoch: no new epoch, no new checkpoint
             if(lastUpdatedAt >= currentEpochStart) return (veGlobal_); 
 
-            // if first time: no prior updates needed 
+            // first time: no prior updates 
             if(lastUpdatedAt == 0) {
                 lastUpdatedAt = currentEpochStart;   // move forward the anchor point to skip empty epochs
                 return veGlobal_;
@@ -965,28 +975,28 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
 
             // Get the appropriate last updated timestamp
-            uint256 lastUpdatedAt = accountLastUpdatedTimestamp[account];
+            uint256 accountLastUpdatedAt = accountLastUpdatedTimestamp[account];
             
             // account has no locks created: return empty veBalance
-            if(lastUpdatedAt == 0) return veBalance;
+            if(accountLastUpdatedAt == 0) return veBalance;
 
             // load account's previous veBalance from history
-            veBalance = accountHistory[account][lastUpdatedAt];
+            veBalance = accountHistory[account][accountLastUpdatedAt];
             
             // get current epoch start
             uint128 currentEpochStart = EpochMath.getCurrentEpochStart(); 
             
-            // already up to date: return
-            if(lastUpdatedAt >= currentEpochStart) return veBalance;
+            // both global and account are already up to date: return
+            if(accountLastUpdatedAt >= currentEpochStart) return veBalance;
 
             // update account veBalance to current epoch
-            while (lastUpdatedAt < currentEpochStart) {
+            while (accountLastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
-                lastUpdatedAt += EpochMath.EPOCH_DURATION;
+                accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
 
                 // decrement decay for this epoch & apply scheduled slope changes
-                uint256 expiringSlope = accountSlopeChanges[account][lastUpdatedAt];
-                veBalance = _subtractExpired(veBalance, expiringSlope, lastUpdatedAt);
+                uint256 expiringSlope = accountSlopeChanges[account][accountLastUpdatedAt];
+                veBalance = _subtractExpired(veBalance, expiringSlope, accountLastUpdatedAt);
             }
 
             return veBalance;
@@ -1022,9 +1032,10 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return balanceOf(user, false);
         }
 
-        function balanceOf(address user, bool isDelegated) public view returns (uint256) {
+        // if true: delegated veBalance; if false: personal veBalance
+        function balanceOf(address user, bool forDelegated) public view returns (uint256) {
             // Get the appropriate veBalance based on query type
-            DataTypes.VeBalance memory veBalance = _viewAccount(user, isDelegated);
+            DataTypes.VeBalance memory veBalance = _viewAccount(user, forDelegated);
             return _getValueAt(veBalance, uint128(block.timestamp));
         }
 
