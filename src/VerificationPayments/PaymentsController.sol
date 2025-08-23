@@ -350,6 +350,8 @@ contract PaymentsController is EIP712, Pausable {
         epochs[currentEpoch].feesAccruedToTreasury += treasuryFee;
         epochs[currentEpoch].feesAccruedToVoters += voterFee;  
 
+        //TODO: do you want to call VotingController to update accrued fees?
+
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
         // do we need more events for the other accounting actions?
     }
