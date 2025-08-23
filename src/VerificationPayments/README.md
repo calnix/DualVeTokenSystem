@@ -113,6 +113,8 @@ The schema struct contains `bytes32 poolId`, to associate a schema with a voting
 - use this function to add/update/remove voting pool association.
 
 > Pools are created on VotingController.sol, so poolId should be referenced from that contract.
+> VotingController has no visibility of which schemas are associated to its pools. 
+> Voter rewards [cut of verification fees] will be checked on PaymentsController.sol, then deposited to their respective pools 
 
 ### Other issuer functions:
 
