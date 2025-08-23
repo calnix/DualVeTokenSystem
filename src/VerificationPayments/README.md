@@ -1,13 +1,17 @@
-# Owe Money, Pay Money [Working Title]
+# Payments Controller
 
-It is assumed that `credentialId` is unique pairwise{issuerId, credentialType}.
+**Actors:**
 
-## Issuer and related processes
+1. Us
+2. Issuers
+3. Verifiers
+
+## Issuers
 
 **Onboarding Flow:**
 
 1. New Issuer calls `setupIssuer`
-2. Subsequently, call `setupCredentials`, defining verification fee
+2. Subsequently, call `setupSchema`, defining verification fee
 3. Repeat step 2 as required
 
 **Explanation**
@@ -32,7 +36,13 @@ The following struct defines the on-chain attributes of an issuer:
 ```
 
 A new issuer is required to call `setupIssuer`, wherein which a random bytes32 id will be generated for them.
-Additionally, they are expected to specify `wallet` - which is address to which fees will be claimable to.
+
+```solidity
+function setupIssuer(address wallet) external returns (bytes32)
+```
+
+- expected to specify `wallet` - which is address to which fees will be claimable to.
+- `configAddress` will be set to `msg.sender`
 
 **The necessity for an issuer id on-chain:**
 
@@ -40,16 +50,39 @@ Additionally, they are expected to specify `wallet` - which is address to which 
 - allows issuers to switch fee claim wallet address
 - allows issuers to silo access control between an address that is used to handle configurations, and another for asset management
 
-Without an issuer id, issuers are beholden to use the same address for everything, have no ability to switch addresses.
+Without an issuer id, issuers are beholden to use the same address for everything; have no ability to switch addresses.
 
-**Setting up credentials & fees: `setupCredential`**
+### Issuers: Schemas and Fees
 
-The following struct defines the on-chain attributes of a credential:
+Schema is a template defining the data points of a credential.
+Put differently, its the blueprint for issuing credentials.
+
+Schema layout:
+
+```
+Public inputs:
+1. Title
+2. Type of data source: E.g. self reported
+3. Version 
+4. Header/Metadata: Provides version, schema identifier (URL), title, and description
+5. Footer: type of zk algo and encryption used
+
+Private Inputs:
+1. Body: Specifies the main structure—listing allowed claims, data types, constraints, relationships, and validation rules for each field.
+```
+
+Issuers are expected to setup schemas' and set associated verification fees on PaymentsController contract. 
+This is done by calling `setupSchema`.
+
+A schema's on-chain representation serves to account for fees and payment tracking; nothing more. 
+
+**Setting up schema & fees: `setupSchema`**
+
+The following struct defines the on-chain attributes of a schema:
 
 ```solidity
-    // each credential is unique pairwise {issuerId, credentialType}
-    struct Credential {
-        bytes32 credentialId;
+    struct Schema {
+        bytes32 schemaId;
         bytes32 issuerId;
         
         // fees are expressed in USD8 terms
@@ -60,11 +93,24 @@ The following struct defines the on-chain attributes of a credential:
         // counts
         uint128 totalIssued;
         uint128 totalFeesAccrued;
+
+        // for VotingController
+        bytes32 poolId;
     }
 ```
 
-When `setupCredential` is called, its primary purpose is to create a bytes32 `credentialId` and store the fee set by the issuer.
-Here on out, the struct serves to log fees accrued from verifications and number of issuances. 
+When `setupSchema` is called, it's purpose is two-fold:
+1. create a bytes32 `schemaId`
+2. store the fee set by the issuer
+
+Thereafter, the `schemaId` is used to track fees accrued from verifications and number of issuances. 
+
+### Schemas and Voting
+
+The schema struct contains `bytes32 poolId`, to associate a schema with a voting pool.
+- by default this is `bytes32(0)`, indicating that is it not attached to a voting pool.
+- to associate it with a voting pool, the admin function `updatePoolId(bytes32 schemaId, bytes32 poolId)` is called
+- use this function to add/update/remove voting pool association.
 
 ### Other issuer functions:
 
@@ -122,7 +168,7 @@ Similar to the issuer, a separation of roles between signing and asset managemen
 Verifier contract should call `deductBalance()`, passing the following as input:
 
 ```solidity
-    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 credentialId, uint256 amount, uint256 expiry, bytes calldata signature){}
+    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 amount, uint256 expiry, bytes calldata signature){...}
 ```
 - all ids are to be passed as assigned by the payments contract, for the correct storage referencing and calculations
 - amount is the fee deductible

@@ -934,7 +934,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             emit Events.EmergencyExit(lockIds);
         }
 
-    //-------------------------------internal: view-----------------------------------------------------
+    //-------------------------------Internal: view-----------------------------------------------------
 
         // _updateGlobal, but w/o the storage changes
         function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint256 lastUpdatedAt, uint256 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {       
@@ -1003,11 +1003,12 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
     //-------------------------------view functions-----------------------------------------
-
+        
         /**
          * @notice Returns current total supply of voting escrowed tokens (veTokens), up to date with the latest epoch
-         * @dev Overrides the ERC20 `totalSupply()` and brings the global veBalance up to the current epoch before returning the value.
-         * @return The current total supply of veTokens
+         * @dev Overrides the ERC20 `totalSupply()` 
+         * @dev Updates global veBalance to the current epoch before returning value
+         * @return Updated current total supply of veTokens
          */
         function totalSupply() public view override returns (uint256) {
             // update global veBalance to current epoch
@@ -1016,9 +1017,15 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _getValueAt(veGlobal_, uint128(block.timestamp));
         }
 
-        // forward-looking; not historical search | for historical search, use totalSupplyAt[] mapping; limited to epoch boundaries
+        /**
+         * @notice Returns the projected total supply of voting escrowed tokens (veTokens) at a future timestamp.
+         * @dev Forward-looking calculation; does not perform a historical search.
+         *      For historical queries, use the totalSupplyAt[] mapping, which is limited to epoch boundaries.
+         * @param time The future timestamp for which the total supply is projected.
+         * @return The projected total supply of veTokens at the specified future timestamp.
+         */
         function totalSupplyInFuture(uint128 time) public view returns (uint256) {
-            require(time >= block.timestamp, "Timestamp is in the past");
+            require(time > block.timestamp, "Timestamp is in the past");
 
             DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, EpochMath.getEpochStartForTimestamp(time));
             return _getValueAt(veGlobal_, time);
@@ -1026,55 +1033,49 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
         //-------------------------------user: balanceOf, balanceOfAt -----------------------------------------
 
-        // Override ERC20::balanceOf() fn selector
+        /**
+         * @notice Returns the current personal voting power (veBalance) of a user.
+         * @dev Overrides the ERC20 `balanceOf()` function selector; therefore forced to return personal voting power.
+         * @param user The address of the user whose veBalance is being queried.
+         * @return The current personal veBalance of the user.
+         */
         function balanceOf(address user) public view override returns (uint256) {
-            // Only personal voting power (non-delegated locks)
-            return balanceOf(user, false);
+            return balanceOf(user, false);  // Only personal voting power (non-delegated locks)
         }
 
-        // if true: delegated veBalance; if false: personal veBalance
+        /**
+         * @notice Returns the current voting power (veBalance) of a user
+         * @param user The address of the user whose veBalance is being queried.
+         * @param forDelegated If true: delegated veBalance; if false: personal veBalance
+         * @return The current veBalance of the user.
+         */
         function balanceOf(address user, bool forDelegated) public view returns (uint256) {
-            // Get the appropriate veBalance based on query type
             DataTypes.VeBalance memory veBalance = _viewAccount(user, forDelegated);
             return _getValueAt(veBalance, uint128(block.timestamp));
         }
 
-        /// @notice historical search. veBalances are stored per epoch; find the closest epoch boundary to the timestamp and interpolate from there
-        function balanceOfAt(address user, uint256 time, bool isDelegated) external view returns (uint256) {
+        /**
+         * @notice Historical search of a user's voting escrowed balance (veBalance) at a specific timestamp.
+         * @dev veBalances are checkpointed per epoch. This function locates the closest epoch boundary to the input timestamp,
+         *      then interpolates the veBalance from that checkpoint to the exact timestamp.
+         * @param user The address of the user whose veBalance is being queried.
+         * @param time The historical timestamp for which the veBalance is requested.
+         * @param forDelegated If true: delegated veBalance; if false: personal veBalance
+         * @return The user's veBalance at the specified timestamp.
+         */
+        function balanceOfAt(address user, uint256 time, bool forDelegated) external view returns (uint256) {
             require(time <= block.timestamp, "Timestamp is in the future");
 
             // find the closest epoch boundary (eTime) that is not larger than the input time
             uint256 eTime = EpochMath.getEpochStartForTimestamp(time);
             
             // get the appropriate veBalance at that epoch boundary
-            DataTypes.VeBalance memory veBalance = isDelegated ? delegateHistory[user][eTime] : userHistory[user][eTime];
+            DataTypes.VeBalance memory veBalance = forDelegated ? delegateHistory[user][eTime] : userHistory[user][eTime];
             
             // calc. voting power at the exact timestamp using the veBalance from the closest past epoch boundary
             return _getValueAt(veBalance, time);
         }
 
-        /// @notice Returns a user's total delegated balance, aggregated across all delegates
-        function getUserTotalDelegatedBalance(address user, address delegate) external view returns (uint256) {
-            //veBalance is valued at now
-            return _getValueAt(delegatedAggregationHistory[user][delegate][uint128(block.timestamp)], uint128(block.timestamp));
-        }
-
-        /** @notice Retrieves the delegated veBalance of a user for a specific delegate at the end of a given epoch.
-         *  @dev
-         *   1. Gets the user's delegated veBalance for the specified epoch by referencing the epoch start time.
-         *   2. Calculates the voting power at the end of the epoch using _getValueAt.
-         *  @param user The address of the user whose delegated balance is being queried.
-         *  @param delegate The address of the delegate to whom the balance is delegated.
-         *  @param epoch The epoch number for which the delegated balance is requested.
-         *  @return The delegated voting power at the end of the specified epoch.
-         */
-        function getDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
-            uint256 epochStart = EpochMath.getEpochStartTimestamp(epoch);
-            uint256 epochEnd = epochStart + EpochMath.EPOCH_DURATION;
-            // 1. get user's delegated veBalance for specified epoch: reference epoch start time
-            // 2. voting power is benchmarked to end of epoch: so _getValue to calc. on epochEnd
-            return _getValueAt(delegatedAggregationHistory[user][delegate][epochStart], epochEnd);
-        }
 
     // ------ lock: getLockHistoryLength, getLockCurrentVeBalance, getLockCurrentVotingPower, getLockVeBalanceAt ---------
 
