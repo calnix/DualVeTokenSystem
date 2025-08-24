@@ -156,45 +156,120 @@ contract VotingController is Pausable {
 
 //-------------------------------voting functions------------------------------------------
 
-    // note: isDelegated = true: caller's delegated voting power, false: caller's personal voting power
-    function vote(bytes32[] calldata poolIds, uint128[] calldata weights, bool isDelegated) external {
-        _vote(msg.sender, poolIds, weights, isDelegated);
+    /**
+     * @notice Cast votes for one or more pools using either personal or delegated voting power.
+     * @dev If `isDelegated` is true, the caller's delegated voting power is used; otherwise, personal voting power is used.
+     * @param poolIds Array of pool IDs to vote for.
+     * @param votes Array of vote weights corresponding to each pool.
+     * @param isDelegated Boolean flag indicating whether to use delegated voting power.
+     */
+    function vote(address caller, bytes32[] calldata poolIds, uint128[] calldata votes, bool isDelegated) external {
+        require(poolIds.length > 0, "Invalid Array");
+        require(poolIds.length == votes.length, "Mismatched input lengths");
+
+        // epoch should not be finalized
+        uint256 epoch = EpochMath.getCurrentEpochNumber();          
+        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
+
+        // mapping lookups based on isDelegated | account:{personal,delegate}
+        (
+            mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData,
+            mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData
+        ) = isDelegated ? (delegateEpochData, usersEpochData) : (delegateEpochPoolData, usersEpochPoolData);
+
+        // votingPower: benchmarked to end of epoch [forward-decay]
+        uint256 epochEndTime = EpochMath.getCurrentEpochEnd();
+
+        // get account's voting power[personal, delegated] and used votes
+        uint128 votingPower = _veMoca().balanceAtEpochEnd(caller, epochEndTime, isDelegated);
+        uint128 spentVotes = accountEpochData[epoch][caller].totalVotesSpent;
+
+        // check if account has spare votes
+        uint128 spareVotes = votingPower - spentVotes;
+        require(spareVotes > 0, "No spare votes");
+
+        // update votes at a pool+epoch level | account:{personal,delegate}
+        uint128 totalNewVotes;
+        for(uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            uint128 votes = votes[i];
+
+            // sanity check: do not skip on 0 vote, as it indicates incorrect array inputs
+            require(votes > 0, "Zero vote"); 
+            
+            // sanity checks: pool exists, is active
+            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
+            require(pools[poolId].isActive, "Pool inactive");
+            
+            // sanity check: spare votes should not be exceeded
+            totalNewVotes += votes;
+            require(totalNewVotes <= spareVotes, "Exceeds available voting power");
+
+            // increment votes at a pool+epoch level | account:{personal,delegate}
+            accountEpochPoolData[epoch][poolId][caller].totalVotesSpent += votes;
+            epochPools[epoch][poolId].totalVotes += votes;
+            epochs[epoch].totalVotes += votes;
+            //increment pool votes at a global level
+            pools[poolId].totalVotes += votes;       
+        }
+
+        // update account's epoch voting power counter
+        accountEpochData[epoch][caller].totalVotesSpent += totalNewVotes;
+        
+        // event
+        emit Events.Voted(epoch, caller, poolIds, votes, isDelegated);
     }
 
 
     //TODO: refactor to use _vote() if possible
     // migrate partial, migrate full, etc
-    function migrateVotes(bytes32 fromPoolId, bytes32 toPoolId, uint128 amount) external {
-        require(fromPoolId != toPoolId, "Cannot migrate to same pool");
-        require(amount > 0, "Zero amount");
+    function migrateVotes(bytes32[] calldata srcPoolIds, bytes32[] calldata dstPoolIds, uint128[] calldata votes, bool isDelegated) external {
+        require(srcPoolIds.length > 0, "No pools specified");
+        require(srcPoolIds.length == dstPoolIds.length, "Mismatched input lengths");
+        require(srcPoolIds.length == votes.length, "Mismatched input lengths");
 
-        require(pools[fromPoolId].poolId != bytes32(0), "Source pool does not exist");
-        require(pools[toPoolId].poolId != bytes32(0), "Destination pool does not exist");
-        require(pools[toPoolId].isActive, "Destination pool is not active");
-        require(pools[toPoolId].isWhitelisted, "Destination pool is not whitelisted");
+        // epoch should not be finalized
+        uint256 epoch = EpochMath.getCurrentEpochNumber();          
+        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
 
-        uint256 epoch = EpochMath.getCurrentEpochNumber();
-        EpochData storage epochData = epochs[epoch];
-        require(!epochData.isFullyFinalized, "Epoch finalized");
+        // mapping lookups based on isDelegated | account:{personal,delegate}
+        (
+            mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData,
+            mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData
+        ) = isDelegated ? (delegateEpochData, usersEpochData) : (delegateEpochPoolData, usersEpochPoolData);
 
-        // get user's existing votes in the fromPool
-        User storage userFrom = userEpochPoolData[epoch][fromPoolId][msg.sender];
-        require(userFrom.totalVotesSpent >= amount, "Insufficient votes to migrate");
 
-        // Deduct from old pool
-        userFrom.totalVotesSpent -= amount;
-        epochPools[epoch][fromPoolId].totalVotes -= amount;
-        pools[fromPoolId].totalVotes -= amount;
-        epochData.totalVotes -= amount;
+        // can migrate votes from inactive pool to active pool; but not vice versa
+        for(uint256 i; i < srcPoolIds.length; ++i) {
+            bytes32 srcPoolId = srcPoolIds[i];
+            bytes32 dstPoolId = dstPoolIds[i];
+            uint128 votesToMigrate = votes[i];
 
-        // Add to new pool
-        User storage userTo = userEpochPoolData[epoch][toPoolId][msg.sender];
-        userTo.totalVotesSpent += amount;
-        epochPools[epoch][toPoolId].totalVotes += amount;
-        pools[toPoolId].totalVotes += amount;
-        epochData.totalVotes += amount;
+            // sanity check: pools exists, dstPool is active
+            require(pools[srcPoolId].poolId != bytes32(0), "Source pool does not exist");
+            require(pools[dstPoolId].poolId != bytes32(0), "Destination pool does not exist");
+            require(pools[dstPoolId].isActive, "Destination pool is not active");
 
-        //     emit VotesMigrated(msg.sender, epoch, fromPoolId, toPoolId, amount);
+            // get user's existing votes in the srcPool
+            uint128 votesInSrcPool = accountEpochPoolData[epoch][srcPoolId][msg.sender].totalVotesSpent;
+            require(votesInSrcPool >= votesToMigrate, "Insufficient votes to migrate");
+
+            // deduct from old pool
+            accountEpochPoolData[epoch][srcPoolId][msg.sender].totalVotesSpent -= votesToMigrate;
+            epochPools[epoch][srcPoolId].totalVotes -= votesToMigrate;
+            pools[srcPoolId].totalVotes -= votesToMigrate;
+            epochs[epoch].totalVotes -= votesToMigrate;
+
+            // add to new pool
+            accountEpochPoolData[epoch][dstPoolId][msg.sender].totalVotesSpent += votesToMigrate;
+            epochPools[epoch][dstPoolId].totalVotes += votesToMigrate;
+            pools[dstPoolId].totalVotes += votesToMigrate;
+            epochs[epoch].totalVotes += votesToMigrate;
+
+        }
+
+        // event
+        emit Events.VotesMigrated(epoch, msg.sender, srcPoolIds, dstPoolIds, votes, isDelegated);
     }
 
 //-------------------------------delegator functions------------------------------------------
@@ -717,64 +792,6 @@ contract VotingController is Pausable {
     
 
 //-------------------------------internal functions-----------------------------------------
-
-    //note: isDelegated = true: caller's delegated voting power, false: caller's personal voting power
-    function _vote(address caller, bytes32[] calldata poolIds, uint128[] calldata votes, bool isDelegated) internal {
-        require(poolIds.length > 0, "Invalid Array");
-        require(poolIds.length == votes.length, "Mismatched input lengths");
-
-        // epoch should not be finalized
-        uint256 epoch = EpochMath.getCurrentEpochNumber();          
-        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
-
-        // mapping lookups based on isDelegated | account:{personal,delegate}
-        (
-            mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData,
-            mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData
-        ) = isDelegated ? (delegateEpochData, usersEpochData) : (delegateEpochPoolData, usersEpochPoolData);
-
-        // votingPower: benchmarked to end of epoch [forward-decay]
-        uint256 epochEndTime = EpochMath.getCurrentEpochEnd();
-
-        // get account's voting power[personal, delegated] and used votes
-        uint128 votingPower = _veMoca().balanceAtEpochEnd(caller, epochEndTime, isDelegated);
-        uint128 spentVotes = accountEpochData[epoch][caller].totalVotesSpent;
-
-        // check if account has spare votes
-        uint128 spareVotes = votingPower - spentVotes;
-        require(spareVotes > 0, "No spare votes");
-
-        // update votes at a pool+epoch level | account:{personal,delegate}
-        uint128 totalNewVotes;
-        for(uint256 i; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint128 votes = votes[i];
-
-            // sanity check: do not skip on 0 vote, as it indicates incorrect array inputs
-            require(votes > 0, "Zero vote"); 
-            
-            // sanity checks: pool exists, is active
-            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-            require(pools[poolId].isActive, "Pool inactive");
-            
-            // sanity check: spare votes should not be exceeded
-            totalNewVotes += votes;
-            require(totalNewVotes <= spareVotes, "Exceeds available voting power");
-
-            // increment votes at a pool+epoch level | account:{personal,delegate}
-            accountEpochPoolData[epoch][poolId][caller].totalVotesSpent += votes;
-            epochPools[epoch][poolId].totalVotes += votes;
-            epochs[epoch].totalVotes += votes;
-            //increment pool votes at a global level
-            pools[poolId].totalVotes += votes;       
-        }
-
-        // update account's epoch voting power counter
-        accountEpochData[epoch][caller].totalVotesSpent += totalNewVotes;
-        
-        // event
-        emit Events.Voted(epoch, caller, poolIds, votes, isDelegated);
-    }
 
 
     function _veMoca() internal view returns (IVotingEscrowMoca){

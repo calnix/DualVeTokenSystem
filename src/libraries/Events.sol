@@ -17,7 +17,7 @@ library Events {
 
     // --------- VotingController.sol ---------
     event Voted(uint256 indexed epoch, address indexed caller, bytes32[] poolIds, uint256[] votes, bool isDelegated);
-
+    event VotesMigrated(uint256 indexed epoch, address indexed caller, bytes32[] srcPoolIds, bytes32[] dstPoolIds, uint256[] votes, bool isDelegated);
 
     // --------- PaymentsController.sol ---------
 
