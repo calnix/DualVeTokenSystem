@@ -27,7 +27,7 @@ library EpochMath {
     ///@dev returns epoch start time for a given timestamp
     function getEpochStartForTimestamp(uint256 timestamp) internal pure returns (uint256) {
         // intentionally divide first to "discard" remainder
-        return (timestamp / EPOCH_DURATION) * EPOCH_DURATION;
+        return (timestamp / EPOCH_DURATION) * EPOCH_DURATION;   // forge-lint: disable-line(divide-before-multiply)
     }
 
     ///@dev returns epoch end time for a given timestamp
@@ -61,9 +61,4 @@ library EpochMath {
         return timestamp % EPOCH_DURATION == 0;
     }
 
-
-
-
 }
-
-// https://github.com/aerodrome-finance/contracts/blob/main/contracts/libraries/ProtocolTimeLibrary.sol

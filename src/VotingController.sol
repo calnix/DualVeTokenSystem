@@ -21,14 +21,8 @@ import {IPaymentsController} from "./interfaces/IPaymentsController.sol";
 contract VotingController is Pausable {
     using SafeERC20 for IERC20;
 
-    VotingEscrowMoca public immutable veMoca;
-    IAirKit public immutable AIRKIT;    // airkit contract: books verification payments by verifiers
-    address public immutable TREASURY;
-
-    //IERC20 public immutable veMOCA;
-    IERC20 public immutable esMOCA;
-    IERC20 public immutable MOCA;       // MOCA token for registration fees
-        
+    // protocol yellow pages
+    IAddressBook internal immutable ADDRESS_BOOK;
     
     // safety check
     uint128 public totalNumberOfPools;
@@ -56,7 +50,7 @@ contract VotingController is Pausable {
         uint128 totalClaimed;           // Total esMOCA subsidies claimed; serves as indicator for surplus, accounting for base and bonus incentives
 
         // safety check
-        uint128 poolsFinalized;
+        uint128 poolsFinalized;         // number of pools that have been finalized for this epoch
         bool isFullyFinalized;
     }
     
@@ -65,7 +59,7 @@ contract VotingController is Pausable {
     struct Pool {
         bytes32 poolId;       // poolId = credentialId  
         bool isActive;        // active+inactive: pause pool
-        bool isWhitelisted;   // whitelist+blacklist
+        //bool isWhitelisted;   // whitelist+blacklist
         
         // global metrics
         uint128 totalVotes;             // how many votes pool accrued throughout all epochs
@@ -133,14 +127,14 @@ contract VotingController is Pausable {
     mapping(uint256 epoch => mapping(bytes32 poolId => PoolEpoch poolEpoch)) public epochPools;
 
     // user personal data: perEpoch | perPoolPerEpoch
-    mapping(uint256 epoch => mapping(address user => Account userEpochData)) public usersEpochData;
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account userPoolData))) public usersEpochPoolData;
+    mapping(uint256 epoch => mapping(address user => Account user)) public usersEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account user))) public usersEpochPoolData;
     
     // Delegate registration data
     mapping(address delegate => DelegateGlobal delegate) public delegates;           
     // Delegate aggregated data (delegated votes spent, rewards, commissions)
     mapping(uint256 epoch => mapping(address delegate => Account delegate)) public delegateEpochData;
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => Account delegate))) public delegateEpochPoolData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => Account delegate))) public delegatesEpochPoolData;
 
     // User-Delegate tracking [for this user-delegate pair, what was the user's {rewards,claimed}]
     mapping(uint256 epoch => mapping(address user => mapping(address delegate => Account userDelegateAccounting))) public userDelegateAccounting;
@@ -155,20 +149,18 @@ contract VotingController is Pausable {
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address airKit, address owner) {
-        
-
-        // roles
-        _grantRole(DEFAULT_ADMIN_ROLE, owner);
+    constructor(address addressBook) {
+        ADDRESS_BOOK = IAddressBook(addressBook);
     }
 
 
 //-------------------------------voting functions------------------------------------------
 
-    // note: isDelegated: true = vote on behalf of delegate, false = vote on behalf of self
+    // note: isDelegated = true: caller's delegated voting power, false: caller's personal voting power
     function vote(bytes32[] calldata poolIds, uint128[] calldata weights, bool isDelegated) external {
         _vote(msg.sender, poolIds, weights, isDelegated);
     }
+
 
     //TODO: refactor to use _vote() if possible
     // migrate partial, migrate full, etc
@@ -620,7 +612,7 @@ contract VotingController is Pausable {
         // event
     }
 
-//-------------------------------incentives functions----------------------------------------------
+//-------------------------------admin: incentives functions----------------------------------------------
    
     // incentives for a specific epoch
     function setEpochIncentives(uint128 epoch, uint128 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -732,23 +724,25 @@ contract VotingController is Pausable {
         require(poolIds.length == votes.length, "Mismatched input lengths");
 
         // epoch should not be finalized
-        uint256 epoch = EpochMath.getCurrentEpochNumber();          // based on block.timestamp
+        uint256 epoch = EpochMath.getCurrentEpochNumber();          
         require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
 
-        // votingPower: benchmarked to end of epoch [forward-decay]
-        uint256 epochEnd = EpochMath.getCurrentEpochEnd();
-
         // mapping lookups based on isDelegated | account:{personal,delegate}
-        mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData = isDelegated ? delegateEpochData : usersEpochData;
-        mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData = isDelegated ? delegateEpochPoolData : usersEpochPoolData;
+        (
+            mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData,
+            mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData
+        ) = isDelegated ? (delegateEpochData, usersEpochData) : (delegateEpochPoolData, usersEpochPoolData);
+
+        // votingPower: benchmarked to end of epoch [forward-decay]
+        uint256 epochEndTime = EpochMath.getCurrentEpochEnd();
 
         // get account's voting power[personal, delegated] and used votes
-        uint128 votingPower = veMoca.balanceOfAt(caller, epochEnd, isDelegated);    // note: voting power is benchmarked to end of epoch [forward-decay]
-        uint128 usedVotes = accountEpochData[epoch][caller].totalVotesSpent;
+        uint128 votingPower = _veMoca().balanceAtEpochEnd(caller, epochEndTime, isDelegated);
+        uint128 spentVotes = accountEpochData[epoch][caller].totalVotesSpent;
 
-        // check if account has unused votes
-        uint128 spareVotes = votingPower - usedVotes;
-        require(spareVotes > 0, "No unused votes");
+        // check if account has spare votes
+        uint128 spareVotes = votingPower - spentVotes;
+        require(spareVotes > 0, "No spare votes");
 
         // update votes at a pool+epoch level | account:{personal,delegate}
         uint128 totalNewVotes;
@@ -756,30 +750,40 @@ contract VotingController is Pausable {
             bytes32 poolId = poolIds[i];
             uint128 votes = votes[i];
 
-            // sanity checks
-            require(votes > 0, "Zero vote"); // opting to not skip on 0 vote, as tt indicates incorrect array inputs
-
-            // TODO: check if all 3 req. are needed; streamline
+            // sanity check: do not skip on 0 vote, as it indicates incorrect array inputs
+            require(votes > 0, "Zero vote"); 
+            
+            // sanity checks: pool exists, is active
             require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
             require(pools[poolId].isActive, "Pool inactive");
-            require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
+            
+            // sanity check: spare votes should not be exceeded
+            totalNewVotes += votes;
+            require(totalNewVotes <= spareVotes, "Exceeds available voting power");
 
             // increment votes at a pool+epoch level | account:{personal,delegate}
             accountEpochPoolData[epoch][poolId][caller].totalVotesSpent += votes;
             epochPools[epoch][poolId].totalVotes += votes;
-            pools[poolId].totalVotes += votes;
             epochs[epoch].totalVotes += votes;
-
-            totalNewVotes += votes;
-            require(totalNewVotes <= spareVotes, "Exceeds available voting power");
+            //increment pool votes at a global level
+            pools[poolId].totalVotes += votes;       
         }
 
         // update account's epoch voting power counter
         accountEpochData[epoch][caller].totalVotesSpent += totalNewVotes;
         
-        //emit Voted(msg.sender, epoch, poolIds, weights);
+        // event
+        emit Events.Voted(epoch, caller, poolIds, votes, isDelegated);
     }
 
+
+    function _veMoca() internal view returns (IVotingEscrowMoca){
+        return IVotingEscrowMoca(ADDRESS_BOOK.getVotingEscrowMoca());
+    }
+
+    function _esMoca() internal view returns (IERC20){
+        return IERC20(ADDRESS_BOOK.getEscrowedMoca());
+    }
 
 //-------------------------------view functions-----------------------------------------
 

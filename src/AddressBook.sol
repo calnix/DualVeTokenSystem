@@ -52,7 +52,7 @@ contract AddressBook is Ownable2Step {
     }
 
 
-    function getUSD8Token() external view returns (address) {
+    function getUSD8Token() external view returns (address) {   // forge-lint: disable-line(mixed-case-function)
         return _addresses[USD8];
     }
 

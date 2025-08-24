@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {DataTypes} from "../libraries/DataTypes.sol";
-
 interface IVotingEscrowMoca {
 
     /**
@@ -28,4 +26,14 @@ interface IVotingEscrowMoca {
      * @return The user's veBalance at the specified timestamp.
      */
     function balanceOfAt(address user, uint256 time, bool forDelegated) external view returns (uint256);
+
+
+    /**
+     * @notice Returns the voting power of a user at the end of a specific epoch.
+     * @param user The address of the user whose veBalance is being queried.
+     * @param epochEndTime The timestamp of the end of the epoch for which the veBalance is requested.
+     * @param forDelegated If true: delegated veBalance; if false: personal veBalance.
+     * @return The user's voting power at the end of the specified epoch.
+     */
+    function balanceAtEpochEnd(address user, uint256 epochEndTime, bool forDelegated) external view returns (uint256);
 }

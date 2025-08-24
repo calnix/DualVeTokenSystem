@@ -12,7 +12,9 @@ import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
 // libraries
-import {Constants} from "../Constants.sol";
+import {Events} from "../libraries/Events.sol";
+import {Errors} from "../libraries/Errors.sol";
+import {Constants} from "../libraries/Constants.sol";
 
 // interfaces
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
@@ -25,7 +27,6 @@ contract PaymentsController is EIP712, Pausable {
 
     // immutable
     IAddressBook internal immutable _addressBook;
-    IEpochController internal immutable _epochController;
 
     // fees
     uint256 private PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
@@ -422,7 +423,7 @@ contract PaymentsController is EIP712, Pausable {
         require(schemas[schemaId].schemaId != bytes32(0), "Schema does not exist");
         schemas[schemaId].poolId = poolId;
 
-        // emit PoolIdUpdated(schemaId, poolId);
+        emit Events.PoolIdUpdated(schemaId, poolId);
     }
 
     function updateDelayPeriod(uint256 delayPeriod) external onlyPaymentsAdmin {
@@ -431,7 +432,7 @@ contract PaymentsController is EIP712, Pausable {
 
         DELAY_PERIOD = delayPeriod;
 
-        // emit DelayPeriodUpdated(delayPeriod);
+        emit Events.DelayPeriodUpdated(delayPeriod);
     }
 
     // protocol fee can be 0
@@ -440,7 +441,7 @@ contract PaymentsController is EIP712, Pausable {
         require(protocolFeePercentage < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
         PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
 
-        // emit ProtocolFeePercentageUpdated(protocolFeePercentage);
+        emit Events.ProtocolFeePercentageUpdated(protocolFeePercentage);
     }
 
     // voter fee can be 0
@@ -449,7 +450,7 @@ contract PaymentsController is EIP712, Pausable {
         require(voterFeePercentage < Constants.PRECISION_BASE, "Invalid voter fee percentage");
         VOTER_FEE_PERCENTAGE = voterFeePercentage;
 
-        // emit VoterFeePercentageUpdated(voterFeePercentage);
+        emit Events.VoterFeePercentageUpdated(voterFeePercentage);
     }
 
 
@@ -480,7 +481,7 @@ contract PaymentsController is EIP712, Pausable {
     function freeze() external whenPaused onlyGlobalAdmin {
         if(isFrozen == 1) revert Errors.IsFrozen();
         isFrozen = 1;
-        emit ContractFrozen(block.timestamp);
+        emit Events.ContractFrozen(block.timestamp);
     }  
 
 
@@ -496,17 +497,17 @@ contract PaymentsController is EIP712, Pausable {
         for(uint256 i; i < verifierIds.length; ++i) {
             
             // get balance: if 0, skip
-            uint256 verifierBalance = verifiers[verifierIds[i]].balance;
+            uint256 verifierBalance = _verifiers[verifierIds[i]].balance;
             if(verifierBalance == 0) continue;
 
             // get deposit address
-            address verifierDepositAddress = verifiers[verifierIds[i]].depositAddress;
+            address verifierDepositAddress = _verifiers[verifierIds[i]].depositAddress;
 
             // transfer balance to verifier
             IERC20(usd8).safeTransfer(verifierDepositAddress, verifierBalance);
         }
 
-        // emit EmergencyExitVerifiers(verifierIds);
+        emit Events.EmergencyExitVerifiers(verifierIds);
     }
 
     // exfil issuers' unclaimed fees to their stored addresses
@@ -521,17 +522,17 @@ contract PaymentsController is EIP712, Pausable {
         for(uint256 i; i < issuerIds.length; ++i) {
 
             // get unclaimed fees: if 0, skip
-            uint256 issuerBalance = issuers[issuerIds[i]].totalEarned - issuers[issuerIds[i]].totalClaimed;
+            uint256 issuerBalance = _issuers[issuerIds[i]].totalEarned - _issuers[issuerIds[i]].totalClaimed;
             if(issuerBalance == 0) continue;
 
             // get wallet address
-            address issuerWallet = issuers[issuerIds[i]].wallet;
+            address issuerWallet = _issuers[issuerIds[i]].wallet;
 
             // transfer balance to issuer
             IERC20(usd8).safeTransfer(issuerWallet, issuerBalance);
         }
 
-        // emit EmergencyExitIssuers(issuerIds);
+        emit Events.EmergencyExitIssuers(issuerIds);
     }
 
 
@@ -560,11 +561,11 @@ contract PaymentsController is EIP712, Pausable {
     /**
      * @notice Returns the fees accrued to voters for a given epoch
      * @param epoch The epoch number
-     * @param credentialId The credential id
+     * @param schemaId The schema id
      * @return feesAccruedToVoters The amount of fees accrued to voters in the given epoch
      */
-    function feesAccruedToVoters(uint256 epoch, bytes32 credentialId) external view returns (uint256) {
-        return _epochs[epoch][credentialId].feesAccruedToVoters;
+    function feesAccruedToVoters(uint256 epoch, bytes32 schemaId) external view returns (uint256) {
+        return _epochs[epoch][schemaId].feesAccruedToVoters;
     }
 
 
@@ -572,8 +573,8 @@ contract PaymentsController is EIP712, Pausable {
         return _issuers[issuerId];
     }
 
-    function getCredential(bytes32 credentialId) external view returns (Credential memory) {
-        return _credentials[credentialId];
+    function getSchema(bytes32 schemaId) external view returns (Schema memory) {
+        return _schemas[schemaId];
     }
 
     function getVerifier(bytes32 verifierId) external view returns (Verifier memory) {
@@ -589,8 +590,8 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     // nice to have
-    function getCredentialFee(bytes32 credentialId) external view returns (uint256) {
-        return _credentials[credentialId].currentFee;
+    function getSchemaFee(bytes32 schemaId) external view returns (uint256) {
+        return _schemas[schemaId].currentFee;
     }
 
     function getProtocolFeePercentage() external view returns (uint256) {

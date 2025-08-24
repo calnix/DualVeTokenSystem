@@ -20,13 +20,13 @@ This allows users to vote at any time during an epoch without rushing.
 This is achieved by benchmarking voting power to the end of said epoch; i.e. everyone gets decayed forward.
 Put differently, users vote with the voting power they would have at the end of the Epoch.
 
-**Due to forward-decay with voting power benchmarked to the epochEnd, the last meaningful epoch of a lock is one less than its actual.**
+**Due to forward-decay, the last meaningful epoch of a lock is one less than its actual:**
 
-- Assume a lock ends at epoch N; it would have 0 veMoca at the end of epoch N. (would have non-zero veMoca at epochStart)
-- It cannot vote in Epoch N, since per `VotingController`, it has 0 votes [forward-decay].
-- It can vote last in Epoch N-1, where it would a non-zero bias for that epochEnd.
+- Assume a lock ends at epoch N; it would have 0 veMoca at the end of epoch N. (would have non-zero veMoca at start of epoch N)
+- It cannot vote in epoch N, since per `VotingController`, it has 0 votes [forward-decay].
+- It can vote last in Epoch N-1, where it would have a non-zero bias for that epochEnd.
 
-This means that the last meaningful epoch of a lock, where it can participate in voting is `N-1` [where N is its final epoch].
+This means that the last meaningful voting epoch of a lock is `N-1` [where N is its final epoch].
 
 **Thus to prevents ineffective delegations, increases, or extensions where the added value decays to zero before usable in future voting, we implement the following check:**
 
@@ -36,12 +36,12 @@ This means that the last meaningful epoch of a lock, where it can participate in
             require(oldLock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
 ```
 
-This is found in the following functions:
-- delegateLock
-- switchDelegate
-
+This check (in some variation) is found in the following functions:
+- _createLockFor
 - increaseAmount
 - increaseDuration
+- delegateLock
+- switchDelegate
 
 
 ## Creating Locks 
@@ -92,8 +92,14 @@ Users can lock additional principal assets into a pre-existing lock, to increase
 
 ## increaseDuration
 
+- Allows users to extend the expiry of an existing lock, increasing its duration
+- Ensures the lock maintains at least two full epochs of duration after extension, preserving non-zero voting power for the next epoch (see "increaseAmount" rationale above).
+- Updates the lock's expiry and recalculates veBalance
 
+## unlock
 
+- Users can withdraw principal assets from a lock only after it has expired.
+- Unlocking fully burns the associated veMoca tokens. 
 
 
 # Locking tokens
