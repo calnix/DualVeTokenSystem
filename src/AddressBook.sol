@@ -56,7 +56,7 @@ contract AddressBook is Ownable2Step {
         return _addresses[USD8];
     }
 
-    function getMocaToken() external view returns (address) {
+    function getMoca() external view returns (address) {
         return _addresses[MOCA];
     }
 

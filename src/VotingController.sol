@@ -9,6 +9,9 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Constants} from "./libraries/Constants.sol";
 import {EpochMath} from "./libraries/EpochMath.sol";
 import {DataTypes} from "./libraries/DataTypes.sol";
+import {Events} from "./libraries/Events.sol";
+import {Errors} from "./libraries/Errors.sol";
+
 
 // interfaces
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
@@ -33,8 +36,8 @@ contract VotingController is Pausable {
     uint256 public TOTAL_SUBSIDIES_CLAIMED;
 
     // delegate
-    uint256 public REGISTRATION_FEE;
-    uint256 public MAX_DELEGATE_FEE_PCT; // 100%: 100, 1%: 1 | no decimal places
+    uint256 public REGISTRATION_FEE;           // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    uint256 public MAX_DELEGATE_FEE_PCT;       // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint256 public TOTAL_REGISTRATION_FEES;
     
     
@@ -88,10 +91,9 @@ contract VotingController is Pausable {
         uint128 bonusIncentivesClaimed;
     }
 
-    // global delegate data
-    struct DelegateGlobal {
-        bool isActive;             
-        address delegate;         // indicative that delegate is registered 
+    // delegate data
+    struct Delegate {
+        bool isRegistered;             
         uint128 currentFeePct;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
         
         // fee change
@@ -131,7 +133,7 @@ contract VotingController is Pausable {
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account user))) public usersEpochPoolData;
     
     // Delegate registration data
-    mapping(address delegate => DelegateGlobal delegate) public delegates;           
+    mapping(address delegate => Delegate delegate) public delegates;           
     // Delegate aggregated data (delegated votes spent, rewards, commissions)
     mapping(uint256 epoch => mapping(address delegate => Account delegate)) public delegateEpochData;
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => Account delegate))) public delegatesEpochPoolData;
@@ -159,9 +161,11 @@ contract VotingController is Pausable {
     /**
      * @notice Cast votes for one or more pools using either personal or delegated voting power.
      * @dev If `isDelegated` is true, the caller's delegated voting power is used; otherwise, personal voting power is used.
+     *      If `isDelegated` is true, caller must be registered as delegate
      * @param poolIds Array of pool IDs to vote for.
      * @param votes Array of vote weights corresponding to each pool.
      * @param isDelegated Boolean flag indicating whether to use delegated voting power.
+
      */
     function vote(address caller, bytes32[] calldata poolIds, uint128[] calldata votes, bool isDelegated) external {
         require(poolIds.length > 0, "Invalid Array");
@@ -172,10 +176,17 @@ contract VotingController is Pausable {
         require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
-        (
-            mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData,
-            mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData
-        ) = isDelegated ? (delegateEpochData, usersEpochData) : (delegateEpochPoolData, usersEpochPoolData);
+        mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData;
+        mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData;
+
+        if (isDelegated) {
+            require(delegates[caller].isRegistered, "Not registered as delegate");
+            accountEpochData = delegateEpochData;
+            accountEpochPoolData = delegatesEpochPoolData;
+        } else {
+            accountEpochData = usersEpochData;
+            accountEpochPoolData = usersEpochPoolData;
+        }
 
         // votingPower: benchmarked to end of epoch [forward-decay]
         uint256 epochEndTime = EpochMath.getCurrentEpochEnd();
@@ -220,7 +231,6 @@ contract VotingController is Pausable {
         emit Events.Voted(epoch, caller, poolIds, votes, isDelegated);
     }
 
-
     /**
      * @notice Migrate votes from one or more source pools to destination pools within the current epoch.
      * @dev Allows users to move their votes between pools before the epoch is finalized.
@@ -229,6 +239,7 @@ contract VotingController is Pausable {
      * @param dstPoolIds Array of destination pool IDs to which votes will be migrated.
      * @param votes Array of vote amounts to migrate for each pool pair.
      * @param isDelegated Boolean indicating if the migration is for delegated votes.
+     * If isDelegated: true, caller must be registered as delegate
      * Emits a {VotesMigrated} event on success.
      * Reverts if input array lengths mismatch, pools do not exist, destination pool is not active,
      * insufficient votes in source pool, or epoch is finalized.
@@ -243,11 +254,17 @@ contract VotingController is Pausable {
         require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
-        (
-            mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData,
-            mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData
-        ) = isDelegated ? (delegateEpochData, usersEpochData) : (delegateEpochPoolData, usersEpochPoolData);
+        mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData;
+        mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData;
 
+        if (isDelegated) {
+            require(delegates[caller].isRegistered, "Not registered as delegate");
+            accountEpochData = delegateEpochData;
+            accountEpochPoolData = delegatesEpochPoolData;
+        } else {
+            accountEpochData = usersEpochData;
+            accountEpochPoolData = usersEpochPoolData;
+        }
 
         // can migrate votes from inactive pool to active pool; but not vice versa
         for(uint256 i; i < srcPoolIds.length; ++i) {
@@ -284,28 +301,34 @@ contract VotingController is Pausable {
 
 //-------------------------------delegator functions------------------------------------------
 
-    // active on registration
-    // registration fee to go to treasury
+    /**
+     * @notice Registers the caller as a delegate and activates their status.
+     * @dev Requires payment of the registration fee. Marks the delegate as active upon registration.
+     *      Calls VotingEscrowMoca.registerAsDelegate() to mark the delegate as active.
+     * @param feePct The fee percentage to be applied to the delegate's rewards.
+     * Emits a {DelegateRegistered} event on success.
+     * Reverts if the fee is greater than the maximum allowed fee, the caller is already registered,
+     * or the registration fee cannot be transferred from the caller.
+     */
     function registerAsDelegate(uint128 feePct) external {
-        //require(feePct > 0, "Invalid fee: zero");
-        //require(feePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
+        require(feePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
 
-        DelegateData storage delegate = delegateData[msg.sender];
-        require(delegate.delegate == address(0), "Already registered");
+        Delegate storage delegate = delegates[msg.sender];
+        require(!delegate.isRegistered, "Already registered");
 
-        // collect registration fee | note: may want to transfer directly to treasury
-        MOCA.safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
+        // collect registration fee & increment global counter
+        _moca().safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);      // note: may want to transfer directly to treasury
         TOTAL_REGISTRATION_FEES += REGISTRATION_FEE;
 
-        // storage: create delegate
-        delegate.isActive = true;
-        delegate.delegate = msg.sender;
+        // storage: register delegate
+        delegate.isRegistered = true;
         delegate.currentFeePct = feePct;
-        
+
+        // to mark as true
+        _veMoca().registerAsDelegate(msg.sender);
+
         // event
-        
-        // note: to mark as active
-        veMoca.registerAsDelegate(msg.sender);
+        emit Events.DelegateRegistered(msg.sender, feePct);
     }
 
     // if increase, only applicable currentEpoch+2
@@ -331,28 +354,27 @@ contract VotingController is Pausable {
         //emit DelegateFeeUpdated(msg.sender, feePct, delegate.nextFeePctEpoch);
     }
 
-    // TODO: handle rewards, delegated votes
-    // resign as delegate: registration fee is not refunded
-    function resignAsDelegate() external {
-        DelegateData storage delegate = delegateData[msg.sender];
+    /**
+     * @notice Unregister the caller as a delegate.
+     * @dev Removes the delegate's registration status.
+     *      Calls VotingEscrowMoca.unregisterAsDelegate() to mark the delegate as inactive.
+     *      Note: registration fee is not refunded
+     * Emits a {DelegateUnregistered} event on success.
+     * Reverts if the caller is not registered.
+     */
+    function unregisterAsDelegate() external {
+        Delegate storage delegate = delegates[msg.sender];
         
-        require(delegate.isActive, "Not active");
-        require(delegate.delegate == msg.sender, "Not registered as delegate");
+        require(delegate.isRegistered, "Not registered");
         
-        // remove delegation
-        delete delegate.isActive;
-        delete delegate.delegate;
-        //delete delegate.currentFeePct; // note: may want to keep for calc. rewards
-        delete delegate.nextFeePct;
-        delete delegate.nextFeePctEpoch;
+        // storage: unregister delegate
+        delete delegate.isRegistered;
         
-        // update delegate's total delegated voting power
-        //delegate.totalDelegated -= userEpochData[getCurrentEpoch()][msg.sender].totalDelegated;
-        
-        // event
+        // to mark as false
+        _veMoca().unregisterAsDelegate(msg.sender);
 
-        // note: to mark as inactive
-        veMoca.unregisterAsDelegate(msg.sender);
+        // event
+        emit Events.DelegateUnregistered(msg.sender);
     }
 
 
@@ -810,6 +832,10 @@ contract VotingController is Pausable {
 
     function _esMoca() internal view returns (IERC20){
         return IERC20(ADDRESS_BOOK.getEscrowedMoca());
+    }
+
+    function _moca() internal view returns (IERC20){
+        return IERC20(ADDRESS_BOOK.getMoca());
     }
 
 //-------------------------------view functions-----------------------------------------

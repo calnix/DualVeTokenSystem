@@ -36,4 +36,19 @@ interface IVotingEscrowMoca {
      * @return The user's voting power at the end of the specified epoch.
      */
     function balanceAtEpochEnd(address user, uint256 epochEndTime, bool forDelegated) external view returns (uint256);
+
+
+    /**
+     * @notice Register an address as a delegate, enabling it to receive delegated voting power.
+     * @dev Only callable by the VotingController contract when not paused.
+     * @param delegate The address to register as a delegate.
+     */
+    function registerAsDelegate(address delegate) external;
+
+    /**
+     * @notice Unregister an address as a delegate, revoking its ability to receive delegated voting power.
+     * @dev Only callable by the VotingController contract when not paused.
+     * @param delegate The address to unregister as a delegate.
+     */
+    function unregisterAsDelegate(address delegate) external;
 }
