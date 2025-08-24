@@ -14,4 +14,12 @@ library Errors {
 
     // Access control
     error CallerNotRiskOrPoolAdmin();
+
+
+    // --------- VotingController.sol ---------
+    
+    error InvalidFeePct();
+    error DelegateAlreadyRegistered();
+    error DelegateNotRegistered();
+
 }

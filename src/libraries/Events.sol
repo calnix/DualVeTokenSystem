@@ -19,8 +19,8 @@ library Events {
     event Voted(uint256 indexed epoch, address indexed caller, bytes32[] poolIds, uint256[] votes, bool isDelegated);
     event VotesMigrated(uint256 indexed epoch, address indexed caller, bytes32[] srcPoolIds, bytes32[] dstPoolIds, uint256[] votes, bool isDelegated);
     event DelegateRegistered(address indexed delegate, uint256 feePct);
-
-
+    event DelegateFeeDecreased(address indexed delegate, uint256 currentFeePct, uint256 feePct);
+    event DelegateFeeIncreased(address indexed delegate, uint256 currentFeePct, uint256 feePct, uint256 nextFeePctEpoch);
 
     // --------- PaymentsController.sol ---------
 

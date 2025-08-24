@@ -100,10 +100,11 @@ contract VotingController is Pausable {
         uint128 nextFeePct;       // to be in effect for next epoch
         uint128 nextFeePctEpoch;  // epoch of next fee change
 
-        uint128 totalRewards;      // total gross rewards accrued by delegate
-        uint128 totalCommissions;  // total commissions accrued by delegate
+        uint128 totalRewards;      // total gross voting rewards accrued by delegate [from delegated votes]
+        uint128 totalFees;         // total fees accrued by delegate
         //uint128 totalClaimed;
     }
+
 
     // user data     | perEpoch | perPoolPerEpoch
     // delegate data | perEpoch | perPoolPerEpoch
@@ -132,8 +133,11 @@ contract VotingController is Pausable {
     mapping(uint256 epoch => mapping(address user => Account user)) public usersEpochData;
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account user))) public usersEpochPoolData;
     
-    // Delegate registration data
+    // Delegate registration data + fee data
     mapping(address delegate => Delegate delegate) public delegates;           
+    mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFees;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+
+
     // Delegate aggregated data (delegated votes spent, rewards, commissions)
     mapping(uint256 epoch => mapping(address delegate => Account delegate)) public delegateEpochData;
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => Account delegate))) public delegatesEpochPoolData;
@@ -311,10 +315,10 @@ contract VotingController is Pausable {
      * or the registration fee cannot be transferred from the caller.
      */
     function registerAsDelegate(uint128 feePct) external {
-        require(feePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
+        require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());
 
         Delegate storage delegate = delegates[msg.sender];
-        require(!delegate.isRegistered, "Already registered");
+        require(!delegate.isRegistered, Errors.DelegateAlreadyRegistered());
 
         // collect registration fee & increment global counter
         _moca().safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);      // note: may want to transfer directly to treasury
@@ -331,27 +335,33 @@ contract VotingController is Pausable {
         emit Events.DelegateRegistered(msg.sender, feePct);
     }
 
-    // if increase, only applicable currentEpoch+2
-    // if decrease, applicable immediately        
+    /**
+     * @notice Updates the delegate fee percentage.
+     * @dev If the fee is increased, the new fee takes effect from currentEpoch + 2 to prevent last-minute increases.
+     *      If the fee is decreased, the new fee takes effect immediately.
+     * @param feePct The new fee percentage to be applied to the delegate's rewards.
+     * Emits a {DelegateFeeUpdated} event on success.
+     * Reverts if the fee is greater than the maximum allowed fee, the caller is not registered, or the fee is not a valid percentage.
+     */
     function updateDelegateFee(uint128 feePct) external {
-        require(feePct > 0, "Invalid fee: zero");
-        require(feePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
+        //require(feePct > 0, "Invalid fee: zero");
+        require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());
 
-        DelegateData storage delegate = delegateData[msg.sender];
-        require(delegate.isActive, "Not active");
-        require(delegate.delegate != address(0), "Not registered");
-        
-        // if increase, only applicable currentEpoch+2
-        if(feePct > delegate.currentFeePct) {
+        Delegate storage delegate = delegates[msg.sender];
+        require(delegate.isRegistered, Errors.DelegateNotRegistered());
+            
+        uint256 currentFeePct = delegate.currentFeePct;
+        // if increase, only applicable from currentEpoch+2
+        if(feePct > currentFeePct) {
             delegate.nextFeePct = feePct;
-            delegate.nextFeePctEpoch = getCurrentEpoch() + 2;  // buffer of 2 epochs to prevent last-minute fee increases
+            delegate.nextFeePctEpoch = EpochMath.getCurrentEpochNumber() + 2;  // buffer of 2 epochs to prevent last-minute fee increases
+            emit Events.DelegateFeeIncreased(msg.sender, currentFeePct, feePct, delegate.nextFeePctEpoch);
+
         } else {
             // if decrease, applicable immediately
             delegate.currentFeePct = feePct;
+            emit Events.DelegateFeeDecreased(msg.sender, currentFeePct, feePct);
         }
-
-        // event
-        //emit DelegateFeeUpdated(msg.sender, feePct, delegate.nextFeePctEpoch);
     }
 
     /**
@@ -365,7 +375,7 @@ contract VotingController is Pausable {
     function unregisterAsDelegate() external {
         Delegate storage delegate = delegates[msg.sender];
         
-        require(delegate.isRegistered, "Not registered");
+        require(delegate.isRegistered, Errors.DelegateNotRegistered());
         
         // storage: unregister delegate
         delete delegate.isRegistered;
@@ -376,24 +386,6 @@ contract VotingController is Pausable {
         // event
         emit Events.DelegateUnregistered(msg.sender);
     }
-
-
-
-/* TODO:
-
-    // allows seamless booking of votes accurately across epochs, w/o manual epoch management
-    function _checkEpoch() internal {
-        // note: >= or > ?
-        if(block.timestamp >= CURRENT_EPOCH_END_TIME) {
-            // update epoch
-            ++CURRENT_EPOCH;
-            // update epoch start time
-            CURRENT_EPOCH_END_TIME = block.timestamp + EPOCH_DURATION;
-        }
-
-        // event
-    }
-*/
 
 //-------------------------------voters: claiming rewards----------------------------------------------
 
