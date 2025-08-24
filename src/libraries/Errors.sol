@@ -8,6 +8,8 @@ library Errors {
     error InvalidAmount();
     error InvalidExpiry();
     error InvalidLockDuration();
+    error InvalidArray();
+    error MismatchedArrayLengths();
 
 
     error IsFrozen();
@@ -17,8 +19,14 @@ library Errors {
 
 
     // --------- VotingController.sol ---------
-    
+    error EpochFinalized();
+    error NoSpareVotes();
     error InvalidFeePct();
+    error ZeroVotes();
+    error PoolDoesNotExist();
+    error PoolNotActive();
+    error InsufficientVotes();
+    
     error DelegateAlreadyRegistered();
     error DelegateNotRegistered();
 
