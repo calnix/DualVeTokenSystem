@@ -21,7 +21,9 @@ library Events {
     event DelegateRegistered(address indexed delegate, uint256 feePct);
     event DelegateFeeDecreased(address indexed delegate, uint256 currentFeePct, uint256 feePct);
     event DelegateFeeIncreased(address indexed delegate, uint256 currentFeePct, uint256 feePct, uint256 nextFeePctEpoch);
-
+    // claim
+    event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
+    
     // --------- PaymentsController.sol ---------
 
     event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);

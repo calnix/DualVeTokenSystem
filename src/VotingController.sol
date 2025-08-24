@@ -389,53 +389,51 @@ contract VotingController is Pausable {
 
 //-------------------------------voters: claiming rewards----------------------------------------------
 
-    /** NOTE:
-
-    ## auto-staking
-
-    Users can opt for rewards to be auto-staked to the same lock
-
-    1. claim on a per lock basis and auto-compound/stack
-    2. claimAll()
-    */
-
 
     //TODO: handle rewards, delegated votes
     // for veHolders tt voted get esMoca -> from verification fee split
     // vote at epoch:N, get the pool verification fees of the next epoch:N+1
-    function claimRewards(uint256 epoch, bytes32 poolId) external {
-        // sanity check: epoch | can claim on epochs from past till current
+    function claimRewards(uint256 epoch, bytes32[] calldata poolIds) external {
+        require(poolIds.length > 0, Errors.InvalidArray());
+
+        // sanity check: epoch; can claim on epochs from past till current
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(epoch <= currentEpoch, "Cannot claim rewards for future epochs");
+        require(epoch <= currentEpoch, Errors.FutureEpoch());
         //require(epochs[epoch].isFullyFinalized, "Epoch not finalized"); ---> if current, not required to be finalized, as rewards distributed weekly
 
-        //sanity check: pool
-        require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-        //require(pools[poolId].isActive, "Pool inactive"); 
-        //require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
+        uint256 totalClaimableRewards;
+        for(uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            
+            //sanity check: pool exists
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            //require(pools[poolId].isActive, "Pool inactive");  ---> pool could be currently inactive but have unclaimed prior rewards 
 
-        // get pool's rewardsPerVote
-        uint256 latestRewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;
-        require(latestRewardsPerVote > 0, "No rewards per vote");     // either no deposit, or nothing earned
+            // get pool's rewardsPerVote
+            uint256 latestRewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;
+            require(latestRewardsPerVote > 0, Errors.NoRewardsToClaim());     // either no deposit, or nothing earned
+        
+            // get user's pool votes for the epoch
+            uint256 userPoolVotes = usersEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent;
+            require(userPoolVotes > 0, Errors.NoVotesInPool());
 
-        // get user's total votes for the epoch
-        uint256 userTotalVotesSpent = userEpochData[epoch][msg.sender].totalVotesSpent;
-        require(userTotalVotesSpent > 0, "No votes in epoch");
+            // calc. user's latest total rewards [accounting for new deposits made]
+            uint256 userNewTotalRewards = usersEpochPoolData[epoch][poolId][msg.sender].totalRewards = userPoolVotes * latestRewardsPerVote;
 
-        // calc. user's latest total rewards [accounting for new deposits made]
-        uint256 userTotalRewards = userEpochData[epoch][msg.sender].totalRewards = userTotalVotesSpent * latestRewardsPerVote;
+            // calc. claimable rewards + update user's total claimed
+            uint256 claimableRewards = userNewTotalRewards - usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed;
 
-        // calc. claimable rewards + update user's total claimed
-        uint256 claimableRewards = userTotalRewards - userEpochData[epoch][msg.sender].totalClaimed;
+            totalClaimableRewards += claimableRewards;
+        }
 
-        if(claimableRewards > 0) {
-            userEpochData[epoch][msg.sender].totalClaimed += claimableRewards;
+
+        if(totalClaimableRewards > 0) {
+            usersEpochData[epoch][msg.sender].totalClaimed += totalClaimableRewards;
 
             // transfer esMoca to user
-            // note: must whitelist this contract for transfers
-            esMOCA.transfer(msg.sender, claimableRewards);
-                
-            //emit Claimed(msg.sender, epoch, poolId, claimableRewards);
+            _esMoca().safeTransfer(msg.sender, totalClaimableRewards);
+
+            emit Events.RewardsClaimed(msg.sender, epoch, poolIds, totalClaimableRewards);
         }
     }
 
@@ -704,12 +702,12 @@ contract VotingController is Pausable {
     }
 
     // white or blacklist pool
-    function whitelistPool(bytes32 poolId, bool isWhitelisted) external onlyRole(DEFAULT_ADMIN_ROLE) {
+/*    function whitelistPool(bytes32 poolId, bool isWhitelisted) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
         pools[poolId].isWhitelisted = isWhitelisted;
 
         // event
-    }
+    }*/
 
 //-------------------------------admin: incentives functions----------------------------------------------
    

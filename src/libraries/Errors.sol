@@ -26,8 +26,12 @@ library Errors {
     error PoolDoesNotExist();
     error PoolNotActive();
     error InsufficientVotes();
-    
+    // delegation
     error DelegateAlreadyRegistered();
     error DelegateNotRegistered();
+    //claim
+    error FutureEpoch();
+    error NoRewardsToClaim();
+    error NoVotesInPool();
 
 }
