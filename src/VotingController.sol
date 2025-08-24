@@ -221,8 +221,18 @@ contract VotingController is Pausable {
     }
 
 
-    //TODO: refactor to use _vote() if possible
-    // migrate partial, migrate full, etc
+    /**
+     * @notice Migrate votes from one or more source pools to destination pools within the current epoch.
+     * @dev Allows users to move their votes between pools before the epoch is finalized.
+     *      Supports both partial and full vote migration. Can migrate from inactive to active pools, but not vice versa.
+     * @param srcPoolIds Array of source pool IDs from which votes will be migrated.
+     * @param dstPoolIds Array of destination pool IDs to which votes will be migrated.
+     * @param votes Array of vote amounts to migrate for each pool pair.
+     * @param isDelegated Boolean indicating if the migration is for delegated votes.
+     * Emits a {VotesMigrated} event on success.
+     * Reverts if input array lengths mismatch, pools do not exist, destination pool is not active,
+     * insufficient votes in source pool, or epoch is finalized.
+     */
     function migrateVotes(bytes32[] calldata srcPoolIds, bytes32[] calldata dstPoolIds, uint128[] calldata votes, bool isDelegated) external {
         require(srcPoolIds.length > 0, "No pools specified");
         require(srcPoolIds.length == dstPoolIds.length, "Mismatched input lengths");
