@@ -21,8 +21,10 @@ library Events {
     event DelegateRegistered(address indexed delegate, uint256 feePct);
     event DelegateFeeDecreased(address indexed delegate, uint256 currentFeePct, uint256 feePct);
     event DelegateFeeIncreased(address indexed delegate, uint256 currentFeePct, uint256 feePct, uint256 nextFeePctEpoch);
-    // claim
+    // claimRewards
     event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
+    // claimSubsidies
+    event SubsidiesClaimed(address indexed verifier, uint256 epoch, bytes32[] poolIds, uint256 totalSubsidiesClaimed);
     
     // --------- PaymentsController.sol ---------
     event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);

@@ -642,10 +642,20 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------view functions---------------------------------------------
 
-    //TODO: subsidy based on staking tiers -> calculate and book subsidy into _verifierSubsidies
-    function getVerifierSubsidy(uint256 epoch, address verifier) external view returns (uint256) {
-        // _verifierSubsidies
-        // check that msg.sender matches verifier's wallet
+  /*  // called by VotingController
+    function getVerifierAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier) external view returns (uint256) {
+        return _epochPoolVerifierSubsidies[epoch][poolId][verifier];
+    }
+
+    // called by VotingController
+    function getPoolAccruedSubsidies(uint256 epoch, bytes32 poolId) external view returns (uint256) {
+        return _epochPoolSubsidies[epoch][poolId];
+    }
+    */
+    
+    // called by VotingController
+    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier) external view returns (uint256, uint256) {
+        return (_epochPoolVerifierSubsidies[epoch][poolId][verifier], _epochPoolSubsidies[epoch][poolId]);
     }
 
     /**

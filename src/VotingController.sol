@@ -25,7 +25,7 @@ contract VotingController is Pausable {
     using SafeERC20 for IERC20;
 
     // protocol yellow pages
-    IAddressBook internal immutable ADDRESS_BOOK;
+    IAddressBook internal immutable _addressBook;
     
     // safety check
     uint128 public totalNumberOfPools;
@@ -143,7 +143,7 @@ contract VotingController is Pausable {
     mapping(address verifier => uint256 totalSubsidies) public verifierData;                  
     mapping(uint256 epoch => mapping(address verifier => uint256 totalSubsidies)) public verifierEpochData;
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => uint256 totalSubsidies))) public verifierEpochPoolData;
-
+    
 
 //-------------------------------constructor------------------------------------------
 
@@ -496,50 +496,55 @@ contract VotingController is Pausable {
     // called by verifiers: subsidies received as esMoca
     function claimSubsidies(uint128 epoch, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, Errors.InvalidArray());
-
+        
+        // epoch must have ended + finalized
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.FutureEpoch());
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
 
-        //TODO[maybe]: epoch: calculate incentives if not already done; so can front-run finalizeEpoch()
+        //TODO[maybe]: epoch: calculate subsidies if not already done; so can front-run/incorporate finalizeEpoch()
 
-        uint128 totalClaimableSubsidies;    
+        uint128 totalSubsidiesClaimed;    
         for (uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
 
-            // check if pool exists and has emissions
-            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-            require(epochPools[epoch][poolId].totalIncentives > 0, "No emissions for pool");
-
-            // get verifier's total subsidies for {pool, epoch}
-            uint256 verifierTotalSubsidies = IPaymentsController(IAddressBook.getPaymentsController()).getVerifierSubsidies(epoch, msg.sender);
-            require(verifierTotalSubsidies > 0, Errors.NoSubsidiesToClaim());
-            
-            //---------- break. above: new, below: old
-
+            // check if pool exists and has subsidies allocated
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            uint256 poolAllocatedSubsidies = epochPools[epoch][poolId].totalSubsidies;
+            require(poolAllocatedSubsidies > 0, Errors.NoSubsidiesForPool());
 
             // check if already claimed
-            require(verifierClaimedSubsidies[epoch][poolId][msg.sender] == 0, Errors.SubsidyAlreadyClaimed());
+            require(verifierEpochPoolData[epoch][poolId][msg.sender] == 0, Errors.SubsidyAlreadyClaimed());
 
-            // calculate subsidies
-            uint256 subsidies = verifierTotalSpend * epoch.incentivePerVote * INCENTIVE_FACTOR / PRECISION_BASE;
-            totalClaimableSubsidies += subsidies;
+            // get verifier's accrued subsidies for {pool, epoch} & pool's total accrued subsidies for the epoch
+            (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) 
+                = IPaymentsController(IAddressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, msg.sender);
+            
+            // calculate subsidy receivable
+            uint256 subsidyReceivable = (verifierAccruedSubsidies * poolAllocatedSubsidies) / poolAccruedSubsidies;
+            require(subsidyReceivable > 0, Errors.NoSubsidiesToClaim());
 
-            // book verifier's subsidies for the epoch
-            verifierClaimedSubsidies[epochNumber][poolId][msg.sender] = subsidies;
+            totalSubsidiesClaimed += subsidyReceivable;
 
-            // update epoch's total claimed
-            epochPools[epochNumber][poolId].totalClaimed += subsidies;
+            // book verifier's subsidy receivable for the epoch
+            verifierEpochPoolData[epoch][poolId][msg.sender] = subsidyReceivable;
+            verifierEpochData[epoch][msg.sender] += subsidyReceivable;
+            verifierData[msg.sender] += subsidyReceivable;
+
+            // update pool & epoch total claimed
+            pools[poolId].totalClaimed += subsidyReceivable;
+            epochPools[epoch][poolId].totalClaimed += subsidyReceivable;
         }
 
-        // update total claimed
-        epochs[epochNumber].totalClaimed += totalClaimableSubsidies;
-        TOTAL_SUBSIDIES_CLAIMED += totalClaimableSubsidies;
-    
+        // update epoch & pool total claimed
+        TOTAL_SUBSIDIES_CLAIMED += totalSubsidiesClaimed;
+        epochs[epoch].totalClaimed += totalSubsidiesClaimed;
+
         // event
-        
-        // transfer esMoca to verifier: 
-        // note: must whitelist this contract for transfers
-        esMOCA.transfer(msg.sender, totalClaimableSubsidies);        // use vault?
+        emit Events.SubsidiesClaimed(msg.sender, epoch, poolIds, totalSubsidiesClaimed);
+
+        // transfer esMoca to verifier
+        // note: must whitelist VotingController on esMoca for transfers
+        IERC20(_addressBook.getEsMoca()).transfer(msg.sender, totalSubsidiesClaimed);      
     }
 
 

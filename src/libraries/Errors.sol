@@ -29,11 +29,13 @@ library Errors {
     // delegation
     error DelegateAlreadyRegistered();
     error DelegateNotRegistered();
-    //claim
-    error FutureEpoch();
+    //claimRewards
     error NoRewardsToClaim();
+    //claimSubsidies
+    error FutureEpoch();
     error NoVotesInPool();
     error NoSubsidiesToClaim();
+    error NoSubsidiesAccrued();
     error SubsidyAlreadyClaimed();
 
 }
