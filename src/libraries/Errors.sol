@@ -33,5 +33,7 @@ library Errors {
     error FutureEpoch();
     error NoRewardsToClaim();
     error NoVotesInPool();
+    error NoSubsidiesToClaim();
+    error SubsidyAlreadyClaimed();
 
 }

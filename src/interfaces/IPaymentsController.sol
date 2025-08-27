@@ -16,4 +16,6 @@ interface IPaymentsController {
     function getVerifier(bytes32 verifierId) external view returns (Verifier memory);
 
     function getVerifierNonce(address verifier) external view returns (uint256);
+
+    function getVerifierSubsidies(uint128 epoch, address verifier) external view returns (uint256);
 }

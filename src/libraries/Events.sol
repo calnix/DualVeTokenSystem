@@ -25,11 +25,14 @@ library Events {
     event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
     
     // --------- PaymentsController.sol ---------
-
+    event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);
+    event VerifierMocaUnstaked(bytes32 indexed verifierId, uint256 amount);
+    event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
     event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);
     event DelayPeriodUpdated(uint256 delayPeriod);
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VoterFeePercentageUpdated(uint256 voterFeePercentage);
+    event VerifierStakingTierUpdated(uint256 stakingTier, uint256 stakingAmount);
 
     event EmergencyExitIssuers(bytes32[] issuerIds);
     event EmergencyExitVerifiers(bytes32[] verifierIds);

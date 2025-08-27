@@ -39,6 +39,10 @@ contract AccessController is AccessControl {
     bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // createLockFor | attached to script
     bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // emergencyExit | attached to script
     
+    
+    bytes32 private constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256('PAYMENTS_CONTROLLER_ADMIN_ROLE'); 
+    bytes32 private constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256('VOTING_CONTROLLER_ADMIN_ROLE');    
+
     bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params | attached to script
 
     // ROLES w/o scripts
@@ -141,19 +145,34 @@ contract AccessController is AccessControl {
     }
 
 
-// ----- PaymentsController Admin: PaymentsAdmin -----
+// ----- PaymentsController Admin -----
 
-    function addPaymentsAdmin(address addr) external {
-        grantRole(PAYMENTS_ADMIN_ROLE, addr);
+    function addPaymentsControllerAdmin(address addr) external {
+        grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
     }
 
-    function removePaymentsAdmin(address addr) external {
-        revokeRole(PAYMENTS_ADMIN_ROLE, addr);
+    function removePaymentsControllerAdmin(address addr) external {
+        revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
     }
 
-    function isPaymentsAdmin(address addr) external view returns (bool) {
-        return hasRole(PAYMENTS_ADMIN_ROLE, addr);
+    function isPaymentsControllerAdmin(address addr) external view returns (bool) {
+        return hasRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
     }
+
+// ----- VotingController Admin -----
+
+    function addVotingControllerAdmin(address addr) external {
+        grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+    function removeVotingControllerAdmin(address addr) external {
+        revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+    function isVotingControllerAdmin(address addr) external view returns (bool) {
+        return hasRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
 
 // ----- OPERATOR ROLE -----
 

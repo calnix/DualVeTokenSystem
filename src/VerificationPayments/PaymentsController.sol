@@ -15,6 +15,7 @@ import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessContr
 import {Events} from "../libraries/Events.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Constants} from "../libraries/Constants.sol";
+import {EpochMath} from "../libraries/EpochMath.sol";
 
 // interfaces
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
@@ -76,13 +77,15 @@ contract PaymentsController is EIP712, Pausable {
     struct Verifier {
         bytes32 verifierId;
         address signerAddress;
-        address depositAddress;
+        address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
 
         uint128 balance;
         uint128 totalExpenditure;
+        uint128 totalSubsidies; //todo
     }
 
     mapping(bytes32 verifierId => Verifier verifier) private _verifiers;
+    mapping(bytes32 verifierId => mapping(uint256 epoch => uint256 subsidy)) private _verifierSubsidies;
 
 
     bytes32 public constant TYPEHASH = keccak256("DeductBalance(bytes32 issuerId,bytes32 verifierId,bytes32 credentialId,uint256 amount,uint256 expiry,uint256 nonce)");
@@ -99,10 +102,16 @@ contract PaymentsController is EIP712, Pausable {
     mapping(uint256 epoch => mapping(bytes32 credentialId => Epoch epoch)) private _epochs;
 
 
+    // verifier staking tiers
+    // admin fn will setup the tiers
+    mapping(uint256 mocaStaked => uint256 subsidyPercentage) private _verifiersStakingTiers;
+    mapping(bytes32 verifierId => uint256 mocaStaked) private _verifiersMocaStaked;
+
+
 //-------------------------------constructor-----------------------------------------
 
     constructor(
-        address usd8_, address treasury_, uint256 protocolFeePercentage_, uint256 delayPeriod_, address epochController_,
+        uint256 protocolFeePercentage_, uint256 delayPeriod_,
         string memory name, string memory version) EIP712(name, version) {
 
         // check if addresses are valid
@@ -119,7 +128,6 @@ contract PaymentsController is EIP712, Pausable {
         require(delayPeriod_ > 0, "Invalid delay period");
         DELAY_PERIOD = delayPeriod_;
         
-        _epochController = IEpochController(epochController_);
     }
 
 //-------------------------------issuer functions-----------------------------------------
@@ -133,7 +141,7 @@ contract PaymentsController is EIP712, Pausable {
             uint256 salt = ++block.number; 
             issuerId = _generateId(salt, msg.sender);
             // If generated id is used by either issuer or verifier, generate new Id
-            while (issuers[issuerId].issuerId != bytes32(0) || verifiers[issuerId].verifierId != bytes32(0)) {
+            while (_issuers[issuerId].issuerId != bytes32(0) || _verifiers[issuerId].verifierId != bytes32(0)) {
                 issuerId = _generateId(++salt, msg.sender); 
             }
         }
@@ -145,7 +153,7 @@ contract PaymentsController is EIP712, Pausable {
             issuer.wallet = wallet;
         
         // store issuer
-        issuers[issuerId] = issuer;
+        _issuers[issuerId] = issuer;
 
         // emit IssuerCreated(issuerId, msg.sender);
 
@@ -158,19 +166,19 @@ contract PaymentsController is EIP712, Pausable {
     // note: msg.sender is issuer
     function setupSchema(bytes32 issuerId, bytes32 schemaId, uint128 fee) external returns (bytes32) {
         // check if schemaId is not being used
-        require(schemas[schemaId].schemaId == bytes32(0), "SchemaId already in use");
+        require(_schemas[schemaId].schemaId == bytes32(0), "SchemaId already in use");
 
         // check if issuerId matches msg.sender
-        require(issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
+        require(_issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
 
         // check if fee is valid
         //require(fee > 0, "Invalid fee"); --- free credentials are allowed?
         require(fee < Constants.PRECISION_BASE, "Invalid fee");
 
         // set fee
-        schemas[schemaId].schemaId = schemaId;
-        schemas[schemaId].issuerId = issuerId;
-        schemas[schemaId].currentFee = fee;
+        _schemas[schemaId].schemaId = schemaId;
+        _schemas[schemaId].issuerId = issuerId;
+        _schemas[schemaId].currentFee = fee;
 
         // emit CredentialFeeUpdated(issuerId, credentialId, fee);
 
@@ -180,25 +188,25 @@ contract PaymentsController is EIP712, Pausable {
 
     function updateFee(bytes32 issuerId, bytes32 credentialId, uint256 fee) external {
         // check if credentialId is valid
-        require(credentials[credentialId].credentialId != bytes32(0), "Invalid credentialId");
+        require(_schemas[credentialId].schemaId != bytes32(0), "Invalid credentialId");
 
         // check if issuerId matches msg.sender
-        require(issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
+        require(_issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
 
         // check if fee is valid
         require(fee < Constants.PRECISION_BASE, "Invalid fee");
 
         // decrementing fee is instant 
-        if(fee < credentials[credentialId].currentFee) {
-            credentials[credentialId].currentFee = fee;
+        if(fee < _schemas[credentialId].currentFee) {
+            _schemas[credentialId].currentFee = fee;
 
             // emit CredentialFeeUpdated(issuerId, credentialId, fee);
 
         } else {
 
             // incrementing fee is delayed
-            credentials[credentialId].nextFee = fee;
-            credentials[credentialId].nextFeeTimestamp = block.timestamp + DELAY_PERIOD;
+            _schemas[credentialId].nextFee = fee;
+            _schemas[credentialId].nextFeeTimestamp = block.timestamp + DELAY_PERIOD;
 
             // emit CredentialFeeUpdatedDelayed(issuerId, credentialId, fee);
         }
@@ -207,30 +215,30 @@ contract PaymentsController is EIP712, Pausable {
     //note: for issuers to change receiving payment address
     function updateWalletAddress(bytes32 issuerId, address wallet) external {
         // check if issuerId matches msg.sender
-        require(issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
+        require(_issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
 
         // update wallet address
-        issuers[issuerId].wallet = wallet;
+        _issuers[issuerId].wallet = wallet;
 
         // emit WalletAddressUpdated(issuerId, wallet);
     }
 
     function claimFees(bytes32 issuerId) external {
         // check if issuerId matches msg.sender
-        require(issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
+        require(_issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
 
-        uint256 feesToClaim = issuers[issuerId].totalEarned - issuers[issuerId].totalClaimed;
+        uint256 feesToClaim = _issuers[issuerId].totalEarned - _issuers[issuerId].totalClaimed;
 
         // check if issuer has fees to claim
         require(feesToClaim > 0, "No fees to claim");
 
         // update total claimed
-        issuers[issuerId].totalClaimed += feesToClaim;
+        _issuers[issuerId].totalClaimed += feesToClaim;
 
         // emit FeesClaimed(issuerId, feesToClaim);
 
-        // transfer fees to issuer
-        USD8.safeTransfer(msg.sender, feesToClaim);
+        // transfer fees to issuer | note: get from AddressBook
+        IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, feesToClaim);
     }
 
 //-------------------------------verifier functions-----------------------------------------
@@ -242,7 +250,7 @@ contract PaymentsController is EIP712, Pausable {
             uint256 salt = ++block.number; 
             verifierId = _generateId(salt, msg.sender);
             // If generated id is used by either issuer or verifier, generate new Id
-            while (verifiers[verifierId].verifierId != bytes32(0) || issuers[verifierId].issuerId != bytes32(0)) {
+            while (_verifiers[verifierId].verifierId != bytes32(0) || _issuers[verifierId].issuerId != bytes32(0)) {
                 verifierId = _generateId(++salt, msg.sender); 
             }
         }
@@ -253,7 +261,7 @@ contract PaymentsController is EIP712, Pausable {
             verifier.wallet = msg.sender;
 
         // store verifier
-        verifiers[verifierId] = verifier;
+        _verifiers[verifierId] = verifier;
 
         // emit VerifierCreated(verifierId, msg.sender);
 
@@ -262,10 +270,10 @@ contract PaymentsController is EIP712, Pausable {
 
     function deposit(bytes32 verifierId, uint256 amount) external {
         // check if verifierId is valid + matches msg.sender
-        require(verifiers[verifierId].wallet == msg.sender, "Verifier Id<->Address mismatch");
+        require(_verifiers[verifierId].wallet == msg.sender, "Verifier Id<->Address mismatch");
 
         // update balance
-        verifiers[verifierId].balance += amount;
+        _verifiers[verifierId].balance += amount;
 
         // emit Deposit(verifierId, amount);
 
@@ -275,14 +283,14 @@ contract PaymentsController is EIP712, Pausable {
 
     function withdraw(bytes32 verifierId, uint256 amount) external {
         // check if verifierId is valid + matches msg.sender
-        require(verifiers[verifierId].wallet == msg.sender, "Verifier Id<->Address mismatch");
+        require(_verifiers[verifierId].wallet == msg.sender, "Verifier Id<->Address mismatch");
 
         // check if verifier has enough balance
-        uint256 balance = verifiers[verifierId].balance;
+        uint256 balance = _verifiers[verifierId].balance;
         require(balance >= amount, "Insufficient balance");
 
         // update balance
-        verifiers[verifierId].balance = balance - amount;
+        _verifiers[verifierId].balance = balance - amount;
 
         // emit Withdraw(verifierId, amount);
 
@@ -293,36 +301,67 @@ contract PaymentsController is EIP712, Pausable {
     // must be called from old signerAddress
     function updateSignerAddress(bytes32 verifierId, address signerAddress) external {
         // check if verifierId matches msg.sender
-        require(verifiers[verifierId].signerAddress == msg.sender, "Verifier Id<->Address mismatch");
+        require(_verifiers[verifierId].signerAddress == msg.sender, "Verifier Id<->Address mismatch");
 
         // update signer address
-        verifiers[verifierId].signerAddress = signerAddress;
+        _verifiers[verifierId].signerAddress = signerAddress;
 
         // emit SignerAddressUpdated(verifierId, signerAddress);
     }
 
-//-------------------------------VERIFIER CONTRACT CALL -----------------------------------------
 
+    function stakeMoca(bytes32 verifierId, uint256 amount) external {
+        // check if verifierId is valid + matches msg.sender
+        require(_verifiers[verifierId].assetAddress == msg.sender, "Verifier Id<->Address mismatch");
 
+        // update moca staked
+        _verifierMocaStaked[verifierId] += amount;
+
+        // transfer Moca to verifier
+        IERC20(_addressBook.getMocaToken()).safeTransferFrom(msg.sender, address(this), amount);
+
+        emit Events.VerifierMocaStaked(verifierId, amount);
+    }
+
+    function unstakeMoca(bytes32 verifierId, uint256 amount) external {
+        // check if verifierId is valid + matches msg.sender
+        require(_verifiers[verifierId].assetAddress == msg.sender, "Verifier Id<->Address mismatch");
+        require(_verifierMocaStaked[verifierId] >= amount, "Insufficient moca staked");
+
+        // update moca staked
+        _verifierMocaStaked[verifierId] -= amount;
+
+        // transfer Moca to verifier
+        IERC20(_addressBook.getMocaToken()).safeTransfer(msg.sender, amount);
+
+        emit Events.VerifierMocaUnstaked(verifierId, amount);
+    }
+
+//-------------------------------UniversalVerificationContract functions-----------------------------------------
+
+    //TODO: subsidy based on staking tiers -> calculate and book subsidy into _verifierSubsidies
     // make this fn as gas optimized as possible
-    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 credentialId, uint256 amount, uint256 expiry, bytes calldata signature) external {
+    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 amount, uint256 expiry, bytes calldata signature) external {
         //if(expiry < block.timestamp) revert Errors.SignatureExpired();
 
         // check if amount matches credential fee set by issuer
-        uint256 credentialFee = credentials[credentialId].currentFee;
+        uint256 credentialFee = _schemas[credentialId].currentFee;
         require(amount == credentialFee, "Amount does not match credential fee");
 
         // check if sufficient balance
-        require(verifiers[verifierId].balance >= amount, "Insufficient balance");
+        require(_verifiers[verifierId].balance >= amount, "Insufficient balance");
 
         // to get nonce + signerAddress
-        address signerAddress = verifiers[verifierId].signerAddress;
+        address signerAddress = _verifiers[verifierId].signerAddress;
 
         // verify signature | note: check inputs
-        bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(TYPEHASH, issuerId, verifierId, credentialId, amount, expiry, verifierNonces[signerAddress])));
+        bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
 
         // handles both EOA and contract signatures | returns true if signature is valid
         require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), "Invalid signature");
+        // update nonce
+        ++_verifierNonces[signerAddress];
+
 
         // calc. fee split
         unchecked{
@@ -331,31 +370,67 @@ contract PaymentsController is EIP712, Pausable {
             uint256 treasuryFee = (protocolFee - voterFee);
         }
 
-        // update nonce
-        ++verifierNonces[signerAddress];
+        // Only book subsidy if the schema has a poolId (i.e., is linked to a voting pool)
+        bytes32 poolId = _schemas[schemaId].poolId;
+        if (poolId != bytes32(0)) {
+            _bookSubsidy(verifierId, poolId, schemaId, amount);
+        }
+
 
         // verifier accounting
-        verifiers[verifierId].balance -= amount;
-        verifiers[verifierId].totalExpenditure += amount;
+        _verifiers[verifierId].balance -= amount;
+        _verifiers[verifierId].totalExpenditure += amount;
 
         // issuer accounting
-        issuers[issuerId].totalEarned += (amount - protocolFee);
-        ++issuers[issuerId].totalIssuances;
+        _issuers[issuerId].totalEarned += (amount - protocolFee);
+        ++_issuers[issuerId].totalIssuances;
 
         // credential accounting
-        credentials[credentialId].totalFeesAccrued += amount;
-        ++credentials[credentialId].totalIssued;
+        _schemas[schemaId].totalFeesAccrued += amount;
+        ++_schemas[schemaId].totalIssued;
         
         // treasury + voters accounting
-        uint256 currentEpoch = _epochController.getCurrentEpoch();
-        epochs[currentEpoch].feesAccruedToTreasury += treasuryFee;
-        epochs[currentEpoch].feesAccruedToVoters += voterFee;  
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        _epochs[currentEpoch].feesAccruedToTreasury += treasuryFee;
+        _epochs[currentEpoch].feesAccruedToVoters += voterFee;  
 
         //TODO: do you want to call VotingController to update accrued fees?
 
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
         // do we need more events for the other accounting actions?
     }
+
+    // deductBalance() calls VotingController if the schema has a poolId
+    // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
+    function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint256 amount) internal {
+        // get verifier's staking tier
+        uint256 mocaStaked = _verifiersMocaStaked[verifierId];
+        uint256 subsidyPercentage = _verifiersStakingTiers[mocaStaked];
+
+
+        // calculate subsidy | if subsidyPercentage is 0, txn reverts - no need to check for 0
+        uint256 subsidy = (amount * subsidyPercentage) / Constants.PRECISION_BASE;
+        require(subsidy > 0, "Zero subsidy");
+
+        // get current epoch
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+
+        // book verifier's subsidy
+        _epochPoolSubsidies[currentEpoch][poolId] += subsidy;
+        _epochPoolVerifierSubsidies[currentEpoch][poolId][verifierId] += subsidy;
+        _epochPoolSchemaSubsidies[currentEpoch][poolId][schemaId] += subsidy;
+
+        emit Events.SubsidyBooked(verifierId, poolId, schemaId, subsidy);
+    }
+
+    // totalSubsidiesPerPoolPerEpoch
+    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) private _epochPoolSubsidies;
+    // totalSubsidiesPerPoolPerEpochPerVerifier
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalWeight))) private _epochPoolVerifierSubsidies;
+    //@follow-up totalSubsidiesPerPoolPerEpochPerSchema -- do we need this? | tracks what portion of a pool's subsidy is attributed to a schema
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 schemaId => uint256 schemaTotalWeight))) private _epochPoolSchemaSubsidies;
+
+
 
 //-------------------------------VotingController functions-----------------------------------------
 
@@ -420,8 +495,8 @@ contract PaymentsController is EIP712, Pausable {
 
     // add/update/remove
     function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin {
-        require(schemas[schemaId].schemaId != bytes32(0), "Schema does not exist");
-        schemas[schemaId].poolId = poolId;
+        require(_schemas[schemaId].schemaId != bytes32(0), "Schema does not exist");
+        _schemas[schemaId].poolId = poolId;
 
         emit Events.PoolIdUpdated(schemaId, poolId);
     }
@@ -453,6 +528,15 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.VoterFeePercentageUpdated(voterFeePercentage);
     }
 
+    // used to set/overwrite/update
+    function updateVerifierStakingTiers(uint256 mocaStaked, uint256 subsidyPercentage) external onlyPaymentsAdmin {
+        require(mocaStaked > 0, "Invalid moca staked");
+        require(subsidyPercentage < Constants.PRECISION_BASE, "Invalid subsidy percentage");
+
+        _verifierStakingTiers[mocaStaked] = subsidyPercentage;
+
+        emit Events.VerifierStakingTierUpdated(mocaStaked, subsidyPercentage);
+    }
 
 //------------------------------- risk -------------------------------------------------------
 
@@ -557,6 +641,12 @@ contract PaymentsController is EIP712, Pausable {
     }   
 
 //-------------------------------view functions---------------------------------------------
+
+    //TODO: subsidy based on staking tiers -> calculate and book subsidy into _verifierSubsidies
+    function getVerifierSubsidy(uint256 epoch, address verifier) external view returns (uint256) {
+        // _verifierSubsidies
+        // check that msg.sender matches verifier's wallet
+    }
 
     /**
      * @notice Returns the fees accrued to voters for a given epoch
