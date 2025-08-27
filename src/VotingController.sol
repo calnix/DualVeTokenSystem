@@ -545,7 +545,7 @@ contract VotingController is Pausable {
 
         // transfer esMoca to verifier
         // note: must whitelist VotingController on esMoca for transfers
-        IERC20(_addressBook.getEsMoca()).transfer(msg.sender, totalSubsidiesClaimed);      
+        _esMoca().transfer(msg.sender, totalSubsidiesClaimed);      
     }
 
 
@@ -614,7 +614,7 @@ contract VotingController is Pausable {
         TOTAL_SUBSIDIES_DEPOSITED += depositSubsidies;
 
         // transfer esMoca to depositor
-        IERC20(_addressBook.getEsMoca()).transferFrom(msg.sender, address(this), depositSubsidies);
+        _esMoca().transferFrom(msg.sender, address(this), depositSubsidies);
 
         // event
         emit Events.SubsidiesDeposited(msg.sender, epoch, depositSubsidies, epochs[epoch].totalSubsidies);
@@ -629,7 +629,7 @@ contract VotingController is Pausable {
         TOTAL_SUBSIDIES_DEPOSITED -= withdrawSubsidies;
         
         // transfer esMoca to depositor
-        IERC20(_addressBook.getEsMoca()).transfer(msg.sender, withdrawSubsidies);
+        _esMoca().transfer(msg.sender, withdrawSubsidies);
 
         // event
         emit Events.SubsidiesWithdrawn(msg.sender, epoch, withdrawSubsidies, epochs[epoch].totalSubsidies);
@@ -643,7 +643,7 @@ contract VotingController is Pausable {
         require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
 
         // transfer esMoca to depositor
-        IERC20(_addressBook.getEsMoca()).transfer(msg.sender, unclaimedSubsidies);
+        _esMoca().transfer(msg.sender, unclaimedSubsidies);
 
         // event
         emit Events.UnclaimedSubsidiesWithdrawn(msg.sender, epoch, unclaimedSubsidies);
@@ -668,6 +668,7 @@ contract VotingController is Pausable {
 
         emit Events.MaxDelegateFeePctUpdated(maxFeePct);
     }
+
 
 //-------------------------------admin: deposit voting rewards-----------------------------------------
 
@@ -716,7 +717,7 @@ contract VotingController is Pausable {
         // emit Deposited(epoch, amount);
 
         // deposit esMoca to voting contract
-        IERC20(_addressBook.getEsMoca()).transferFrom(msg.sender, address(this), totalAmount);
+        _esMoca().transferFrom(msg.sender, address(this), totalAmount);
     }
 
 //-------------------------------admin: pool functions----------------------------------------------
