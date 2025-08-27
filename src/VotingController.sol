@@ -34,6 +34,7 @@ contract VotingController is Pausable {
     uint256 public INCENTIVE_FACTOR;
     uint256 public TOTAL_SUBSIDIES_DEPOSITED;
     uint256 public TOTAL_SUBSIDIES_CLAIMED;
+    uint256 public UNCLAIMED_SUBSIDIES_DELAY;
 
     // delegate
     uint256 public REGISTRATION_FEE;           // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
@@ -78,8 +79,8 @@ contract VotingController is Pausable {
         uint128 rewardsPerVote;         // verification fees per vote | get totol poolFees frm OmPm
 
         // verifier data
-        uint128 totalSubsidies;    // allocated esMoca subsidies: based on EpochData.subsidyPerVote
-        uint128 totalClaimed;           // total esMoca subsidies claimed; for both base and bonus subsidies
+        uint128 totalSubsidies;        // allocated esMoca subsidies: based on EpochData.subsidyPerVote
+        uint128 totalClaimed;          // total esMoca subsidies claimed; for both base and bonus subsidies
     }
 
     // delegate data
@@ -548,9 +549,9 @@ contract VotingController is Pausable {
     }
 
 
-//-------------------------------admin functions-----------------------------------------
+//-------------------------------admin: finalize, deposit, withdraw subsidies-----------------------------------------
 
-    //note: REVIEW
+    //REVIEW
     function finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds) external onlyVotingControllerAdmin {
         require(poolIds.length > 0, Errors.InvalidArray());
 
@@ -561,7 +562,10 @@ contract VotingController is Pausable {
         require(block.timestamp >= epochStart + Constants.EPOCH_DURATION, "Epoch not ended");
 
         uint256 totalVotes = epochData.totalVotes;
+        require(totalVotes > 0, Errors.NoVotesForEpoch());
+
         uint256 totalSubsidies = epochData.totalSubsidies;
+        require(totalSubsidies > 0, Errors.NoSubsidiesForEpoch());
 
         uint256 subsidyPerVote;
         if (totalVotes > 0 && totalSubsidies > 0) {
@@ -601,6 +605,52 @@ contract VotingController is Pausable {
         }
     }
 
+    // subsidies for verifiers, for an epoch. to be distributed amongst pools based on votes
+    // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
+    function depositSubsidies(uint256 epoch, uint256 depositSubsidies) external onlyVotingControllerAdmin {
+        require(epoch > EpochMath.getCurrentEpochNumber(), Errors.CanOnlySetSubsidiesForFutureEpochs());
+
+        epochs[epoch].totalSubsidies += depositSubsidies;
+        TOTAL_SUBSIDIES_DEPOSITED += depositSubsidies;
+
+        // transfer esMoca to depositor
+        IERC20(_addressBook.getEsMoca()).transferFrom(msg.sender, address(this), depositSubsidies);
+
+        // event
+        emit Events.SubsidiesDeposited(msg.sender, epoch, depositSubsidies, epochs[epoch].totalSubsidies);
+    }
+
+    // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
+    function withdrawSubsidies(uint256 epoch, uint256 withdrawSubsidies) external onlyVotingControllerAdmin {
+        require(epoch > EpochMath.getCurrentEpochNumber(), Errors.CanOnlySetSubsidiesForFutureEpochs());
+        require(epochs[epoch].totalSubsidies >= withdrawSubsidies, Errors.InsufficientSubsidies());
+        
+        epochs[epoch].totalSubsidies -= withdrawSubsidies;
+        TOTAL_SUBSIDIES_DEPOSITED -= withdrawSubsidies;
+        
+        // transfer esMoca to depositor
+        IERC20(_addressBook.getEsMoca()).transfer(msg.sender, withdrawSubsidies);
+
+        // event
+        emit Events.SubsidiesWithdrawn(msg.sender, epoch, withdrawSubsidies, epochs[epoch].totalSubsidies);
+    }
+
+    //REVIEW: withdraw unclaimed subsidies | after 6 epochs?
+    function withdrawUnclaimedSubsidies(uint256 epoch) external onlyVotingControllerAdmin {
+        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedSubsidiesAfterDelay());
+
+        uint256 unclaimedSubsidies = epochs[epoch].totalSubsidies - epochs[epoch].totalClaimed;
+        require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
+
+        // transfer esMoca to depositor
+        IERC20(_addressBook.getEsMoca()).transfer(msg.sender, unclaimedSubsidies);
+
+        // event
+        emit Events.UnclaimedSubsidiesWithdrawn(msg.sender, epoch, unclaimedSubsidies);
+    }
+    
+
+//-------------------------------admin: deposit voting rewards-----------------------------------------
 
     /** deposit rewards for a pool
         - a pool is a collection of similar credentials
@@ -647,7 +697,7 @@ contract VotingController is Pausable {
         // emit Deposited(epoch, amount);
 
         // deposit esMoca to voting contract
-        esMOCA.transferFrom(msg.sender, address(this), totalAmount);
+        IERC20(_addressBook.getEsMoca()).transferFrom(msg.sender, address(this), totalAmount);
     }
 
 
@@ -701,109 +751,6 @@ contract VotingController is Pausable {
             // event
         }*/
 
-//-------------------------------admin: incentives functions----------------------------------------------
-   
-    // subsidies for a specific epoch
-    function setEpochSubsidies(uint128 epoch, uint128 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(amount > 0, "Amount must be non-zero");
-        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
-
-        // get current total base incentives
-        uint128 currentTotalIncentives = epochs[epoch].totalBaseIncentives;
-        if(currentTotalIncentives == amount) revert("Incentives already set");
-
-        // if no base incentives set yet: set
-        if(currentTotalIncentives == 0) {
-            epochs[epoch].totalBaseIncentives = amount;
-            TOTAL_INCENTIVES_DEPOSITED += amount;
-
-            // event
-
-            // transfer esMoca to voting contract
-            esMOCA.transfer(address(this), amount);
-        } 
-
-        // decrease base incentives | note: there will be surplus to be withdrawn
-        if(currentTotalIncentives > amount) {
-            // update incentives for the epoch
-            epochs[epoch].totalBaseIncentives = amount;
-            
-            uint256 delta = currentTotalIncentives - amount;
-            TOTAL_INCENTIVES_DEPOSITED -= delta;
-            
-            // event
-        }
-
-        // increase base incentives
-        if(currentTotalIncentives < amount) {
-            // update incentives for the epoch
-            epochs[epoch].totalIncentives = amount;
-         
-            uint256 delta = amount - currentTotalIncentives;
-            TOTAL_INCENTIVES_DEPOSITED += delta;
-            
-            // event
-
-            // transfer esMoca to voting contract
-            esMOCA.transfer(address(this), delta);
-        }
-
-        // emit EpochEmissionsSet(epoch, amount);
-    }
-
-    //note: we do not add bonus incentives at a global level - pointless. rather just increment the totalBonusIncentives
-    // hence, epoch.totalBonusIncentives is used to track the total bonus incentives for an epoch [sum of pool bonuses + verifier bonuses]
-    //function setBonusIncentivesGlobal(uint128 epoch, uint128 extraAmount) external onlyRole(ADMIN_ROLE) {}
-
-    function setPoolBonusIncentives(uint128 epoch, bytes32[] calldata poolIds, uint128[] calldata bonusAmounts) external onlyRole(ADMIN_ROLE) {
-        require(poolIds.length > 0, "No pools specified");
-        require(poolIds.length == bonusAmounts.length, "Array length mismatch");
-        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
-
-        uint128 totalBonusAmounts;
-        for(uint256 i; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint128 bonusAmount = bonusAmounts[i];
-
-            // sanity checks
-            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-            require(pools[poolId].isActive, "Pool inactive");
-            require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
-            require(bonusAmount > 0, "Bonus amount must be positive");
-
-            // update pool's bonus incentives
-            pools[poolId].totalBonusIncentives += bonusAmount;
-            epochPools[epoch][poolId].totalBonusIncentives += bonusAmount;
-
-            // increment counter 
-            totalBonusAmounts += bonusAmount;
-
-            // event
-            //emit PoolBonusIncentivesSet(epoch, poolId, bonusAmount);
-        }
-        
-        // increment global tracker for epoch
-        epochs[epoch].totalBonusIncentives += totalBonusAmounts;
-    }
-
-    // TODO
-    function setVerifierBonusIncentives(uint128 epoch, address verifier, uint128 bonusAmount) external onlyRole(ADMIN_ROLE) {
-        require(bonusAmount > 0, "Bonus amount must be positive");
-        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
-        
-        // note: any other sanity checks for verifiers?
-        require(verifier != address(0), "Verifier cannot be zero address"); 
-        
-        
-        // update verifier's bonus incentives
-        verifierEpochData[epoch][verifier].bonusIncentivesClaimed += bonusAmount;
-
-        //TODO: continue
-    }
-
-    //TODO: withdraw unclaimed incentives
-    function withdrawUnclaimedIncentives() external onlyRole(DEFAULT_ADMIN_ROLE) {}
-    
 
 //-------------------------------internal functions-----------------------------------------
 

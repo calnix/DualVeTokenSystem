@@ -37,5 +37,13 @@ library Errors {
     error NoSubsidiesToClaim();
     error NoSubsidiesAccrued();
     error SubsidyAlreadyClaimed();
+    // finalizeEpoch
+    error NoVotesForEpoch();
+    error NoSubsidiesForEpoch();
+    // depositSubsidies
+    error CanOnlySetSubsidiesForFutureEpochs();
+    error InsufficientSubsidies();
+    // withdrawUnclaimedSubsidies
+    error CanOnlyWithdrawUnclaimedSubsidiesAfterDelay();
 
 }

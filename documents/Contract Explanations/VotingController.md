@@ -51,7 +51,7 @@ On VotingController, when an epoch ends:
 
 **Will require the epoch to end before we can deposit subsidies.**
 
-note:
+*Note*:
 ⦁	if we add a schema mid-epoch to a voting pool, its prior txns in the same epoch will not count for subsidies.
 ⦁	if we remove a schema mid-epoch from a voting pool, its weight can be removed from the pool and subsidy calculations. its prior txns in the same epoch will not receive any subsidies.
 

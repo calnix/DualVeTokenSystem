@@ -25,7 +25,13 @@ library Events {
     event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
     // claimSubsidies
     event SubsidiesClaimed(address indexed verifier, uint256 epoch, bytes32[] poolIds, uint256 totalSubsidiesClaimed);
-    
+    // depositSubsidies
+    event SubsidiesDeposited(address indexed depositor, uint256 epoch, uint256 depositSubsidies, uint256 totalSubsidies);
+    // withdrawSubsidies
+    event SubsidiesWithdrawn(address indexed depositor, uint256 epoch, uint256 withdrawSubsidies, uint256 totalSubsidies);
+    // withdrawUnclaimedSubsidies
+    event UnclaimedSubsidiesWithdrawn(address indexed depositor, uint256 epoch, uint256 unclaimedSubsidies);
+
     // --------- PaymentsController.sol ---------
     event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);
     event VerifierMocaUnstaked(bytes32 indexed verifierId, uint256 amount);
