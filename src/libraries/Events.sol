@@ -31,6 +31,10 @@ library Events {
     event SubsidiesWithdrawn(address indexed depositor, uint256 epoch, uint256 withdrawSubsidies, uint256 totalSubsidies);
     // withdrawUnclaimedSubsidies
     event UnclaimedSubsidiesWithdrawn(address indexed depositor, uint256 epoch, uint256 unclaimedSubsidies);
+    // setUnclaimedSubsidiesDelay
+    event UnclaimedSubsidiesDelayUpdated(uint256 delayPeriod);
+    // setMaxDelegateFeePct
+    event MaxDelegateFeePctUpdated(uint256 maxDelegateFeePct);
 
     // --------- PaymentsController.sol ---------
     event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);

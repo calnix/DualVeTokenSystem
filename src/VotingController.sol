@@ -650,6 +650,25 @@ contract VotingController is Pausable {
     }
     
 
+    // note: implicitly minimum of 1 epoch delay
+    function setUnclaimedSubsidiesDelay(uint256 delay) external onlyVotingControllerAdmin {
+        require(delay > 0, "Delay must be positive");
+        UNCLAIMED_SUBSIDIES_DELAY = delay;
+
+        // event
+        emit Events.UnclaimedSubsidiesDelaySet(delay);
+    }
+
+    // 0 accepted
+    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyVotingControllerAdmin {
+        //require(maxFeePct > 0, "Invalid fee: zero");
+        require(maxFeePct < Constants.PRECISION_BASE, Errors.InvalidFeePct());
+
+        MAX_DELEGATE_FEE_PCT = maxFeePct;
+
+        emit Events.MaxDelegateFeePctUpdated(maxFeePct);
+    }
+
 //-------------------------------admin: deposit voting rewards-----------------------------------------
 
     /** deposit rewards for a pool
@@ -698,17 +717,6 @@ contract VotingController is Pausable {
 
         // deposit esMoca to voting contract
         IERC20(_addressBook.getEsMoca()).transferFrom(msg.sender, address(this), totalAmount);
-    }
-
-
-    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(maxFeePct > 0, "Invalid fee: zero");
-        require(maxFeePct < Constants.PRECISION_BASE, "MAX_DELEGATE_FEE_PCT must be < 100%");
-
-        MAX_DELEGATE_FEE_PCT = maxFeePct;
-
-        // event
-        //emit MaxDelegateFeePctUpdated(maxFeePct);
     }
 
 //-------------------------------admin: pool functions----------------------------------------------
