@@ -38,8 +38,7 @@ library Errors {
     error NoSubsidiesAccrued();
     error SubsidyAlreadyClaimed();
     // finalizeEpoch
-    error NoVotesForEpoch();
-    error NoSubsidiesForEpoch();
+    error SubsidyPerVoteZero();
     // depositSubsidies
     error CanOnlySetSubsidiesForFutureEpochs();
     error InsufficientSubsidies();

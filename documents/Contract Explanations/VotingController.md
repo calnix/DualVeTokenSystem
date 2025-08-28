@@ -57,7 +57,7 @@ On VotingController, when an epoch ends:
 
 **Process**
 1. setEpochSubsidies() -> total to be distributed across all pools. can be set at the start 
-2. depositRewards() -> at the end of epoch
+2. depositSubsidies() -> at the end of epoch
 3. finalizeEpoch() -> to get each pool's `totalSubsidies`
 4. claimSubsidies() -> verifiers claim subsidies via: `verifierTotalSubsidyAccruedForPool`/`totalSubsidyAccruedForPool` * `pool.totalSubsidies`
 4i. `[verifier's portion of subsidy]` / `[total subsidies accrued by all verifiers in pool]` * `[pool's allocated subsidies; based on votes]`

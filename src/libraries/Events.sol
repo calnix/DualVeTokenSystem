@@ -35,6 +35,10 @@ library Events {
     event UnclaimedSubsidiesDelayUpdated(uint256 delayPeriod);
     // setMaxDelegateFeePct
     event MaxDelegateFeePctUpdated(uint256 maxDelegateFeePct);
+    // finalizeEpoch
+    event EpochSubsidyPerVoteSet(uint256 indexed epoch, uint256 subsidyPerVote);
+    event EpochPartiallyFinalized(uint256 indexed epoch, bytes32[] poolIds);
+    event EpochFullyFinalized(uint256 indexed epoch);
 
     // --------- PaymentsController.sol ---------
     event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);

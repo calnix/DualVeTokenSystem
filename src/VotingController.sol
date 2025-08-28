@@ -28,7 +28,7 @@ contract VotingController is Pausable {
     IAddressBook internal immutable _addressBook;
     
     // safety check
-    uint128 public totalNumberOfPools;
+    uint128 public TOTAL_NUMBER_OF_POOLS;
 
     // incentives
     uint256 public INCENTIVE_FACTOR;
@@ -63,7 +63,10 @@ contract VotingController is Pausable {
         bytes32 poolId;       // poolId = credentialId  
         bool isActive;        // active+inactive: pause pool
         //bool isWhitelisted;   // whitelist+blacklist
-        
+
+        // note: newly added        
+        uint128 totalRewards;           // manually deposited weekly, at minimum 
+
         // global metrics
         uint128 totalVotes;             // how many votes pool accrued throughout all epochs
         uint128 totalSubsidies;         // allocated esMOCA subsidies: based on EpochData.subsidyPerVote
@@ -498,8 +501,7 @@ contract VotingController is Pausable {
     function claimSubsidies(uint128 epoch, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, Errors.InvalidArray());
         
-        // epoch must have ended + finalized
-        require(epoch < EpochMath.getCurrentEpochNumber(), Errors.FutureEpoch());
+        // epoch must be finalized
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
 
         //TODO[maybe]: epoch: calculate subsidies if not already done; so can front-run/incorporate finalizeEpoch()
@@ -551,57 +553,60 @@ contract VotingController is Pausable {
 
 //-------------------------------admin: finalize, deposit, withdraw subsidies-----------------------------------------
 
-    //REVIEW
+    // @follow-up what if subsidies are 0 for an epoch? intentionally?
     function finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds) external onlyVotingControllerAdmin {
         require(poolIds.length > 0, Errors.InvalidArray());
 
+        // sanity check: epoch must not be finalized
         EpochData storage epochData = epochs[epoch];
-        require(epochData.subsidyPerVote == 0, "Epoch already finalized");
+        require(epochData.subsidyPerVote == 0, Errors.EpochFinalized());
 
-        uint128 epochStart = getEpochStartTimestamp(epoch);
-        require(block.timestamp >= epochStart + Constants.EPOCH_DURATION, "Epoch not ended");
+        // sanity check: epoch must have ended
+        uint256 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epoch);
+        require(block.timestamp >= epochEndTimestamp, Errors.EpochNotEnded());
 
-        uint256 totalVotes = epochData.totalVotes;
-        require(totalVotes > 0, Errors.NoVotesForEpoch());
-
-        uint256 totalSubsidies = epochData.totalSubsidies;
-        require(totalSubsidies > 0, Errors.NoSubsidiesForEpoch());
-
+        // if either votes or subsidies are 0; subsidyPerVote is 0 or txn reverts on division by 0 
+        // --> we not bother individually checking for 0 
         uint256 subsidyPerVote;
-        if (totalVotes > 0 && totalSubsidies > 0) {
-            subsidyPerVote = (totalSubsidies * 1e18) / totalVotes;
-            // storage update
-            if(subsidyPerVote > 0) epochData.subsidyPerVote = subsidyPerVote;
+
+        // calc. subsidy per vote on 1st call | on subsequent calls, subsidy per vote is already set
+        if(epochData.subsidyPerVote == 0) {
+            // calc. subsidy per vote | subsidies are esMoca, expressed in 1e18 | votes are 1e18 [_veMoca().balanceAtEpochEnd]
+            subsidyPerVote = (epochData.totalSubsidies * 1e18) / epochData.totalVotes;
+            require(subsidyPerVote > 0, Errors.SubsidyPerVoteZero());
+
+            // STORAGE: update subsidy per vote
+            epochData.subsidyPerVote = subsidyPerVote;
+            emit Events.EpochSubsidyPerVoteSet(epoch, subsidyPerVote);
         }
 
-        for (uint256 i; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
+        // cac. pool subsidies for each pool
+        if(subsidyPerVote > 0) {
 
-            if (poolVotes > 0) {
-                uint256 poolSubsidies = (poolVotes * totalSubsidies) / totalVotes;
-                // pool epoch
-                epochPools[epoch][poolId].totalSubsidies = poolSubsidies;
-                // pool global
-                pools[poolId].totalSubsidies += poolSubsidies;
+            // subsidies are esMoca, expressed in 1e18 | votes are 1e18 [_veMoca().balanceAtEpochEnd]
+            for (uint256 i; i < poolIds.length; ++i) {
+                bytes32 poolId = poolIds[i];
+                uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
 
-                // emit PoolEmissionsFinalized(epoch, poolId, poolIncentives);
-            } else {
-                // no votes in pool: no incentives
-                //epochPools[epoch][poolId].totalIncentives = 0;
-                //pools[poolId].totalIncentives = 0;
+                if (poolVotes > 0) {
+                    uint256 poolSubsidies = (poolVotes * subsidyPerVote) / 1e18;
+                    
+                    // STORAGE: pool epoch + pool global
+                    epochPools[epoch][poolId].totalSubsidies = poolSubsidies;
+                    pools[poolId].totalSubsidies += poolSubsidies;
+                }
             }
         }
-        
-        // event
-        //emit EpochFinalizedPartially(epoch, poolIds, epochData.incentivePerVote);
 
-        // update epoch data
+        emit Events.EpochPartiallyFinalized(epoch, poolIds);
+
+        // STORAGE: increment count of pools finalized
         epochData.poolsFinalized += uint128(poolIds.length);
-        if(epochData.poolsFinalized == totalNumberOfPools) {
-            epochData.isFullyFinalized = true;
 
-            // emit EpochFinalized(epoch);
+        // check if epoch is fully finalized
+        if(epochData.poolsFinalized == TOTAL_NUMBER_OF_POOLS) {
+            epochData.isFullyFinalized = true;
+            emit Events.EpochFullyFinalized(epoch);
         }
     }
 
