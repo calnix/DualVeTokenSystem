@@ -106,7 +106,7 @@ contract VotingController is Pausable {
     struct Account {
         // personal
         uint128 totalVotesSpent;
-        uint128 totalRewards;
+        uint128 totalRewards;       // total accrued rewards
         uint128 totalClaimed;
         
         // delegated
@@ -407,30 +407,34 @@ contract VotingController is Pausable {
 
             // get pool's rewardsPerVote
             uint256 latestRewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;
-            require(latestRewardsPerVote > 0, Errors.NoRewardsToClaim());     // either no deposit, or nothing earned
+            require(latestRewardsPerVote > 0, Errors.NoRewardsToClaim());     // either no deposit made, or no fees accrued
         
             // get user's pool votes for the epoch
             uint256 userPoolVotes = usersEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent;
             require(userPoolVotes > 0, Errors.NoVotesInPool());
 
             // calc. user's latest total rewards [accounting for new deposits made]
-            uint256 userNewTotalRewards = usersEpochPoolData[epoch][poolId][msg.sender].totalRewards = userPoolVotes * latestRewardsPerVote;
+            uint256 userLatestTotalRewards = userPoolVotes * latestRewardsPerVote;
 
             // calc. claimable rewards + update user's total claimed
-            uint256 claimableRewards = userNewTotalRewards - usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed;
+            uint256 claimableRewards = userLatestTotalRewards - usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed;
+            require(claimableRewards > 0, Errors.NoRewardsToClaim());
 
+            // STORAGE: overwrite user's .totalRewards & .totalClaimed
+            usersEpochPoolData[epoch][poolId][msg.sender].totalRewards = userLatestTotalRewards;
+            usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed = userLatestTotalRewards;
+
+            // update counter
             totalClaimableRewards += claimableRewards;
         }
 
+        // update user's total claimed for all pools    
+        usersEpochData[epoch][msg.sender].totalClaimed += totalClaimableRewards;
 
-        if(totalClaimableRewards > 0) {
-            usersEpochData[epoch][msg.sender].totalClaimed += totalClaimableRewards;
+        // transfer esMoca to user
+        _esMoca().safeTransfer(msg.sender, totalClaimableRewards);
 
-            // transfer esMoca to user
-            _esMoca().safeTransfer(msg.sender, totalClaimableRewards);
-
-            emit Events.RewardsClaimed(msg.sender, epoch, poolIds, totalClaimableRewards);
-        }
+        emit Events.RewardsClaimed(msg.sender, epoch, poolIds, totalClaimableRewards);
     }
 
     //TODO:
@@ -654,6 +658,7 @@ contract VotingController is Pausable {
         emit Events.UnclaimedSubsidiesWithdrawn(msg.sender, epoch, unclaimedSubsidies);
     }
     
+//-------------------------------admin: setters -----------------------------------------
 
     // note: implicitly minimum of 1 epoch delay
     function setUnclaimedSubsidiesDelay(uint256 delay) external onlyVotingControllerAdmin {
@@ -678,48 +683,60 @@ contract VotingController is Pausable {
 //-------------------------------admin: deposit voting rewards-----------------------------------------
 
     /** deposit rewards for a pool
-        - a pool is a collection of similar credentials
-        - Payments.sol cannot track which credentials belong to which pool; therefore it cannot aggregate rewards for a pool
-        - therefore, we will refer to Payments.feesAccruedToVoters(uint256 epoch, bytes32 credentialId), and aggregate manually
+        - a pool is a thematic collection of schemas
+        - PaymentsController cannot track which schemas belong to which pool; therefore it cannot aggregate rewards for a pool
+        - therefore, we will refer to PaymentsController.getPoolVotersFeesAccrued(uint256 epoch, bytes32 poolId), and aggregate manually
         - then deposit the total aggregated rewards to the pool for that epoch
-
-        this could be automated by creating a query layer like ACL[explore:low priority]
-    */
-    ///@dev increment pool's PoolEpoch.totalRewards and PoolEpoch.rewardsPerVote
-    function depositRewards(uint256 epoch, bytes32[] calldata poolIds, uint256[] calldata amounts) external onlyVotingControllerAdmin {
-        require(poolIds.length > 0, "No pools specified");
-        require(poolIds.length == amounts.length, "Mismatched input lengths");
         
-        // sanity check: epoch | can deposit on epochs from past till current
+        Since we wish to distribute rewards on an adhoc basis, we opt not to reference PaymentsController to get the rewards for each pool.
+        The automated approach would require depositRewards() to be executed once, preferably at the end of an epoch, nested within finalizeEpoch().
+        
+        For rewards distribution on an ad-hoc basis, depositRewards() will be called repeatedly.
+        - this means that the total rewards for a pool must be overwritten; not incremented
+
+    */
+    ///@dev update pool's PoolEpoch.totalRewards and PoolEpoch.rewardsPerVote
+    function depositRewards(uint256 epoch, bytes32[] calldata poolIds) external onlyVotingControllerAdmin {
+        require(poolIds.length > 0, Errors.InvalidArray());
+        
+        // sanity check: epoch | can deposit on epochs from past till current | can deposit on current epoch 
+        // cannot deposit for future, since no verification txns have occurred yet
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(epoch <= currentEpoch, "Cannot deposit rewards for future epochs");
+        require(epoch <= currentEpoch, Errors.FutureEpoch());
 
         uint256 totalAmount;
         for(uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
-            uint256 amount = amounts[i];
-
-            require(amount > 0, "Amount must be positive");
-           
-            // sanity check: pool
-            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
+        
+            // sanity checks: pool
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
             //require(pools[poolId].isWhitelisted, "Pool is not whitelisted"); ---> ? for past pools what is the treatment?
 
-            // get pool's total rewards
-            uint256 newPoolTotalRewards = epochPools[epoch][poolId].totalRewards += amount;
+            // get pool's latest total rewards/feesAccruedToVoters
+            uint256 latestPoolTotalRewards = IPaymentsController(IAddressBook.getPaymentsController()).getPoolVotingFeesAccrued(epoch, poolId);
 
-            /** increment pool's rewardsPerVote
+            // check: fees must have incremented from when this function was last called; for the same epoch
+            uint256 incomingRewards = latestPoolTotalRewards - epochPools[epoch][poolId].totalRewards;
+            require(incomingRewards > 0, Errors.NoRewardsAccrued());
+
+            // overwrite pool's total rewards
+            epochPools[epoch][poolId].totalRewards = latestPoolTotalRewards;
+
+            /** overwrite pool's rewardsPerVote
                 if epochPools[epoch][poolId].totalVotes is 0, reverts; no need to check for 0
-                newPoolTotalRewards is always > 0, due to (amount > 0) check
+                latestPoolTotalRewards is always > 0, due to (incomingRewards > 0) check
+
+                both rewards(esMoca) and totalVotes(veMoca) are expressed in 1e18
             */
-            uint256 rewardsPerVote = epochPools[epoch][poolId].rewardsPerVote = newPoolTotalRewards / epochPools[epoch][poolId].totalVotes;
-
-            // emit
-            //emit RewardsPerVoteUpdated(epoch, poolId, rewardsPerVote);
+            uint256 rewardsPerVote = latestPoolTotalRewards * 1E18 / epochPools[epoch][poolId].totalVotes;
+            epochPools[epoch][poolId].rewardsPerVote = rewardsPerVote;
+            
+            totalAmount += incomingRewards;
+                        
+            emit Events.RewardsPerVoteUpdated(epoch, poolId, rewardsPerVote);
         }
-
-        // emit deposited
-        // emit Deposited(epoch, amount);
+    
+        emit Events.RewardsDeposited(epoch, poolIds, totalAmount);
 
         // deposit esMoca to voting contract
         _esMoca().transferFrom(msg.sender, address(this), totalAmount);

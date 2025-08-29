@@ -44,5 +44,7 @@ library Errors {
     error InsufficientSubsidies();
     // withdrawUnclaimedSubsidies
     error CanOnlyWithdrawUnclaimedSubsidiesAfterDelay();
+    // depositRewards
+    error NoRewardsAccrued();
 
 }

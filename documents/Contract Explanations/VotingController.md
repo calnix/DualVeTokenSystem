@@ -11,8 +11,7 @@ Do we need the whitelist flag in pool struct?
 3. Alice cannot vote with delegated votes - effective immediately.
 4. Users who delegated will not regain their voting power - they must manually call undelegate() function on VotingEscrowedMoca.sol
 
-
-## delegate fees
+### delegate fees
 
 problem on delegate fees:
 - delegate changes fees in epoch N
@@ -30,13 +29,9 @@ how would _delegateHistoricalFees be populated
 but what about the epochs where no fee change occurred? 
 - how do we get the fee, since the mapping would return 0 for those epochs?
 
-
 **FOR NOW: users are charged prevailing fee, currentFee at time of claim. simple.**
 
-## Users can opt for rewards to be auto-staked to the same lock
-
-no. either claim, or claim and lock as a batch/multicall.
-
+> https://www.notion.so/animocabrands/Delegate-Leader-Lifecycle-20d3f5ceb8fe80e8a9e5f9584dc1683a?d=2593f5ceb8fe804aabab001c562d3679#22a3f5ceb8fe8064b5f9eda6221acd02
 
 ## Verifiers and Subsidies
 
@@ -66,3 +61,31 @@ On VotingController, when an epoch ends:
 `finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds)`
 - gets totalVotes + totalSubsidies for epoch -> calcs. `epochData.subsidyPerVote`
 - for each pool, in poolId[], calc. `totalSubsidies`
+
+> https://www.notion.so/animocabrands/Tiers-Stake-MOCA-optionally-to-be-eligible-for-subsidy-2373f5ceb8fe80ab8e9ae00f2283590e#25a3f5ceb8fe80e2baaedb42498381ec
+
+## Voters and Rewards
+
+- voters receive rewards, as esMoca
+- rewards are based upon verification fees
+ 
+
+Voters vote on credential pools in Epoch N: 
+- Voting rewards would be a portion of verification fees in the next epoch, **Epoch N+1**
+- Voting is taking a bet on the future
+- Verification fees will likely be distributed on a weekly basis. 
+- *Verification fees in Epoch N+1 will be rewarded to them at the **end of Epoch N+1; once the epoch is finalized***
+
+***Note:***
+
+- *Voters cannot claim fees as they come in, mid-way through the Epoch*
+- *Voters can claim fees proportion to their votes [in Epoch N], at the end of Epoch N+1.*
+
+
+---
+
+# Others
+
+## Users can opt for rewards to be auto-staked to the same lock
+
+no. either claim, or claim and lock as a batch/multicall.

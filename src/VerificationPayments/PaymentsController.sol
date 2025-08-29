@@ -65,7 +65,7 @@ contract PaymentsController is EIP712, Pausable {
         uint128 nextFeeTimestamp;       // could use epoch and epochMath?
 
         // counts
-        uint128 totalIssued;
+        uint128 totalVerified;
         uint128 totalFeesAccrued;
 
         // for VotingController
@@ -91,15 +91,6 @@ contract PaymentsController is EIP712, Pausable {
     bytes32 public constant TYPEHASH = keccak256("DeductBalance(bytes32 issuerId,bytes32 verifierId,bytes32 credentialId,uint256 amount,uint256 expiry,uint256 nonce)");
     // nonces for preventing race conditions [ECDSA.sol::recover handles sig.mal]
     mapping(address verifier => uint256 nonce) private _verifierNonces;
-
-
-
-    // epoch accounting: treasury + voters
-    struct Epoch {
-        uint128 feesAccruedToTreasury;
-        uint128 feesAccruedToVoters;
-    }
-    mapping(uint256 epoch => mapping(bytes32 credentialId => Epoch epoch)) private _epochs;
 
 
     // verifier staking tiers
@@ -374,6 +365,12 @@ contract PaymentsController is EIP712, Pausable {
         bytes32 poolId = _schemas[schemaId].poolId;
         if (poolId != bytes32(0)) {
             _bookSubsidy(verifierId, poolId, schemaId, amount);
+            
+            // for VotingController.claimRewards()
+            FeesAccrued memory feesAccrued;
+                feesAccrued.feesAccruedToTreasury += treasuryFee;
+                feesAccrued.feesAccruedToVoters += voterFee;
+            _epochPoolFeesAccrued[currentEpoch][poolId] = feesAccrued;
         }
 
 
@@ -385,7 +382,7 @@ contract PaymentsController is EIP712, Pausable {
         _issuers[issuerId].totalEarned += (amount - protocolFee);
         ++_issuers[issuerId].totalIssuances;
 
-        // credential accounting
+        // schema accounting
         _schemas[schemaId].totalFeesAccrued += amount;
         ++_schemas[schemaId].totalIssued;
         
@@ -395,9 +392,14 @@ contract PaymentsController is EIP712, Pausable {
         _epochs[currentEpoch].feesAccruedToVoters += voterFee;  
 
         //TODO: do you want to call VotingController to update accrued fees?
+        // -> NO. i don't want PaymentsController to have external call dependencies to other contracts.
+        // -> may create problems when upgrading to new contracts. 
+        // -> PaymentsController should be silo-ed off as much as possible. Other contracts can call this if needed.
 
         // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
         // do we need more events for the other accounting actions?
+
+        // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
     }
 
     // deductBalance() calls VotingController if the schema has a poolId
@@ -430,6 +432,18 @@ contract PaymentsController is EIP712, Pausable {
     //@follow-up totalSubsidiesPerPoolPerEpochPerSchema -- do we need this? | tracks what portion of a pool's subsidy is attributed to a schema
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 schemaId => uint256 schemaTotalWeight))) private _epochPoolSchemaSubsidies;
 
+    // epoch accounting: treasury + voters
+    struct FeesAccrued {
+        uint128 feesAccruedToTreasury;
+        uint128 feesAccruedToVoters;
+    }
+    // VotingController needs this:
+    mapping(uint256 epoch => mapping(bytes32 poolId => FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
+    
+    // technically not needed, but nice to have for completeness:
+    mapping(uint256 epoch => mapping(bytes32 schemaId => FeesAccrued feesAccrued)) private _epochSchemaFeesAccrued;
+    mapping(uint256 epoch => FeesAccrued feesAccrued) private _epochFeesAccrued;
+    
 
 
 //-------------------------------VotingController functions-----------------------------------------
@@ -641,22 +655,19 @@ contract PaymentsController is EIP712, Pausable {
     }   
 
 //-------------------------------view functions---------------------------------------------
-
-  /*  // called by VotingController
-    function getVerifierAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier) external view returns (uint256) {
-        return _epochPoolVerifierSubsidies[epoch][poolId][verifier];
-    }
-
-    // called by VotingController
-    function getPoolAccruedSubsidies(uint256 epoch, bytes32 poolId) external view returns (uint256) {
-        return _epochPoolSubsidies[epoch][poolId];
-    }
-    */
-    
+   
     // called by VotingController
     function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier) external view returns (uint256, uint256) {
         return (_epochPoolVerifierSubsidies[epoch][poolId][verifier], _epochPoolSubsidies[epoch][poolId]);
     }
+
+    // called by VotingController
+    function getPoolVotingFeesAccrued(uint256 epoch, bytes32 poolId) external view returns (uint256) {
+        return _epochPoolFeesAccrued[epoch][poolId].feesAccruedToVoters;
+    }
+
+    
+
 
     /**
      * @notice Returns the fees accrued to voters for a given epoch
