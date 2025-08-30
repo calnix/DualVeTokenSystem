@@ -37,6 +37,10 @@ contract PaymentsController is EIP712, Pausable {
     // issuer's fee increase delay | for schema
     uint256 internal DELAY_PERIOD;            // in seconds
 
+    // verification fees
+    uint256 internal TOTAL_VERIFICATION_FEES_ACCRUED;
+    uint256 internal TOTAL_CLAIMED_VERIFICATION_FEES;
+
     // risk management
     uint256 internal _isFrozen;
 
@@ -198,20 +202,23 @@ contract PaymentsController is EIP712, Pausable {
 
     function claimFees(bytes32 issuerId) external {
         // check if issuerId matches msg.sender
-        require(_issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
+        require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
 
-        uint256 feesToClaim = _issuers[issuerId].totalEarned - _issuers[issuerId].totalClaimed;
+        uint256 claimableFees = _issuers[issuerId].totalFeesAccrued - _issuers[issuerId].totalClaimed;
 
-        // check if issuer has fees to claim
-        require(feesToClaim > 0, "No fees to claim");
+        // check if issuer has claimable fees
+        require(claimableFees > 0, Errors.NoClaimableFees());
 
-        // update total claimed
-        _issuers[issuerId].totalClaimed += feesToClaim;
+        // overwrite .totalClaimed with .totalFeesAccrued
+        _issuers[issuerId].totalClaimed = _issuers[issuerId].totalFeesAccrued;
 
-        // emit FeesClaimed(issuerId, feesToClaim);
+        // update global counter
+        TOTAL_CLAIMED_VERIFICATION_FEES += claimableFees;
 
-        // transfer fees to issuer | note: get from AddressBook
-        IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, feesToClaim);
+        emit Events.IssuerFeesClaimed(issuerId, claimableFees);
+
+        // transfer fees to issuer
+        IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, claimableFees);
     }
 
 //-------------------------------verifier functions-----------------------------------------

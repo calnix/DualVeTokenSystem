@@ -15,16 +15,17 @@ library Errors {
     // Access control
     error CallerNotRiskOrPoolAdmin();
 
-    // --------- PaymentsController.sol ---------
+// --------- PaymentsController.sol ---------
     error InvalidCaller();
+    error NoClaimableFees();
     
 
-    // --------- VotingEscrowMoca.sol ---------
+// --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();
     
 
 
-    // --------- VotingController.sol ---------
+// --------- VotingController.sol ---------
     error EpochFinalized();
     error NoSpareVotes();
     error InvalidFeePct();
