@@ -46,7 +46,8 @@ library Events {
     event SchemaCreated(bytes32 indexed schemaId, bytes32 issuerId, uint256 fee);
     // updateSchemaFee
     event SchemaFeeReduced(bytes32 indexed schemaId, uint256 newFee, uint256 currentFee);
-    event SchemaFeeIncreased(bytes32 indexed schemaId, uint256 newFee, uint256 nextFeeTimestamp, uint256 currentFee);
+    event SchemaNextFeeSet(bytes32 indexed schemaId, uint256 newFee, uint256 nextFeeTimestamp, uint256 currentFee);
+    event SchemaFeeIncreased(bytes32 indexed schemaId, uint256 oldFee, uint256 newFee);
     // claimFees
     event IssuerFeesClaimed(bytes32 indexed issuerId, uint256 claimableFees);
 
@@ -65,6 +66,8 @@ library Events {
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VoterFeePercentageUpdated(uint256 voterFeePercentage);
     event VerifierStakingTierUpdated(uint256 stakingTier, uint256 stakingAmount);
+    // withdrawProtocolFees
+    event ProtocolFeesWithdrawn(uint256 epoch, uint256 protocolFees);
 
     event EmergencyExitIssuers(bytes32[] issuerIds);
     event EmergencyExitVerifiers(bytes32[] verifierIds);

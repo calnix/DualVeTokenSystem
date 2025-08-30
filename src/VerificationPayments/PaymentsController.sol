@@ -30,9 +30,9 @@ contract PaymentsController is EIP712, Pausable {
     // immutable
     IAddressBook internal immutable _addressBook;
 
-    // fees
-    uint256 internal PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
-    uint256 internal VOTER_FEE_PERCENTAGE;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    // fees: 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    uint256 internal PROTOCOL_FEE_PERCENTAGE;    
+    uint256 internal VOTING_FEE_PERCENTAGE;   
 
     // issuer's fee increase delay | for schema
     uint256 internal DELAY_PERIOD;            // in seconds
@@ -41,8 +41,12 @@ contract PaymentsController is EIP712, Pausable {
     uint256 internal TOTAL_VERIFICATION_FEES_ACCRUED;
     uint256 internal TOTAL_CLAIMED_VERIFICATION_FEES;
 
-    // staked
+    // staked by verifiers
     uint256 internal TOTAL_MOCA_STAKED;
+
+    // protocol fees accrued note: drop to reduce storage updates
+    //uint256 internal TOTAL_PROTOCOL_FEES_ACCRUED;
+    //uint256 internal TOTAL_CLAIMED_PROTOCOL_FEES;
 
     // risk management
     uint256 internal _isFrozen;
@@ -57,14 +61,27 @@ contract PaymentsController is EIP712, Pausable {
 
 
     // nonces for preventing race conditions [ECDSA.sol::recover handles sig.malfunctions]
-    mapping(address verifier => uint256 nonce) internal _verifierNonces;
-
+    mapping(address signerAddress => uint256 nonce) internal _verifierNonces;
 
     // Staking tiers: determines subsidy percentage for each verifier | admin fn will setup the tiers
     mapping(uint256 mocaStaked => uint256 subsidyPercentage) internal _verifiersStakingTiers;
 
-    // for VotingController: track subsidies for each verifier, per epoch | getVerifierAndPoolAccruedSubsidies()
-    mapping(bytes32 verifierId => mapping(uint256 epoch => uint256 subsidy)) internal _verifierSubsidies;
+
+    // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
+    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) private _epochPoolSubsidies;        // totalSubsidiesPerPoolPerEpoch
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) private _epochPoolVerifierSubsidies;        // totalSubsidiesPerPoolPerEpochPerVerifier
+    
+    //@follow-up totalSubsidiesPerPoolPerEpochPerSchema -- do we need this? | tracks what portion of a pool's subsidy is attributed to a schema
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 schemaId => uint256 schemaTotalSubsidies))) private _epochPoolSchemaSubsidies;
+
+    // for VotingController.claimRewards()
+    mapping(uint256 epoch => mapping(bytes32 poolId => FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
+    // for correct withdrawal of fees and rewards
+    mapping(uint256 epoch => FeesAccrued feesAccrued) private _epochFeesAccrued;
+
+    //@follow-up  not needed or used, but nice to have for completeness:
+    //mapping(uint256 epoch => mapping(bytes32 schemaId => FeesAccrued feesAccrued)) private _epochSchemaFeesAccrued;
+    
 
 //-------------------------------constructor-----------------------------------------
 
@@ -197,7 +214,7 @@ contract PaymentsController is EIP712, Pausable {
             uint256 nextFeeTimestamp = block.timestamp + DELAY_PERIOD;
             _schemas[schemaId].nextFeeTimestamp = nextFeeTimestamp;
 
-            emit Events.SchemaFeeIncreased(schemaId, newFee, nextFeeTimestamp, currentFee);
+            emit Events.SchemaNextFeeSet(schemaId, newFee, nextFeeTimestamp, currentFee);
         }
 
         return newFee;
@@ -280,7 +297,7 @@ contract PaymentsController is EIP712, Pausable {
         require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
 
         // STORAGE: update balance
-        _verifiers[verifierId].balance += amount;
+        _verifiers[verifierId].currentBalance += amount;
 
         emit Events.VerifierDeposited(verifierId, msg.sender, assetAddress, amount);
 
@@ -303,7 +320,7 @@ contract PaymentsController is EIP712, Pausable {
         require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
 
         // check if verifier has enough balance
-        uint256 balance = _verifiers[verifierId].balance;
+        uint256 balance = _verifiers[verifierId].currentBalance;
         require(balance >= amount, Errors.InvalidAmount());
 
         // STORAGE: update balance
@@ -423,89 +440,114 @@ contract PaymentsController is EIP712, Pausable {
     //TODO: subsidy based on staking tiers -> calculate and book subsidy into _verifierSubsidies
     // make this fn as gas optimized as possible
     function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 amount, uint256 expiry, bytes calldata signature) external {
-        //if(expiry < block.timestamp) revert Errors.SignatureExpired();
+        require(expiry > block.timestamp, Errors.SignatureExpired());
 
-        // check if amount matches credential fee set by issuer
-        uint256 credentialFee = _schemas[credentialId].currentFee;
-        require(amount == credentialFee, "Amount does not match credential fee");
+        // nextFee check
+        uint256 nextFee = _schemas[schemaId].nextFee;
+        // if nextFee is set, check if it's time to apply it
+        if(nextFee > 0) {
+            if(_schemas[schemaId].nextFeeTimestamp <= block.timestamp) {
+                // apply nextFee
+                uint256 currentFee = _schemas[schemaId].currentFee;
+                _schemas[schemaId].currentFee = nextFee;
+                // delete nextFee and nextFeeTimestamp
+                delete _schemas[schemaId].nextFee;
+                delete _schemas[schemaId].nextFeeTimestamp;
+
+                emit Events.SchemaFeeIncreased(schemaId, currentFee, nextFee);
+            }
+        }
+
+        // ---- try: so that fee updates occur regardless of subsequent revert ---
+
+
+        // amount must match latest schema fee [set by issuer]
+        uint256 schemaFee = _schemas[schemaId].currentFee;
+        require(amount == schemaFee, Errors.InvalidSchemaFee());
 
         // check if sufficient balance
-        require(_verifiers[verifierId].balance >= amount, "Insufficient balance");
+        require(_verifiers[verifierId].currentBalance >= amount, Errors.InsufficientBalance());
 
-        // to get nonce + signerAddress
-        address signerAddress = _verifiers[verifierId].signerAddress;
 
-        // verify signature | note: check inputs
-        bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
-
-        // handles both EOA and contract signatures | returns true if signature is valid
-        require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), "Invalid signature");
-        // update nonce
+        // ----- Verify signature -----
+            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
+            address signerAddress = _verifiers[verifierId].signerAddress;
+            // handles both EOA and contract signatures | returns true if signature is valid
+            require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
+        
+        // ----- Update nonce -----
         ++_verifierNonces[signerAddress];
 
 
-        // calc. fee split
-        unchecked{
-            uint256 protocolFee = (PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
-            uint256 voterFee = (VOTER_FEE_PERCENTAGE > 0) ? (protocolFee * VOTER_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
-            uint256 treasuryFee = (protocolFee - voterFee);
-        }
-
-        // Only book subsidy if the schema has a poolId (i.e., is linked to a voting pool)
-        bytes32 poolId = _schemas[schemaId].poolId;
-        if (poolId != bytes32(0)) {
-            _bookSubsidy(verifierId, poolId, schemaId, amount);
-            
-            // for VotingController.claimRewards()
-            FeesAccrued memory feesAccrued;
-                feesAccrued.feesAccruedToTreasury += treasuryFee;
-                feesAccrued.feesAccruedToVoters += voterFee;
-            _epochPoolFeesAccrued[currentEpoch][poolId] = feesAccrued;
-        }
-
-
-        // verifier accounting
-        _verifiers[verifierId].balance -= amount;
-        _verifiers[verifierId].totalExpenditure += amount;
-
-        // issuer accounting
-        _issuers[issuerId].totalEarned += (amount - protocolFee);
-        ++_issuers[issuerId].totalIssuances;
-
-        // schema accounting
-        _schemas[schemaId].totalFeesAccrued += amount;
-        ++_schemas[schemaId].totalIssued;
-        
-        // treasury + voters accounting
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        _epochs[currentEpoch].feesAccruedToTreasury += treasuryFee;
-        _epochs[currentEpoch].feesAccruedToVoters += voterFee;  
-
-        //TODO: do you want to call VotingController to update accrued fees?
-        // -> NO. i don't want PaymentsController to have external call dependencies to other contracts.
-        // -> may create problems when upgrading to new contracts. 
-        // -> PaymentsController should be silo-ed off as much as possible. Other contracts can call this if needed.
-
-        // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
-        // do we need more events for the other accounting actions?
-
-        // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
-    }
-
-    // deductBalance() calls VotingController if the schema has a poolId
-    // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
-    function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint256 amount) internal {
-        // get verifier's staking tier
-        uint256 mocaStaked = _verifiersMocaStaked[verifierId];
-        uint256 subsidyPercentage = _verifiersStakingTiers[mocaStaked];
-
-
-        // calculate subsidy | if subsidyPercentage is 0, txn reverts - no need to check for 0
-        uint256 subsidy = (amount * subsidyPercentage) / Constants.PRECISION_BASE;
-        require(subsidy > 0, "Zero subsidy");
+        // ----- Calc. fee split -----
+        uint256 protocolFee = (PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+        uint256 votingFee = (VOTING_FEE_PERCENTAGE > 0) ? (amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
 
         // get current epoch
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+
+        // ----- Book subsidy & fees (voting rewards) if poolId is set -----
+        uint256 subsidy;
+        bytes32 poolId = _schemas[schemaId].poolId;
+        if (poolId != bytes32(0)) {
+
+            // for VotingController.claimSubsidies(): which calls getVerifierAndPoolAccruedSubsidies() on this contract
+            subsidy = _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
+        }
+
+        // ---------------------------------------------------------------------
+
+        // issuer accounting
+        _issuers[issuerId].totalFeesAccrued += (amount - protocolFee);
+        ++_issuers[issuerId].totalVerified;
+
+        // verifier accounting
+        _verifiers[verifierId].currentBalance -= amount;
+        _verifiers[verifierId].totalExpenditure += amount;
+        _verifiers[verifierId].totalSubsidiesAccrued += subsidy;
+
+        // schema accounting
+        _schemas[schemaId].totalFeesAccrued += amount;
+        ++_schemas[schemaId].totalVerified;
+        
+        // protocol + voting fees accounting
+        _epochFeesAccrued[currentEpoch].feesAccruedToProtocol += protocolFee;
+        _epochFeesAccrued[currentEpoch].feesAccruedToVoters += votingFee;  
+
+        // for VotingController.depositRewards(): which calls getPoolVotingFeesAccrued() on this contract
+        // to identify how much fees accrued for a pool, to assist with distribution of voting rewards
+        _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToProtocol += protocolFee;
+        _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToVoters += votingFee;
+
+
+        //note: not needed; drop to reduce storage updates
+        //_epochSchemaFeesAccrued[currentEpoch][schemaId].feesAccruedToProtocol = protocolFee;
+        //_epochSchemaFeesAccrued[currentEpoch][schemaId].feesAccruedToVoters = votingFee;
+
+
+        // ---------------------------------------------------------------------
+
+            //TODO: do you want to call VotingController to update accrued fees?
+            // -> NO. i don't want PaymentsController to have external call dependencies to other contracts.
+            // -> may create problems when upgrading to new contracts. 
+            // -> PaymentsController should be silo-ed off as much as possible. Other contracts can call this if needed.
+
+            // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
+            // do we need more events for the other accounting actions?
+
+            // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
+    }
+
+    // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
+    function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint256 amount, uint256 currentEpoch) internal returns (uint256) {
+        // get verifier's staking tier + subsidy percentage
+        uint256 mocaStaked = _verifiers[verifierId].mocaStaked;
+        uint256 subsidyPercentage = _verifiersStakingTiers[mocaStaked];
+
+        // calculate subsidy | if subsidyPercentage is 0, txn reverts; no need to check for 0
+        uint256 subsidy = (amount * subsidyPercentage) / Constants.PRECISION_BASE;
+        require(subsidy > 0, Errors.ZeroSubsidy());
+        
 
         // book verifier's subsidy
         _epochPoolSubsidies[currentEpoch][poolId] += subsidy;
@@ -513,80 +555,10 @@ contract PaymentsController is EIP712, Pausable {
         _epochPoolSchemaSubsidies[currentEpoch][poolId][schemaId] += subsidy;
 
         emit Events.SubsidyBooked(verifierId, poolId, schemaId, subsidy);
+
+        return subsidy;
     }
-
-    // totalSubsidiesPerPoolPerEpoch
-    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) private _epochPoolSubsidies;
-    // totalSubsidiesPerPoolPerEpochPerVerifier
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalWeight))) private _epochPoolVerifierSubsidies;
-    //@follow-up totalSubsidiesPerPoolPerEpochPerSchema -- do we need this? | tracks what portion of a pool's subsidy is attributed to a schema
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 schemaId => uint256 schemaTotalWeight))) private _epochPoolSchemaSubsidies;
-
-    // epoch accounting: treasury + voters
-    struct FeesAccrued {
-        uint128 feesAccruedToTreasury;
-        uint128 feesAccruedToVoters;
-    }
-    // VotingController needs this:
-    mapping(uint256 epoch => mapping(bytes32 poolId => FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
-    
-    // technically not needed, but nice to have for completeness:
-    mapping(uint256 epoch => mapping(bytes32 schemaId => FeesAccrued feesAccrued)) private _epochSchemaFeesAccrued;
-    mapping(uint256 epoch => FeesAccrued feesAccrued) private _epochFeesAccrued;
-    
-
-
-//-------------------------------VotingController functions-----------------------------------------
-
-    /** NOTE:
-
-        1. How to swap USD8 to MOCA?
-        2. When to swap USD8 for MOCA?
-            - end of Epoch,
-            - OR, per txn, in deductBalance()
-
-        If swapping end of Epoch, we need to:
-         1. swap USD8 to MOCA, for that epoch
-         2. convert Moca to esMoca
-         3. set esMoca::approve for VotingController to do transferFrom() to pay Voters
-
-        If swapping per txn, we need to:
-         1. swap USD8 to MOCA, for that txn
-         2. convert Moca to esMoca, at end of Epoch
-         3. set esMoca::approve for VotingController to do transferFrom() to pay Voters
-
-         in either scenario, we convert Moca to esMoca, at end of Epoch
-
-    */
-
-    // convert Moca to esMoca 
-    function escrowMocaForEpoch(uint256 epoch) external {
-        // check if msg.sender is VotingController
-        require(msg.sender == _addressBook.getVotingController(), "Only callable by VotingController");
-
-        // get amount of Moca to escrow
-        uint256 amount = epochs[epoch].feesAccruedToVoters;
-
-        // check if amount is greater than 0
-        require(amount > 0, "No Moca to escrow");
-
-        // convert Moca to esMoca
-        IEscrowedMoca(_addressBook.getEscrowedMoca()).escrow(amount);
-
-        // emit MocaEscrowed(amount);
-    }
-
-    // set approval for VotingController
-    function setApproval(uint256 amount) external {
-        // 1. swap voters' fee of USD8 for MOCA
-
-
-        // get VotingController address from AddressBook
-        //address votingController = AddressBook.getAddress("VotingController");
-        IERC20(_addressBook.getUSD8Token()).approve(_addressBook.getVotingController(), amount);
-    }
-
-
+ 
 //-------------------------------internal functions-----------------------------------------
 
     ///@dev Generate a issuer or verifier id. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
@@ -601,7 +573,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
 
-//-------------------------------admin functions-----------------------------------------
+//-------------------------------admin: update functions-----------------------------------------
 
     // add/update/remove
     function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin {
@@ -646,6 +618,80 @@ contract PaymentsController is EIP712, Pausable {
         _verifierStakingTiers[mocaStaked] = subsidyPercentage;
 
         emit Events.VerifierStakingTierUpdated(mocaStaked, subsidyPercentage);
+    }
+
+//-------------------------------admin: withdraw functions-----------------------------------------
+
+    //note: can only withdraw protocol fees after epoch ended
+    function withdrawProtocolFees(uint256 epoch) external onlyPaymentsAdmin {
+        require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
+        require(!_epochFeesAccrued[epoch].isProtocolFeeWithdrawn, Errors.ProtocolFeeAlreadyWithdrawn());
+
+        uint256 protocolFees = _epochFeesAccrued[epoch].feesAccruedToProtocol;
+        require(protocolFees > 0, Errors.ZeroProtocolFee());
+
+        _epochFeesAccrued[epoch].isProtocolFeeWithdrawn = true;
+
+        emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
+    }
+
+    function withdrawVotersFees(uint256 epoch) external onlyPaymentsAdmin {
+        require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
+        require(!_epochFeesAccrued[epoch].isVotersFeeWithdrawn, Errors.VotersFeeAlreadyWithdrawn());
+
+        uint256 votersFees = _epochFeesAccrued[epoch].feesAccruedToVoters;
+        require(votersFees > 0, Errors.ZeroVotersFee());
+
+        _epochFeesAccrued[epoch].isVotersFeeWithdrawn = true;
+
+        emit Events.VotersFeesWithdrawn(epoch, votersFees);
+    }
+
+    function withdrawFees(uint256 epoch, bool isProtocolFee) external onlyPaymentsAdmin {
+        require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
+        
+        bool storage isWithdrawn;
+        uint256 accruedFees;
+
+        (isWithdrawn, accruedFees) = isProtocolFee ? 
+            (_epochFeesAccrued[epoch].isProtocolFeeWithdrawn, _epochFeesAccrued[epoch].feesAccruedToProtocol) : 
+            (_epochFeesAccrued[epoch].isVotersFeeWithdrawn, _epochFeesAccrued[epoch].feesAccruedToVoters);
+
+        require(!isWithdrawn, isProtocolFee ? Errors.ProtocolFeeAlreadyWithdrawn() : Errors.VotersFeeAlreadyWithdrawn());
+        require(accruedFees > 0, isProtocolFee ? Errors.ZeroProtocolFee() : Errors.ZeroVotersFee());
+
+        isWithdrawn = true;
+
+        if(isProtocolFee) {
+            emit Events.ProtocolFeesWithdrawn(epoch, accruedFees);
+        } else {
+            emit Events.VotersFeesWithdrawn(epoch, accruedFees);
+        }
+
+        /*
+            if(isProtocolFee) {
+
+                require(!_epochFeesAccrued[epoch].isProtocolFeeWithdrawn, Errors.ProtocolFeeAlreadyWithdrawn());
+
+                uint256 protocolFees = _epochFeesAccrued[epoch].feesAccruedToProtocol;
+                require(protocolFees > 0, Errors.ZeroProtocolFee());
+                
+                _epochFeesAccrued[epoch].isProtocolFeeWithdrawn = true;
+
+                emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
+
+            } else {
+
+                require(!_epochFeesAccrued[epoch].isVotersFeeWithdrawn, Errors.VotersFeeAlreadyWithdrawn());
+
+                uint256 votersFees = _epochFeesAccrued[epoch].feesAccruedToVoters;
+                require(votersFees > 0, Errors.ZeroVotersFee());
+                
+                _epochFeesAccrued[epoch].isVotersFeeWithdrawn = true;
+
+                emit Events.VotersFeesWithdrawn(epoch, votersFees);
+            } 
+        */
     }
 
 //------------------------------- risk -------------------------------------------------------
@@ -752,12 +798,12 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------view functions---------------------------------------------
    
-    // called by VotingController
+    // called by VotingController.claimSubsidies
     function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier) external view returns (uint256, uint256) {
         return (_epochPoolVerifierSubsidies[epoch][poolId][verifier], _epochPoolSubsidies[epoch][poolId]);
     }
 
-    // called by VotingController
+    // called by VotingController.depositRewards()
     function getPoolVotingFeesAccrued(uint256 epoch, bytes32 poolId) external view returns (uint256) {
         return _epochPoolFeesAccrued[epoch][poolId].feesAccruedToVoters;
     }

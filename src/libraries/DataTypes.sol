@@ -50,13 +50,15 @@ library DataTypes {
         address adminAddress;
         address signerAddress;
         address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
-
-        // deposit, expenditure
-        uint128 balance;
-        uint128 totalExpenditure;
         
+        // USD8 | 6dp precision
+        uint128 currentBalance;
+
+        // counts: never decremented
+        uint128 totalExpenditure;           
+        uint128 totalSubsidiesAccrued;      
+
         // subsidy, mocaStaked
-        uint128 totalSubsidies; //todo
         uint128 mocaStaked;
     }
 
@@ -64,20 +66,27 @@ library DataTypes {
         bytes32 schemaId;
         bytes32 issuerId;
         
-        // fees are expressed in USD8 terms
+        // fees are expressed in USD8 terms | 6dp precision
         uint128 currentFee;
         uint128 nextFee;
-        uint128 nextFeeTimestamp;       // could use epoch and epochMath?
+        uint128 nextFeeTimestamp;       
 
-        // counts
+        // counts: never decremented
         uint128 totalVerified;
-        uint128 totalFeesAccrued;
+        uint128 totalFeesAccrued;           
 
         // for VotingController
         bytes32 poolId;
     }
 
-    
+    // epoch accounting: treasury + voters
+    struct FeesAccrued {
+        uint128 feesAccruedToProtocol;
+        uint128 feesAccruedToVoters;
+
+        bool isProtocolFeeWithdrawn;
+        bool isVotersFeeWithdrawn;
+    }
 
 // ---------- consider removing this -------
 

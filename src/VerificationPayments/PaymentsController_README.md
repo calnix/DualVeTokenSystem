@@ -183,3 +183,17 @@ Also note that the signature expects a nonce as replay protection.
 
 ---
 ---
+
+# Questions
+
+1. Block/blacklist issuer/verifiers?
+
+2. are subsidies calculated on the base verification fee?
+- meaning, do not deduct protocol fee and voting rewards from it
+
+3. are rewards calculated on the base verification fee?
+
+**for points 2 and 3, they impact deductBalance():**
+- since the current process calcs. everything on the base verification fee
+- there could be a scenario where all the haircuts added up together is `> amount`
+-> can we streamline by just charging a single protocol fee.

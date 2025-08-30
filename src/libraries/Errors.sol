@@ -18,7 +18,12 @@ library Errors {
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
     error NoClaimableFees();
-    
+    error InvalidSchemaFee();
+    error InsufficientBalance();
+    error InvalidSignature();
+    error ZeroSubsidy();
+    error ZeroProtocolFee();
+    error ProtocolFeeAlreadyWithdrawn();
 
 // --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();
