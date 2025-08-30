@@ -175,9 +175,9 @@ contract PaymentsController is EIP712, Pausable {
         require(_schemas[schemaId].schemaId != bytes32(0), Errors.InvalidSchema());
 
 
-        // sanity check: fee cannot be greater than 1000 USD8
+        // sanity check: fee cannot be greater than 10,000 USD8
         // fee is an absolute value expressed in USD8 terms | free credentials are allowed
-        require(newFee < 1000 * Constants.USD8_PRECISION, Errors.InvalidFee());
+        require(newFee < 10_000 * Constants.USD8_PRECISION, Errors.InvalidFee());
 
         // decrementing fee is applied immediately
         uint256 currentFee = _schemas[schemaId].currentFee;
@@ -200,9 +200,17 @@ contract PaymentsController is EIP712, Pausable {
         return newFee;
     }
 
+
+    /**
+     * @notice Claims all unclaimed verification fees for a given issuer.
+     * @dev Only callable by the issuer's asset address. Transfers the total unclaimed fees to the issuer.
+     * - Caller must match the issuer's asset address.
+     * - There must be claimable fees available.
+     * @param issuerId The unique identifier of the issuer to claim fees for.
+     */
     function claimFees(bytes32 issuerId) external {
         // check if issuerId matches msg.sender
-        require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
+        require(_issuers[issuerId].assetAddress == msg.sender, Errors.InvalidCaller());
 
         uint256 claimableFees = _issuers[issuerId].totalFeesAccrued - _issuers[issuerId].totalClaimed;
 
