@@ -156,30 +156,44 @@ contract PaymentsController is EIP712, Pausable {
     }
 
 
-    function updateFee(bytes32 issuerId, bytes32 credentialId, uint256 fee) external {
-        // check if credentialId is valid
-        require(_schemas[credentialId].schemaId != bytes32(0), "Invalid credentialId");
-
+    /**
+     * @notice Updates the fee for a given schema under a specific issuer.
+     * @dev Only the issuer admin can call this function. Decreasing the fee applies immediately; increasing the fee is scheduled after a delay.
+     * @param issuerId The unique identifier of the issuer.
+     * @param schemaId The unique identifier of the schema to update.
+     * @param newFee The new fee to set, expressed in USD8 (6 decimals).
+     * @return newFee The new fee that was set. Returns value for better middleware integration.
+     */
+    function updateSchemaFee(bytes32 issuerId, bytes32 schemaId, uint256 newFee) external returns (uint256) {
         // check if issuerId matches msg.sender
-        require(_issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
+        require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
+        // check if schemaId is valid
+        require(_schemas[schemaId].schemaId != bytes32(0), Errors.InvalidSchema());
 
-        // check if fee is valid
-        require(fee < Constants.PRECISION_BASE, "Invalid fee");
 
-        // decrementing fee is instant 
-        if(fee < _schemas[credentialId].currentFee) {
-            _schemas[credentialId].currentFee = fee;
+        // sanity check: fee cannot be greater than 1000 USD8
+        // fee is an absolute value expressed in USD8 terms | free credentials are allowed
+        require(newFee < 1000 * Constants.USD8_PRECISION, Errors.InvalidFee());
 
-            // emit CredentialFeeUpdated(issuerId, credentialId, fee);
+        // decrementing fee is applied immediately
+        uint256 currentFee = _schemas[schemaId].currentFee;
+        if(newFee < currentFee) {
+            _schemas[schemaId].currentFee = newFee;
+
+            emit Events.SchemaFeeReduced(schemaId, newFee, currentFee);
 
         } else {
+            // increment nextFee 
+            _schemas[schemaId].nextFee = newFee;
+            
+            // set next fee timestamp
+            uint256 nextFeeTimestamp = block.timestamp + DELAY_PERIOD;
+            _schemas[schemaId].nextFeeTimestamp = nextFeeTimestamp;
 
-            // incrementing fee is delayed
-            _schemas[credentialId].nextFee = fee;
-            _schemas[credentialId].nextFeeTimestamp = block.timestamp + DELAY_PERIOD;
-
-            // emit CredentialFeeUpdatedDelayed(issuerId, credentialId, fee);
+            emit Events.SchemaFeeIncreased(schemaId, newFee, nextFeeTimestamp, currentFee);
         }
+
+        return newFee;
     }
 
     //note: for issuers to change receiving payment address

@@ -44,6 +44,9 @@ library Events {
     event IssuerCreated(bytes32 indexed issuerId, address adminAddress, address assetAddress);
     event VerifierCreated(bytes32 indexed verifierId, address adminAddress, address signerAddress, address assetAddress);
     event SchemaCreated(bytes32 indexed schemaId, bytes32 issuerId, uint256 fee);
+    
+    event SchemaFeeReduced(bytes32 indexed schemaId, uint256 newFee, uint256 currentFee);
+    event SchemaFeeIncreased(bytes32 indexed schemaId, uint256 newFee, uint256 nextFeeTimestamp, uint256 currentFee);
 
     event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);
     event VerifierMocaUnstaked(bytes32 indexed verifierId, uint256 amount);
