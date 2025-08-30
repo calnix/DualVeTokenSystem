@@ -43,8 +43,8 @@ library Events {
     // --------- PaymentsController.sol ---------
     event IssuerCreated(bytes32 indexed issuerId, address adminAddress, address assetAddress);
     event VerifierCreated(bytes32 indexed verifierId, address adminAddress, address signerAddress, address assetAddress);
-    event SchemaCreated(bytes32 indexed schemaId, bytes32 indexed issuerId, address assetAddress);
-    
+    event SchemaCreated(bytes32 indexed schemaId, bytes32 issuerId, uint256 fee);
+
     event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);
     event VerifierMocaUnstaked(bytes32 indexed verifierId, uint256 amount);
     event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);

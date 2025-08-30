@@ -7,15 +7,21 @@ library Errors {
     error InvalidUser(); 
     error InvalidAmount();
     error InvalidExpiry();
-    error InvalidLockDuration();
     error InvalidArray();
     error MismatchedArrayLengths();
-
 
     error IsFrozen();
 
     // Access control
     error CallerNotRiskOrPoolAdmin();
+
+    // --------- PaymentsController.sol ---------
+    error InvalidCaller();
+    
+
+    // --------- VotingEscrowMoca.sol ---------
+    error InvalidLockDuration();
+    
 
 
     // --------- VotingController.sol ---------
