@@ -100,7 +100,8 @@ contract PaymentsController is EIP712, Pausable {
      * @return issuerId The unique identifier assigned to the new issuer.
      */
     function createIssuer(address assetAddress) external returns (bytes32) {
-        
+        require(assetAddress != address(0), Errors.InvalidAddress());
+
         // generate issuerId
         bytes32 issuerId;
         {
@@ -231,29 +232,35 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------verifier functions-----------------------------------------
 
-    function setupVerifier(address signerAddress, address assetAddress) external returns (bytes32) {
+    /**
+     * @notice Generates and registers a new verifier with a unique verifierId.
+     * @dev The verifierId is derived from the sender and asset address, ensuring uniqueness across issuers, verifiers, and schemas.
+     * @param signerAddress The address of the signer of the verifier.
+     * @param assetAddress The address where verifier fees will be claimed.
+     * @return verifierId The unique identifier assigned to the new verifier.
+     */
+    function createVerifier(address signerAddress, address assetAddress) external returns (bytes32) {
+        require(signerAddress != address(0), Errors.InvalidAddress());
+        require(assetAddress != address(0), Errors.InvalidAddress());
+
         // generate verifierId
         bytes32 verifierId;
         {
             uint256 salt = ++block.number; 
-            verifierId = _generateId(salt, msg.sender);
-            // If generated id is used by either issuer or verifier, generate new Id
-            while (_verifiers[verifierId].verifierId != bytes32(0) || _issuers[verifierId].issuerId != bytes32(0)) {
-                verifierId = _generateId(++salt, msg.sender); 
+            verifierId = _generateId(salt, msg.sender, assetAddress);
+            // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
+            while (_verifiers[verifierId].verifierId != bytes32(0) || _issuers[verifierId].issuerId != bytes32(0) || _schemas[verifierId].schemaId != bytes32(0)) {
+                verifierId = _generateId(++salt, msg.sender, assetAddress); 
             }
         }
 
-        // setup verifier
-        Verifier memory verifier;
-            verifier.verifierId = verifierId;
-            verifier.adminAddress = msg.sender;
-            verifier.signerAddress = signerAddress;
-            verifier.assetAddress = assetAddress;
+        // STORAGE: create verifier
+        _verifiers[verifierId].verifierId = verifierId;
+        _verifiers[verifierId].adminAddress = msg.sender;
+        _verifiers[verifierId].signerAddress = signerAddress;
+        _verifiers[verifierId].assetAddress = assetAddress;
 
-        // store verifier
-        _verifiers[verifierId] = verifier;
-
-        // emit VerifierCreated(verifierId, msg.sender);
+        emit Events.VerifierCreated(verifierId, msg.sender, signerAddress, assetAddress);
 
         return verifierId;
     }
