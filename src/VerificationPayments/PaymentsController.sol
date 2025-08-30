@@ -41,6 +41,9 @@ contract PaymentsController is EIP712, Pausable {
     uint256 internal TOTAL_VERIFICATION_FEES_ACCRUED;
     uint256 internal TOTAL_CLAIMED_VERIFICATION_FEES;
 
+    // staked
+    uint256 internal TOTAL_MOCA_STAKED;
+
     // risk management
     uint256 internal _isFrozen;
 
@@ -57,9 +60,8 @@ contract PaymentsController is EIP712, Pausable {
     mapping(address verifier => uint256 nonce) internal _verifierNonces;
 
 
-    // verifier staking tiers | admin fn will setup the tiers
+    // Staking tiers: determines subsidy percentage for each verifier | admin fn will setup the tiers
     mapping(uint256 mocaStaked => uint256 subsidyPercentage) internal _verifiersStakingTiers;
-    mapping(bytes32 verifierId => uint256 mocaStaked) internal _verifiersMocaStaked;
 
     // for VotingController: track subsidies for each verifier, per epoch | getVerifierAndPoolAccruedSubsidies()
     mapping(bytes32 verifierId => mapping(uint256 epoch => uint256 subsidy)) internal _verifierSubsidies;
@@ -335,31 +337,52 @@ contract PaymentsController is EIP712, Pausable {
     }
 
 
+    /**
+     * @notice Stakes MOCA for a verifier.
+     * @dev Only callable by the verifier's assetAddress address. Increases the verifier's moca staked.
+     * @param verifierId The unique identifier of the verifier to stake MOCA for.
+     * @param amount The amount of MOCA to stake.
+     */
     function stakeMoca(bytes32 verifierId, uint256 amount) external {
-        // check if verifierId is valid + matches msg.sender
-        require(_verifiers[verifierId].assetAddress == msg.sender, "Verifier Id<->Address mismatch");
+        require(amount > 0, Errors.InvalidAmount());
+        
+        // check msg.sender is verifierId's asset address
+        require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
 
-        // update moca staked
-        _verifierMocaStaked[verifierId] += amount;
+        // STORAGE: update moca staked
+        _verifiers[verifierId].mocaStaked += amount;
+        TOTAL_MOCA_STAKED += amount;
 
         // transfer Moca to verifier
         IERC20(_addressBook.getMocaToken()).safeTransferFrom(msg.sender, address(this), amount);
 
-        emit Events.VerifierMocaStaked(verifierId, amount);
+        emit Events.VerifierMocaStaked(verifierId, assetAddress, amount);
     }
 
-    function unstakeMoca(bytes32 verifierId, uint256 amount) external {
-        // check if verifierId is valid + matches msg.sender
-        require(_verifiers[verifierId].assetAddress == msg.sender, "Verifier Id<->Address mismatch");
-        require(_verifierMocaStaked[verifierId] >= amount, "Insufficient moca staked");
 
-        // update moca staked
-        _verifierMocaStaked[verifierId] -= amount;
+    /**
+     * @notice Unstakes MOCA for a verifier.
+     * @dev Only callable by the verifier's asset address. Decreases the verifier's moca staked.
+     * @param verifierId The unique identifier of the verifier to unstake MOCA for.
+     * @param amount The amount of MOCA to unstake.
+     */
+    function unstakeMoca(bytes32 verifierId, uint256 amount) external {
+        require(amount > 0, Errors.InvalidAmount());
+
+        // check msg.sender is verifierId's asset address
+        require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
+
+        // check if verifier has enough moca staked
+        require(_verifiers[verifierId].mocaStaked >= amount, Errors.InvalidAmount());
+
+        // STORAGE: update moca staked
+        _verifiers[verifierId].mocaStaked -= amount;
+        TOTAL_MOCA_STAKED -= amount;
 
         // transfer Moca to verifier
         IERC20(_addressBook.getMocaToken()).safeTransfer(msg.sender, amount);
 
-        emit Events.VerifierMocaUnstaked(verifierId, amount);
+        emit Events.VerifierMocaUnstaked(verifierId, assetAddress, amount);
     }
 
 //-------------------------------updateAssetAddress: common to both issuer and verifier -----------------------------------------

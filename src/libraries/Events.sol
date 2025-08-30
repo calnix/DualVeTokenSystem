@@ -54,8 +54,8 @@ library Events {
     event VerifierDeposited(bytes32 indexed verifierId, address indexed assetAddress, uint256 amount);
     event VerifierWithdrew(bytes32 indexed verifierId, address indexed assetAddress, uint256 amount);
     // verifier: stakeMoca(), unstakeMoca()
-    event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);
-    event VerifierMocaUnstaked(bytes32 indexed verifierId, uint256 amount);
+    event VerifierMocaStaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
+    event VerifierMocaUnstaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
 
     event AssetAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
 

@@ -51,9 +51,13 @@ library DataTypes {
         address signerAddress;
         address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
 
+        // deposit, expenditure
         uint128 balance;
         uint128 totalExpenditure;
+        
+        // subsidy, mocaStaked
         uint128 totalSubsidies; //todo
+        uint128 mocaStaked;
     }
 
     struct Schema {
