@@ -16,6 +16,7 @@ import {Events} from "../libraries/Events.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Constants} from "../libraries/Constants.sol";
 import {EpochMath} from "../libraries/EpochMath.sol";
+import {DataTypes} from "../libraries/DataTypes.sol";
 
 // interfaces
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
@@ -30,123 +31,84 @@ contract PaymentsController is EIP712, Pausable {
     IAddressBook internal immutable _addressBook;
 
     // fees
-    uint256 private PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
-    uint256 private VOTER_FEE_PERCENTAGE;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    uint256 internal PROTOCOL_FEE_PERCENTAGE; // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    uint256 internal VOTER_FEE_PERCENTAGE;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
 
-    // issuer fee increase delay
-    uint256 private DELAY_PERIOD;            // in seconds
+    // issuer's fee increase delay | for schema
+    uint256 internal DELAY_PERIOD;            // in seconds
 
-    uint256 public isFrozen;
-
-    struct Issuer {
-        bytes32 issuerId;
-        address configAddress;     // for interacting w/ contract 
-        address wallet;            // for claiming fees 
-        
-        //uint128 stakedMoca;
-        
-        // credentials
-        uint128 totalIssuances; // incremented on each verification
-        
-        // USD8
-        uint128 totalEarned;
-        uint128 totalClaimed;
-    }
-
-    mapping(bytes32 issuerId => Issuer issuer) private _issuers;
-
-    struct Schema {
-        bytes32 schemaId;
-        bytes32 issuerId;
-        
-        // fees are expressed in USD8 terms
-        uint128 currentFee;
-        uint128 nextFee;
-        uint128 nextFeeTimestamp;       // could use epoch and epochMath?
-
-        // counts
-        uint128 totalVerified;
-        uint128 totalFeesAccrued;
-
-        // for VotingController
-        bytes32 poolId;
-    }
-
-    mapping(bytes32 schemaId => Schema schema) private _schemas;
-
-    struct Verifier {
-        bytes32 verifierId;
-        address signerAddress;
-        address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
-
-        uint128 balance;
-        uint128 totalExpenditure;
-        uint128 totalSubsidies; //todo
-    }
-
-    mapping(bytes32 verifierId => Verifier verifier) private _verifiers;
-    mapping(bytes32 verifierId => mapping(uint256 epoch => uint256 subsidy)) private _verifierSubsidies;
+    // risk management
+    uint256 internal _isFrozen;
 
 
-    bytes32 public constant TYPEHASH = keccak256("DeductBalance(bytes32 issuerId,bytes32 verifierId,bytes32 credentialId,uint256 amount,uint256 expiry,uint256 nonce)");
-    // nonces for preventing race conditions [ECDSA.sol::recover handles sig.mal]
-    mapping(address verifier => uint256 nonce) private _verifierNonces;
+//-------------------------------mappings-----------------------------------------------------
+    
+    // issuer, verifier, schema
+    mapping(bytes32 issuerId => DataTypes.Issuer issuer) internal _issuers;
+    mapping(bytes32 schemaId => DataTypes.Schema schema) internal _schemas;
+    mapping(bytes32 verifierId => DataTypes.Verifier verifier) internal _verifiers;
 
 
-    // verifier staking tiers
-    // admin fn will setup the tiers
-    mapping(uint256 mocaStaked => uint256 subsidyPercentage) private _verifiersStakingTiers;
-    mapping(bytes32 verifierId => uint256 mocaStaked) private _verifiersMocaStaked;
+    // nonces for preventing race conditions [ECDSA.sol::recover handles sig.malfunctions]
+    mapping(address verifier => uint256 nonce) internal _verifierNonces;
 
+
+    // verifier staking tiers | admin fn will setup the tiers
+    mapping(uint256 mocaStaked => uint256 subsidyPercentage) internal _verifiersStakingTiers;
+    mapping(bytes32 verifierId => uint256 mocaStaked) internal _verifiersMocaStaked;
+
+    // for VotingController: track subsidies for each verifier, per epoch | getVerifierAndPoolAccruedSubsidies()
+    mapping(bytes32 verifierId => mapping(uint256 epoch => uint256 subsidy)) internal _verifierSubsidies;
 
 //-------------------------------constructor-----------------------------------------
 
+    // name: PaymentsController, version: 1
     constructor(
-        uint256 protocolFeePercentage_, uint256 delayPeriod_,
+        address addressBook, uint256 protocolFeePercentage, uint256 voterFeePercentage, uint256 delayPeriod, 
         string memory name, string memory version) EIP712(name, version) {
 
-        // check if addresses are valid
-        //require(treasury_ != address(0), "Invalid treasury address");
-        //require(usd8_ != address(0), "Invalid USD8 address");
+        // check if addressBook is valid
+        require(addressBook != address(0), Errors.InvalidAddress());
+        _addressBook = IAddressBook(addressBook);
+      
+        // check if protocol fee percentage is valid
+        require(protocolFeePercentage < Constants.PRECISION_BASE, Errors.InvalidFeePercentage());
+        require(protocolFeePercentage > 0, Errors.InvalidFeePercentage());
+        PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
 
-        //USD8 = IERC20(usd8_);
-        //treasury = treasury_;
+        // check if voter fee percentage is valid
+        require(voterFeePercentage < Constants.PRECISION_BASE, Errors.InvalidFeePercentage());
+        require(voterFeePercentage > 0, Errors.InvalidFeePercentage());
+        VOTER_FEE_PERCENTAGE = voterFeePercentage;
 
-        require(protocolFeePercentage_ < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
-        require(protocolFeePercentage_ > 0, "Invalid protocol fee percentage");
-        PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage_;
-
-        require(delayPeriod_ > 0, "Invalid delay period");
-        DELAY_PERIOD = delayPeriod_;
-        
+        // min. delay period is 1 epoch; value must be in epoch intervals
+        require(delayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
+        require(EpochMath.isValidEpochTime(delayPeriod), Errors.InvalidDelayPeriod());
+        DELAY_PERIOD = delayPeriod;
     }
 
 //-------------------------------issuer functions-----------------------------------------
 
     // new issuer: generate issuerId
-    function setupIssuer(address wallet) external returns (bytes32) {
+    function setupIssuer(address assetAddress) external returns (bytes32) {
         
         // generate issuerId
         bytes32 issuerId;
         {
             uint256 salt = ++block.number; 
-            issuerId = _generateId(salt, msg.sender);
-            // If generated id is used by either issuer or verifier, generate new Id
-            while (_issuers[issuerId].issuerId != bytes32(0) || _verifiers[issuerId].verifierId != bytes32(0)) {
-                issuerId = _generateId(++salt, msg.sender); 
+            issuerId = _generateId(salt, msg.sender, assetAddress);
+            // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
+            while (_issuers[issuerId].issuerId != bytes32(0) || _verifiers[issuerId].verifierId != bytes32(0) || _schemas[issuerId].schemaId != bytes32(0)) {
+                issuerId = _generateId(++salt, msg.sender, assetAddress); 
             }
         }
 
-        // setup issuer
-        Issuer memory issuer;
-            issuer.issuerId = issuerId;
-            issuer.configAddress = msg.sender;
-            issuer.wallet = wallet;
+        // STORAGE: setup issuer
+        _issuers[issuerId].issuerId = issuerId;
+        _issuers[issuerId].adminAddress = msg.sender;
+        _issuers[issuerId].assetAddress = assetAddress;
         
-        // store issuer
-        _issuers[issuerId] = issuer;
-
-        // emit IssuerCreated(issuerId, msg.sender);
+        emit Events.IssuerCreated(issuerId, msg.sender, assetAddress);
 
         return issuerId;
     }
@@ -234,7 +196,7 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------verifier functions-----------------------------------------
 
-    function setupVerifier() external returns (bytes32) {
+    function setupVerifier(address signerAddress, address assetAddress) external returns (bytes32) {
         // generate verifierId
         bytes32 verifierId;
         {
@@ -249,7 +211,9 @@ contract PaymentsController is EIP712, Pausable {
         // setup verifier
         Verifier memory verifier;
             verifier.verifierId = verifierId;
-            verifier.wallet = msg.sender;
+            verifier.adminAddress = msg.sender;
+            verifier.signerAddress = signerAddress;
+            verifier.assetAddress = assetAddress;
 
         // store verifier
         _verifiers[verifierId] = verifier;
@@ -499,9 +463,15 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------internal functions-----------------------------------------
 
-    ///@dev Generate a issuerId. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
-    function _generateId(uint256 salt, address user) internal view returns (bytes32) {
-        return bytes32(keccak256(abi.encode(user, block.timestamp, salt)));
+    ///@dev Generate a issuer or verifier id. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
+    // adminAddress: msg.sender
+    function _generateId(uint256 salt, address adminAddress, address assetAddress) internal view returns (bytes32) {
+        return bytes32(keccak256(abi.encode(adminAddress, assetAddress, block.timestamp, salt)));
+    }
+
+
+    function _generateSchemaId(uint256 salt, bytes32 issuerId) internal view returns (bytes32) {
+        return bytes32(keccak256(abi.encode(issuerId, block.timestamp, salt)));
     }
 
 
