@@ -295,6 +295,8 @@ contract PaymentsController is EIP712, Pausable {
      * @param amount The amount of USD8 to withdraw.
      */
     function withdraw(bytes32 verifierId, uint256 amount) external {
+        require(amount > 0, Errors.InvalidAmount());
+
         // check msg.sender is verifierId's asset address
         require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
 
@@ -311,15 +313,25 @@ contract PaymentsController is EIP712, Pausable {
         IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, amount);
     }
 
-    // must be called from old signerAddress
+    /**
+     * @notice Updates the signer address for a verifier.
+     * @dev Only callable by the verifier's admin address. The new signer address must be non-zero and different from the current one.
+     * @param verifierId The unique identifier of the verifier.
+     * @param signerAddress The new signer address to set.
+     */
     function updateSignerAddress(bytes32 verifierId, address signerAddress) external {
-        // check if verifierId matches msg.sender
-        require(_verifiers[verifierId].signerAddress == msg.sender, "Verifier Id<->Address mismatch");
+        require(signerAddress != address(0), Errors.InvalidAddress());
+        
+        // check msg.sender is verifierId's admin address
+        require(_verifiers[verifierId].adminAddress == msg.sender, Errors.InvalidCaller());
+
+        // check if new signer address is different from current one
+        require(_verifiers[verifierId].signerAddress != signerAddress, Errors.InvalidAddress());
 
         // update signer address
         _verifiers[verifierId].signerAddress = signerAddress;
 
-        // emit SignerAddressUpdated(verifierId, signerAddress);
+        emit Events.VerifierSignerAddressUpdated(verifierId, signerAddress);
     }
 
 
