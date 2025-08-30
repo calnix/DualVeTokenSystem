@@ -196,17 +196,6 @@ contract PaymentsController is EIP712, Pausable {
         return newFee;
     }
 
-    //note: for issuers to change receiving payment address
-    function updateWalletAddress(bytes32 issuerId, address wallet) external {
-        // check if issuerId matches msg.sender
-        require(_issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
-
-        // update wallet address
-        _issuers[issuerId].wallet = wallet;
-
-        // emit WalletAddressUpdated(issuerId, wallet);
-    }
-
     function claimFees(bytes32 issuerId) external {
         // check if issuerId matches msg.sender
         require(_issuers[issuerId].wallet == msg.sender, "Issuer Id<->Address mismatch");
@@ -322,6 +311,39 @@ contract PaymentsController is EIP712, Pausable {
 
         emit Events.VerifierMocaUnstaked(verifierId, amount);
     }
+
+//-------------------------------updateAssetAddress: common to both issuer and verifier -----------------------------------------
+
+    /**
+     * @notice Generic function to update the asset address for either an issuer or a verifier.
+     * @dev Caller must be the admin of the provided ID. IDs are unique across types, preventing cross-updates.
+     * @param id The unique identifier (issuerId or verifierId).
+     * @param newAssetAddress The new asset address to set.
+     * @return newAssetAddress The updated asset address.
+     */
+    function updateAssetAddress(bytes32 id, address newAssetAddress) external returns (address) {
+        require(newAssetAddress != address(0), Errors.InvalidAddress());
+
+        if (_issuers[id].issuerId != bytes32(0)) {
+            
+            // Issuer update
+            require(_issuers[id].adminAddress == msg.sender, Errors.InvalidCaller());
+            _issuers[id].assetAddress = newAssetAddress;
+
+        } else if (_verifiers[id].verifierId != bytes32(0)) {
+
+            // Verifier update
+            require(_verifiers[id].adminAddress == msg.sender, Errors.InvalidCaller());
+            _verifiers[id].assetAddress = newAssetAddress;
+            
+        } else {
+            revert Errors.InvalidId();
+        }
+
+        emit Events.AssetAddressUpdated(id, newAssetAddress);
+        return newAssetAddress;
+    }
+
 
 //-------------------------------UniversalVerificationContract functions-----------------------------------------
 

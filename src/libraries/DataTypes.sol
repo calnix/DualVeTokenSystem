@@ -35,7 +35,7 @@ library DataTypes {
     struct Issuer {
         bytes32 issuerId;
         address adminAddress;       // for interacting w/ contract 
-        address assetAddress;        // for claiming fees 
+        address assetAddress;       // for claiming fees 
                 
         // credentials
         uint128 totalVerified; // incremented on each verification

@@ -50,6 +50,9 @@ library Events {
 
     event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);
     event VerifierMocaUnstaked(bytes32 indexed verifierId, uint256 amount);
+
+    event AssetAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
+
     event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
     event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);
     event DelayPeriodUpdated(uint256 delayPeriod);
