@@ -265,31 +265,47 @@ contract PaymentsController is EIP712, Pausable {
         return verifierId;
     }
 
-    function deposit(bytes32 verifierId, uint256 amount) external {
-        // check if verifierId is valid + matches msg.sender
-        require(_verifiers[verifierId].wallet == msg.sender, "Verifier Id<->Address mismatch");
 
-        // update balance
+    /**
+     * @notice Deposits USD8 into the verifier's balance.
+     * @dev Only callable by the verifier's asset address. Increases the verifier's balance.
+     * - Caller must match the verifier's asset address.
+     * @param verifierId The unique identifier of the verifier to deposit for.
+     * @param amount The amount of USD8 to deposit.
+     */
+    function deposit(bytes32 verifierId, uint256 amount) external {
+        // check msg.sender is verifierId's asset address
+        require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
+
+        // STORAGE: update balance
         _verifiers[verifierId].balance += amount;
 
-        // emit Deposit(verifierId, amount);
+        emit Events.VerifierDeposited(verifierId, msg.sender, assetAddress, amount);
 
         // transfer funds to verifier
         IERC20(_addressBook.getUSD8Token()).safeTransferFrom(msg.sender, address(this), amount);
     }
 
+
+    /**
+     * @notice Withdraws USD8 from the verifier's balance.
+     * @dev Only callable by the verifier's asset address. Decreases the verifier's balance.
+     * - Caller must match the verifier's asset address.
+     * @param verifierId The unique identifier of the verifier to withdraw from.
+     * @param amount The amount of USD8 to withdraw.
+     */
     function withdraw(bytes32 verifierId, uint256 amount) external {
-        // check if verifierId is valid + matches msg.sender
-        require(_verifiers[verifierId].wallet == msg.sender, "Verifier Id<->Address mismatch");
+        // check msg.sender is verifierId's asset address
+        require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
 
         // check if verifier has enough balance
         uint256 balance = _verifiers[verifierId].balance;
-        require(balance >= amount, "Insufficient balance");
+        require(balance >= amount, Errors.InvalidAmount());
 
-        // update balance
-        _verifiers[verifierId].balance = balance - amount;
+        // STORAGE: update balance
+        _verifiers[verifierId].balance -= amount;
 
-        // emit Withdraw(verifierId, amount);
+        emit Events.VerifierWithdrew(verifierId, msg.sender, assetAddress, amount);
 
         // transfer funds to verifier
         IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, amount);

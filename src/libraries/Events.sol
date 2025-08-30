@@ -50,6 +50,10 @@ library Events {
     // claimFees
     event IssuerFeesClaimed(bytes32 indexed issuerId, uint256 claimableFees);
 
+    // verifier: deposit(), withdraw()
+    event VerifierDeposited(bytes32 indexed verifierId, address indexed assetAddress, uint256 amount);
+    event VerifierWithdrew(bytes32 indexed verifierId, address indexed assetAddress, uint256 amount);
+    // verifier: stakeMoca(), unstakeMoca()
     event VerifierMocaStaked(bytes32 indexed verifierId, uint256 amount);
     event VerifierMocaUnstaked(bytes32 indexed verifierId, uint256 amount);
 
