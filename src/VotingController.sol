@@ -386,7 +386,6 @@ contract VotingController is Pausable {
 //-------------------------------voters: claiming rewards----------------------------------------------
 
 
-    //TODO: handle rewards, delegated votes
     // for veHolders tt voted get esMoca -> from verification fee split
     // vote at epoch:N, get the pool verification fees of the next epoch:N+1
     function claimRewards(uint256 epoch, bytes32[] calldata poolIds) external {
@@ -442,55 +441,57 @@ contract VotingController is Pausable {
     // user could have multiple delegates; must specify which delegate he is claiming from
     function claimRewardsFromDelegate(uint256 epoch, bytes32 poolId, address delegate) external {
         // sanity check: delegate
-        require(delegate > address(0), "Invalid address");
-        require(delegates[delegate].delegate == delegate, "Delegate not registered");
+        require(delegate > address(0), Errors.InvalidAddress());
+        require(delegates[delegate].isRegistered, Errors.DelegateNotRegistered());
 
         // sanity check: epoch | can claim on epochs from past till current
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(epoch <= currentEpoch, "Cannot claim rewards for future epochs");
+        require(epoch <= currentEpoch, Errors.FutureEpoch());
         //require(epochs[epoch].isFullyFinalized, "Epoch not finalized"); ---> if current, not required to be finalized, as rewards distributed weekly
 
-        //sanity check: pool
-        require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-        //require(pools[poolId].isActive, "Pool inactive"); 
-        //require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
+            //sanity check: pool
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            //require(pools[poolId].isActive, "Pool inactive");  ---> pool could be currently inactive but have unclaimed prior rewards 
+            //require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
 
-        // get pool's rewardsPerVote
-        uint256 latestRewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;
-        require(latestRewardsPerVote > 0, "No rewards per vote");     // either no deposit, or nothing earned
+            // get pool's rewardsPerVote | can increase on repeated calls of depositRewards(), for the same epoch
+            uint256 latestRewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;
+            require(latestRewardsPerVote > 0, Errors.NoRewardsToClaim());     // either no deposit made, or no fees accrued
 
-        // get delegate's allocation of voting power for this pool-epoch
-        uint256 delegatePoolVotes = delegateEpochPoolData[epoch][poolId][delegate].totalVotesSpent;
-        require(delegatePoolVotes > 0, "No votes in pool for this epoch");
-        // calc. delegate's share of the pool's rewards
-        uint256 delegatePoolRewards = delegatePoolVotes * latestRewardsPerVote;
+            // get delegate's votes for specified pool
+            uint256 delegatePoolVotes = delegateEpochPoolData[epoch][poolId][delegate].totalVotesSpent;
+            require(delegatePoolVotes > 0, "No votes in pool for this epoch");
+            // calc. delegate's new total pool rewards | increments when rewardsPerVote is incremented through depositRewards()
+            uint256 latestDelegatePoolRewards = delegatePoolVotes * latestRewardsPerVote;
 
-        // get portion of user's votes that were delegated to the delegate | user's endEpoch voting power
-        uint256 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(IAddressBook.getVotingEscrowMoca()).getDelegatedBalanceAtEpochEnd(msg.sender, delegate, epoch);
-        require(userVotesAllocatedToDelegateForEpoch > 0, "No votes allocated to delegate");
-
-        // calc. user's share of the delegate's rewards [latest rewards per vote]
-        uint256 delegateTotalVotes = delegateEpochData[epoch][delegate].totalVotesSpent;
-        uint256 userDelegatedRewardsForPool = userVotesAllocatedToDelegateForEpoch * delegatePoolRewards / delegateTotalVotes;
-
-        // calc claimable rewards 
-        uint256 newGrossClaimableRewards = userDelegatedRewardsForPool - userDelegateAccounting[epoch][msg.sender][delegate].totalClaimed;
-        require(newGrossClaimableRewards > 0, "No rewards to claim");
-        
-        uint256 delegateFee = newGrossClaimableRewards * delegates[delegate].currentFeePct / Constants.PRECISION_BASE;
-        uint256 newNetClaimableRewards = newGrossClaimableRewards - delegateFee;
-        require(newNetClaimableRewards > 0, "No rewards after fees to claim");      // wait for next weekly deposit to claim
+            // get user's delegated votes, for this delegate | user's endEpoch voting power
+            uint256 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(IAddressBook.getVotingEscrowMoca()).getDelegatedBalanceAtEpochEnd(msg.sender, epoch, true);
+            require(userVotesAllocatedToDelegateForEpoch > 0, Errors.NoVotesAllocatedToDelegate());
 
 
-        // book user's incoming rewards
-        userDelegateAccounting[epoch][msg.sender][delegate].totalClaimed += newNetClaimableRewards;
-        //book delegate's incoming commission + rewards earned for delegation
-        delegates[delegate].totalCommissions += delegateFee;
-        delegates[delegate].totalRewards += newGrossClaimableRewards;
+            // calc. user's new total rewards, from delegating to the delegate [latest rewards per vote]
+            uint256 delegateTotalVotesForEpoch = delegateEpochData[epoch][delegate].totalVotesSpent;
+            uint256 userDelegatedRewardsForPool = userVotesAllocatedToDelegateForEpoch * latestDelegatePoolRewards / delegateTotalVotesForEpoch;
 
-        // transfer esMoca to user
-        // note: must whitelist this contract for transfers
-        esMOCA.transfer(msg.sender, newNetClaimableRewards);
+            // calc. latest claimable rewards 
+            uint256 newGrossClaimableRewards  = userDelegatedRewardsForPool - userDelegateAccounting[epoch][msg.sender][delegate].totalClaimed;
+            require(newGrossClaimableRewards  > 0, "No rewards to claim");
+
+            // calc. delegate's fee
+            uint256 delegateFee = newGrossClaimableRewards * delegates[delegate].currentFeePct / Constants.PRECISION_BASE;
+            uint256 newNetClaimableRewards = newGrossClaimableRewards  - delegateFee;   // fee would be reounded down
+            require(newNetClaimableRewards > 0, "No rewards after fees to claim");      // wait for next weekly deposit to claim
+
+
+            // book user's incoming rewards
+            userDelegateAccounting[epoch][msg.sender][delegate].totalClaimed += newNetClaimableRewards;
+            //book delegate's incoming commission + rewards earned for delegation
+            delegates[delegate].totalCommissions += delegateFee;
+            delegates[delegate].totalRewards += newGrossClaimableRewards;
+
+            // transfer esMoca to user
+            // note: must whitelist this contract for transfers
+            esMOCA.transfer(msg.sender, newNetClaimableRewards);
 
         // emit
         //emit Claimed(msg.sender, epoch, poolId, claimableRewards);

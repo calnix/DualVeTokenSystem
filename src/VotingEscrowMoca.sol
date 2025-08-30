@@ -29,6 +29,13 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
  *      - This contract supports delegation, historical checkpointing, and integration with protocol governance.
 */
 
+
+/** NOTE
+    - operates on eTime as timestamp
+    - some fns call mappings via epochEndTimestamp or epochStartTimestamp
+    - make sure that the timestamp is correct: start/end of epoch; inclusive, exclusive (<= or <)
+ */
+
 contract VotingEscrowMoca is ERC20, Pausable {
         using SafeERC20 for IERC20;
 
@@ -75,7 +82,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // delegatedAggregationHistory tracks how much veBalance a user has delegated out
         // Used by VotingController to determine users' share of rewards from delegates
         // handover aggregation | aggregated delegated veBalance
-        mapping(address user => mapping(address delegate => mapping(uint256 epoch => DataTypes.VeBalance veBalance))) public delegatedAggregationHistory; 
+        mapping(address user => mapping(address delegate => mapping(uint256 eTime => DataTypes.VeBalance veBalance))) public delegatedAggregationHistory; 
 
 
     //-------------------------------constructor-------------------------------------------------
@@ -1082,13 +1089,21 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _getValueAt(veBalance, time);
         }
 
-        // note: used by VotingController
-        function balanceAtEpochEnd(address user, uint256 epochEndTime, bool forDelegated) external view returns (uint256) {
-            // get the appropriate veBalance at that epoch boundary
+        // epoch: epoch Number
+        function balanceAtEpochEnd(address user, uint256 epoch, bool forDelegated) external view returns (uint256) {
+            uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
+            
+            // get the appropriate veBalance at that epoch boundary | note: is epochEndTime inclusive?
             DataTypes.VeBalance memory veBalance = forDelegated ? delegateHistory[user][epochEndTime] : userHistory[user][epochEndTime];
             
             // calc. voting power at the exact timestamp using the veBalance from the closest past epoch boundary
             return _getValueAt(veBalance, epochEndTime);
+        }
+
+        // note: used by VotingController.claimRewardsFromDelegate()
+        function getDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
+            uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
+            return delegatedAggregationHistory[user][delegate][epochEndTime];
         }
 
 
