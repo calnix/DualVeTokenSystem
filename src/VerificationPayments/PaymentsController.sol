@@ -71,9 +71,6 @@ contract PaymentsController is EIP712, Pausable {
     mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) private _epochPoolSubsidies;        // totalSubsidiesPerPoolPerEpoch
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) private _epochPoolVerifierSubsidies;        // totalSubsidiesPerPoolPerEpochPerVerifier
     
-    //@follow-up totalSubsidiesPerPoolPerEpochPerSchema -- do we need this? | tracks what portion of a pool's subsidy is attributed to a schema
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 schemaId => uint256 schemaTotalSubsidies))) private _epochPoolSchemaSubsidies;
-
     // for VotingController.claimRewards()
     mapping(uint256 epoch => mapping(bytes32 poolId => FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
@@ -460,7 +457,6 @@ contract PaymentsController is EIP712, Pausable {
 
         // ---- try: so that fee updates occur regardless of subsequent revert ---
 
-
         // amount must match latest schema fee [set by issuer]
         uint256 schemaFee = _schemas[schemaId].currentFee;
         require(amount == schemaFee, Errors.InvalidSchemaFee());
@@ -487,29 +483,27 @@ contract PaymentsController is EIP712, Pausable {
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
 
         // ----- Book subsidy & fees (voting rewards) if poolId is set -----
-        uint256 subsidy;
         bytes32 poolId = _schemas[schemaId].poolId;
         if (poolId != bytes32(0)) {
             // for VotingController.claimSubsidies(): which calls getVerifierAndPoolAccruedSubsidies() on this contract
-            subsidy = _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
+            _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
         }
 
         // ---------------------------------------------------------------------
 
-        // issuer accounting
-        _issuers[issuerId].totalFeesAccrued += (amount - protocolFee - votingFee);  //total net fees?
+        // issuer: global accounting
+        _issuers[issuerId].totalNetFeesAccrued += (amount - protocolFee - votingFee);  
         ++_issuers[issuerId].totalVerified;
 
-        // verifier accounting
+        // verifier: global accounting
         _verifiers[verifierId].currentBalance -= amount;
         _verifiers[verifierId].totalExpenditure += amount;
-        _verifiers[verifierId].totalSubsidiesAccrued += subsidy;
 
-        // schema accounting
-        _schemas[schemaId].totalFeesAccrued += amount;
+        // schema: global accounting
+        _schemas[schemaId].totalGrossFeesAccrued += amount;     // disregards protocol and voting fees
         ++_schemas[schemaId].totalVerified;
         
-        // protocol + voting fees accounting
+        // protocol + voting fees accounting | to enable withdrawal of fees at the end of an epoch
         _epochFeesAccrued[currentEpoch].feesAccruedToProtocol += protocolFee;
         _epochFeesAccrued[currentEpoch].feesAccruedToVoters += votingFee;  
 
@@ -518,26 +512,11 @@ contract PaymentsController is EIP712, Pausable {
         _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToProtocol += protocolFee;
         _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToVoters += votingFee;
 
-
-        //note: not needed; drop to reduce storage updates
-        //_epochSchemaFeesAccrued[currentEpoch][schemaId].feesAccruedToProtocol = protocolFee;
-        //_epochSchemaFeesAccrued[currentEpoch][schemaId].feesAccruedToVoters = votingFee;
-
-        // ---------------------------------------------------------------------
-
-            //TODO: do you want to call VotingController to update accrued fees?
-            // -> NO. i don't want PaymentsController to have external call dependencies to other contracts.
-            // -> may create problems when upgrading to new contracts. 
-            // -> PaymentsController should be silo-ed off as much as possible. Other contracts can call this if needed.
-
-            // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
-            // do we need more events for the other accounting actions?
-
-            // emit BalanceDeducted(verifierId, credentialId, issuerId, amount);
+        emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
     }
 
     // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
-    function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint256 amount, uint256 currentEpoch) internal returns (uint256) {
+    function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint256 amount, uint256 currentEpoch) internal {
         // get verifier's staking tier + subsidy percentage
         uint256 mocaStaked = _verifiers[verifierId].mocaStaked;
         uint256 subsidyPercentage = _verifiersStakingTiers[mocaStaked];
@@ -550,11 +529,8 @@ contract PaymentsController is EIP712, Pausable {
         // book verifier's subsidy
         _epochPoolSubsidies[currentEpoch][poolId] += subsidy;
         _epochPoolVerifierSubsidies[currentEpoch][poolId][verifierId] += subsidy;
-        _epochPoolSchemaSubsidies[currentEpoch][poolId][schemaId] += subsidy;  // @follow-up not used; only for completeness. drop?
 
         emit Events.SubsidyBooked(verifierId, poolId, schemaId, subsidy);
-
-        return subsidy;
     }
  
 //-------------------------------internal functions-----------------------------------------

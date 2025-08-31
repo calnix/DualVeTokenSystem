@@ -184,6 +184,14 @@ Also note that the signature expects a nonce as replay protection.
 ---
 ---
 
+## Integration with VotingController
+
+**Should PaymentsController call VotingController to update accrued rewards/subsidies/fees?**
+- No
+- don't want PaymentsController to have external call dependencies to other contracts.
+- may create problems when upgrading to new contracts. 
+- PaymentsController should be silo-ed off as much as possible. Other contracts can call this if needed.
+
 # Questions
 
 1. Block/blacklist issuer/verifiers?

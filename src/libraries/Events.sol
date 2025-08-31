@@ -51,24 +51,28 @@ library Events {
     // claimFees
     event IssuerFeesClaimed(bytes32 indexed issuerId, uint256 claimableFees);
 
-    // verifier: deposit(), withdraw()
+    // verifier: deposit(), withdraw(), stakeMoca(), unstakeMoca()
     event VerifierDeposited(bytes32 indexed verifierId, address indexed assetAddress, uint256 amount);
     event VerifierWithdrew(bytes32 indexed verifierId, address indexed assetAddress, uint256 amount);
-    // verifier: stakeMoca(), unstakeMoca()
     event VerifierMocaStaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
     event VerifierMocaUnstaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
-
+    // updateAssetAddress
     event AssetAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
-
+    
+    // deductBalance()
     event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
+    event BalanceDeducted(bytes32 indexed verifierId, bytes32 indexed schemaId, bytes32 indexed issuerId, uint256 amount);
+    // admin update fns
     event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);
     event DelayPeriodUpdated(uint256 delayPeriod);
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VoterFeePercentageUpdated(uint256 voterFeePercentage);
     event VerifierStakingTierUpdated(uint256 stakingTier, uint256 stakingAmount);
+    
     // withdrawProtocolFees
     event ProtocolFeesWithdrawn(uint256 epoch, uint256 protocolFees);
 
+    // emergencyExit
     event EmergencyExitIssuers(bytes32[] issuerIds);
     event EmergencyExitVerifiers(bytes32[] verifierIds);
 

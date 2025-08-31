@@ -41,7 +41,7 @@ library DataTypes {
         uint128 totalVerified; // incremented on each verification
         
         // USD8 | 6dp precision
-        uint128 totalFeesAccrued;
+        uint128 totalNetFeesAccrued;    // net of protocol and voter fees
         uint128 totalClaimed;
     }
 
@@ -50,16 +50,14 @@ library DataTypes {
         address adminAddress;
         address signerAddress;
         address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
-        
+
+        // MOCA | 18 dp precision
+        uint128 mocaStaked;
         // USD8 | 6dp precision
         uint128 currentBalance;
 
-        // counts: never decremented
+        // count: never decremented
         uint128 totalExpenditure;           
-        uint128 totalSubsidiesAccrued;      
-
-        // subsidy, mocaStaked
-        uint128 mocaStaked;
     }
 
     struct Schema {
@@ -73,7 +71,7 @@ library DataTypes {
 
         // counts: never decremented
         uint128 totalVerified;
-        uint128 totalFeesAccrued;           
+        uint128 totalGrossFeesAccrued;            // disregards protocol and voting fees
 
         // for VotingController
         bytes32 poolId;
