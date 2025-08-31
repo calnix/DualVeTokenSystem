@@ -43,7 +43,7 @@ contract VotingController is Pausable {
     
     
     // epoch: overview
-    struct EpochData {
+    struct Epoch {
         uint128 epochStart;
         uint128 totalVotes;
         
@@ -64,11 +64,10 @@ contract VotingController is Pausable {
         bool isActive;        // active+inactive: pause pool
         //bool isWhitelisted;   // whitelist+blacklist
 
-        // note: newly added        
-        uint128 totalRewards;           // manually deposited weekly, at minimum 
+        uint128 totalRewards;           // depositRewardsForEpoch(), at epoch end | esMoca
 
         // global metrics
-        uint128 totalVotes;             // how many votes pool accrued throughout all epochs
+        uint128 totalVotes;             // total votes pool accrued throughout all epochs
         uint128 totalSubsidies;         // allocated esMOCA subsidies: based on EpochData.subsidyPerVote
         uint128 totalClaimed;           // total esMOCA subsidies claimed; for both base and bonus subsidies
     }
@@ -78,8 +77,8 @@ contract VotingController is Pausable {
     struct PoolEpoch {
         // voter data
         uint128 totalVotes;
-        uint128 totalRewards;           // manually deposited weekly, at minimum 
-        uint128 rewardsPerVote;         // verification fees per vote | get totol poolFees frm OmPm
+        uint128 totalRewards;           // depositRewardsForEpoch(), at epoch end | esMoca
+        uint128 rewardsPerVote;         // depositRewardsForEpoch(), at epoch end | esMoca
 
         // verifier data
         uint128 totalSubsidies;        // allocated esMoca subsidies: based on EpochData.subsidyPerVote
@@ -118,8 +117,8 @@ contract VotingController is Pausable {
 //-------------------------------mapping------------------------------------------
 
     // epoch data
-    mapping(uint256 epoch => EpochData epochData) public epochs;    //note: does it help to use uint128 instead of uint256?
-
+    mapping(uint256 epoch => Epoch epoch) public epochs;    
+    
     // pool data
     mapping(bytes32 poolId => Pool pool) public pools;
     mapping(uint256 epoch => mapping(bytes32 poolId => PoolEpoch poolEpoch)) public epochPools;
@@ -391,10 +390,9 @@ contract VotingController is Pausable {
     function claimRewards(uint256 epoch, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, Errors.InvalidArray());
 
-        // sanity check: epoch; can claim on epochs from past till current
+        // sanity check: epoch | can only claim for ended epochs
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(epoch <= currentEpoch, Errors.FutureEpoch());
-        //require(epochs[epoch].isFullyFinalized, "Epoch not finalized"); ---> if current, not required to be finalized, as rewards distributed weekly
+        require(epoch < currentEpoch, Errors.InvalidEpoch());
 
         uint256 totalClaimableRewards;
         for(uint256 i; i < poolIds.length; ++i) {
@@ -435,6 +433,7 @@ contract VotingController is Pausable {
 
         emit Events.RewardsClaimed(msg.sender, epoch, poolIds, totalClaimableRewards);
     }
+
 
     //TODO:
     // user claims rewards on votes tt were delegated to a delegate
@@ -528,8 +527,10 @@ contract VotingController is Pausable {
                 // reverts if msg.sender is not the verifier's asset address
                 = IPaymentsController(IAddressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifierId, msg.sender);
             
-            // calculate subsidy receivable
-            uint256 subsidyReceivable = (verifierAccruedSubsidies * poolAllocatedSubsidies) / poolAccruedSubsidies;
+            // calculate subsidy receivable 
+            // verifierAccruedSubsidies & poolAccruedSubsidies (USD8), 1e6 precision | poolAllocatedSubsidies (esMOCA), 1e18 precision
+            // subsidyReceivable (esMOCA), 1e18 precision
+            uint256 subsidyReceivable = (verifierAccruedSubsidies * poolAllocatedSubsidies) / poolAccruedSubsidies;  // @follow-up : is Math.muldiv required here for potential overflow?
             require(subsidyReceivable > 0, Errors.NoSubsidiesToClaim());
 
             totalSubsidiesClaimed += subsidyReceivable;
@@ -617,6 +618,86 @@ contract VotingController is Pausable {
         }
     }
 
+    // rewards are referenced from PaymentsController
+    // subsidy is referenced from epochs[epoch].totalSubsidies | set by admin at the start
+    function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint256[] calldata rewards) external onlyVotingControllerAdmin {
+        require(poolIds.length > 0, Errors.InvalidArray());
+        require(poolIds.length == rewards.length, Errors.MismatchedArrayLengths());
+
+        // sanity check: epoch must not be finalized
+        EpochData storage epochPtr = epochs[epoch];
+        require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
+
+        // sanity check: epoch must have ended
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        require(epoch < currentEpoch, Errors.EpochNotEnded());
+
+        // only need to calc. subsidy per vote on 1st call 
+        uint256 subsidyPerVote;
+        if(epochPtr.subsidyPerVote == 0) {
+            // there are subsidies allocated to this epoch
+            if(epochPtr.totalSubsidies > 0) {
+            
+                // subsidies (esMoca) & votes(veMoca) are 1e18 precision 
+                subsidyPerVote = (epochPtr.totalSubsidies * 1e18) / epochPtr.totalVotes;    // if totalVotes is 0, reverts on division by 0
+                
+                // @follow-up subsidies allocated; but rounded to zero | admin should deploy more subsidies; since tt was the initial intention
+                require(subsidyPerVote > 0, Errors.SubsidyPerVoteZero());                     
+
+                epochPtr.subsidyPerVote = subsidyPerVote;
+                emit Events.EpochSubsidyPerVoteSet(epoch, subsidyPerVote);
+            }
+
+            // else: subsidyPerVote remains 0
+        }
+        
+        // ---- at this point subsidyPerVote could be 0 ----
+
+        uint256 totalAmount;
+        for (uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            uint256 poolRewards = rewards[i];
+
+            // sanity check: pool + rewards
+            require(poolRewards > 0, Errors.InvalidAmount());
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+
+
+        }
+
+
+
+        // cac. pool subsidies for each pool
+        if(subsidyPerVote > 0) {
+
+            // subsidies (esMoca) & votes(veMoca) are 1e18 precision 
+            for (uint256 i; i < poolIds.length; ++i) {
+                bytes32 poolId = poolIds[i];
+                uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
+
+                if (poolVotes > 0) {
+                    uint256 poolSubsidies = (poolVotes * subsidyPerVote) / 1e18;
+                    
+                    // STORAGE: pool epoch + pool global
+                    epochPools[epoch][poolId].totalSubsidies = poolSubsidies;
+                    pools[poolId].totalSubsidies += poolSubsidies;
+                }
+            }
+        }
+
+        emit Events.EpochPartiallyFinalized(epoch, poolIds);
+
+        // STORAGE: increment count of pools finalized
+        epochData.poolsFinalized += uint128(poolIds.length);
+
+        // check if epoch is fully finalized
+        if(epochData.poolsFinalized == TOTAL_NUMBER_OF_POOLS) {
+            epochData.isFullyFinalized = true;
+            emit Events.EpochFullyFinalized(epoch);
+        }
+    }
+
+
     // to be called at the end of an epoch
     // subsidies for verifiers, for an epoch. to be distributed amongst pools based on votes
     // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
@@ -687,62 +768,52 @@ contract VotingController is Pausable {
 //-------------------------------admin: deposit voting rewards-----------------------------------------
 
     /** deposit rewards for a pool
-        - a pool is a thematic collection of schemas
-        - PaymentsController cannot track which schemas belong to which pool; therefore it cannot aggregate rewards for a pool
-        - therefore, we will refer to PaymentsController.getPoolVotersFeesAccrued(uint256 epoch, bytes32 poolId), and aggregate manually
-        - then deposit the total aggregated rewards to the pool for that epoch
+        - rewards are deposited in esMoca; 
+        - so cannot reference PaymentsController to get each pool's rewards
+        - since PaymentsController tracks feesAccruedToVoters in USD8 terms
         
-        Since we wish to distribute rewards on an adhoc basis, we opt not to reference PaymentsController to get the rewards for each pool.
-        The automated approach would require depositRewards() to be executed once, preferably at the end of an epoch, nested within finalizeEpoch().
-        
-        For rewards distribution on an ad-hoc basis, depositRewards() will be called repeatedly.
-        - this means that the total rewards for a pool must be overwritten; not incremented
-
+        Process:
+        1. manually reference PaymentsController.getPoolVotingFeesAccrued(uint256 epoch, bytes32 poolId)
+        2. withdraw that amount, convert to esMoca [off-chain]
+        3. deposit the total esMoca to the 
     */
     ///@dev update pool's PoolEpoch.totalRewards and PoolEpoch.rewardsPerVote
-    function depositRewards(uint256 epoch, bytes32[] calldata poolIds) external onlyVotingControllerAdmin {
+    function depositRewardsForEpoch(uint256 epoch, bytes32[] calldata poolIds, uint256[] calldata amounts) external onlyVotingControllerAdmin {
         require(poolIds.length > 0, Errors.InvalidArray());
-        
-        // sanity check: epoch | can deposit on epochs from past till current | can deposit on current epoch 
-        // cannot deposit for future, since no verification txns have occurred yet
+        require(poolIds.length == amounts.length, Errors.MismatchedArrayLengths());
+
+        // sanity check: epoch | can only deposit for ended epochs
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(epoch <= currentEpoch, Errors.FutureEpoch());
+        require(epoch < currentEpoch, Errors.InvalidEpoch());
 
         uint256 totalAmount;
         for(uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
-        
+            uint256 amount = amounts[i];
+
+            require(amount > 0, Errors.InvalidAmount());
+
             // sanity checks: pool
             require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            //require(pools[poolId].isWhitelisted, "Pool is not whitelisted"); ---> ? for past pools what is the treatment?
 
-            // get pool's latest total rewards/feesAccruedToVoters
-            uint256 latestPoolTotalRewards = IPaymentsController(IAddressBook.getPaymentsController()).getPoolVotingFeesAccrued(epoch, poolId);
-
-            // check: fees must have incremented from when this function was last called; for the same epoch
-            uint256 incomingRewards = latestPoolTotalRewards - epochPools[epoch][poolId].totalRewards;
-            require(incomingRewards > 0, Errors.NoRewardsAccrued());
-
-            // overwrite pool's total rewards
-            epochPools[epoch][poolId].totalRewards = latestPoolTotalRewards;
-
-            /** overwrite pool's rewardsPerVote
-                if epochPools[epoch][poolId].totalVotes is 0, reverts; no need to check for 0
-                latestPoolTotalRewards is always > 0, due to (incomingRewards > 0) check
-
-                both rewards(esMoca) and totalVotes(veMoca) are expressed in 1e18
+            /** update pool's rewardsPerVote:
+                - no need to check if totalVotes > 0 | txn reverts if totalVotes == 0
+                - both rewards(esMoca) and totalVotes(veMoca) are expressed in 1e18 precision
             */
-            uint256 rewardsPerVote = latestPoolTotalRewards * 1E18 / epochPools[epoch][poolId].totalVotes;
+            uint256 rewardsPerVote = amount * 1E18 / epochPools[epoch][poolId].totalVotes;
+            // note: pool has rewards, but no votes, 
+        
+            // STORAGE: update epoch-pool & pool global
             epochPools[epoch][poolId].rewardsPerVote = rewardsPerVote;
-            
-            totalAmount += incomingRewards;
-                        
-            emit Events.RewardsPerVoteUpdated(epoch, poolId, rewardsPerVote);
+            epochPools[epoch][poolId].totalRewards += amount;
+            pools[poolId].totalRewards += amount;
+           
+            totalAmount += amount;
         }
     
         emit Events.RewardsDeposited(epoch, poolIds, totalAmount);
 
-        // deposit esMoca to voting contract
+        // deposit esMoca | TODO: whitelist VotingController on esMoca
         _esMoca().transferFrom(msg.sender, address(this), totalAmount);
     }
 

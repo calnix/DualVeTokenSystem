@@ -26,7 +26,6 @@ library Errors {
     error InvalidSchemaFee();
     error InsufficientBalance();
     error InvalidSignature();
-    error ZeroSubsidy();
     error ZeroProtocolFee();
     error ProtocolFeeAlreadyWithdrawn();
     error VotersFeeAlreadyWithdrawn();

@@ -69,20 +69,29 @@ On VotingController, when an epoch ends:
 - voters receive rewards, as esMoca
 - rewards are based upon verification fees
  
-
 Voters vote on credential pools in Epoch N: 
 - Voting rewards would be a portion of verification fees in the next epoch, **Epoch N+1**
 - Voting is taking a bet on the future
-- Verification fees will likely be distributed on a weekly basis. 
 - *Verification fees in Epoch N+1 will be rewarded to them at the **end of Epoch N+1; once the epoch is finalized***
+- userPoolVotes / totalPoolVotes * poolRewards
 
 ***Note:***
-
-- *Voters cannot claim fees as they come in, mid-way through the Epoch*
 - *Voters can claim fees proportion to their votes [in Epoch N], at the end of Epoch N+1.*
 
+**PROCESS:**
+0. withdraw USD8 from `PaymentsController._epochFeesAccrued[currentEpoch]`; convert to esMoca 
+1. depositRewardsForEpoch() -> sets `rewardsPerVote` for each pool
+2. users can call `claimRewards()`
 
 ---
+
+# TO-FIX
+
+0. redo so tt rewards are epoch locked, not adhoc
+
+1. claimRewards + claimRewardsDelegate
+
+
 
 # Others
 

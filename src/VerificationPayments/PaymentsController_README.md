@@ -111,6 +111,12 @@ When `setupSchema` is called, it's purpose is two-fold:
 
 Thereafter, the `schemaId` is used to track fees accrued from verifications and number of issuances. 
 
+### Other issuer functions:
+
+- `updateFee`
+- `updateWalletAddress`
+- `claimFees`
+
 ---
 
 # Schemas and Voting
@@ -124,13 +130,6 @@ The schema struct contains `bytes32 poolId`, to associate a schema with a voting
 > VotingController has no visibility of which schemas are associated to its pools. 
 > Voter rewards [cut of verification fees] will be checked on PaymentsController.sol, then deposited to their respective pools 
 
-### Other issuer functions:
-
-- `updateFee`
-- `updateWalletAddress`
-- `claimFees`
-
-*is functionality to allow issuers to deactivate a credential needed?*
 
 ## Verifier and related processes 
 
@@ -175,21 +174,68 @@ Similar to the issuer, a separation of roles between signing and asset managemen
 - `updateSignerAddress`
 - `deductBalance`
 
-## Integration with Universal verifier contract
+## deductBalance(): Integration with Universal verifier contract
 
-Verifier contract should call `deductBalance()`, passing the following as input:
+Verifier contract will call `deductBalance()`, passing the following as inputs:
 
 ```solidity
-    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 amount, uint256 expiry, bytes calldata signature){...}
+    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature){...}
 ```
-- all ids are to be passed as assigned by the payments contract, for the correct storage referencing and calculations
 - amount is the fee deductible
 - expiry is the expiry of signature
 
-Also note that the signature expects a nonce as replay protection.
+**deductBalance process:**
 
+1. nextFee check: checks if the schema has an incoming fee increment; if so, updates currentFee to nextFee. nextFee will apply for this txn.
+2. checks that `amount` matches the schema fee exactly; else reverts.
+3. checks that verifier has sufficient USD8 balance on the contract to pay for verification
+4. verifies signature provided; to ensure that the verifier did indeed sign-off on this verification request
+5. updates verifier nonce 
+6. calculates `votingFee` and `protocolFee` based on `amount`
+7. checks if schema has a non-zero `poolId` tag; if it does, `_bookSubsidy()` is executed:
+    - gets subsidyPct for the verifier, based on his MOCA staked 
+    - calc. subsidy applicable [could be 0]
+    - if non-zero subsidy, book subsidy accrued -> `_epochPoolSubsidies` & `_epochPoolVerifierSubsidies`
+    - if 0 subsidy -> skip
+    - Increment protocol & voting fees, for the pool associated w/ this schema: `_epochPoolFeesAccrued:{feesAccruedToVoters,feesAccruedToProtocol}`
+    - `_epochPoolFeesAccrued` mapping is needed to track how much `USD8` was accrued to each pool
+    - referencing this value, to know how much `esMoca` to deposit per pool via `VotingController.depositRewards(uint256 epoch, bytes32[] calldata poolIds)`
+
+8. Update all global states for: issuer, verifier, schemas
+    - issuer: .totalNetFeesAccrued++, totalVerified++
+    - verifier: .currentBalance--, totalExpenditure++
+    - schema:  .totalGrossFeesAccrued++, totalVerified++
+9.  Increment protocol & voting fees accrued for this epoch: `_epochFeesAccrued[currentEpoch]` updated: `.feesAccruedToProtocol` & `.feesAccruedToVoters` 
+    - this mapping is required to track and enable accurate withdrawal of both fees [USD8], at the end of epoch.
+    - fees would then be converted to `esMoca`
+
+> **Crucial to keep this function as lightweight as possible, to ensure sensible gas costs, esp. during high network usage**
 
 ---
+
+## Handling Subsidies
+
+- For each epoch, verifier receives subsidies based on: `(verifierAccruedSubsidies / poolAccruedSubsidies) * poolAllocatedSubsidies`
+- TotalSubsidies to be distributed across pools for an epoch is decided by the protocol [can be set at the start or end on `VotingController.setEpochSubsidies()`]
+- subsidies are distributed proportionally based on the votes each pool receives -> `poolAllocatedSubsidies` [`VotingController.finalizeEpoch()`]
+- a pool's allocated subsidies is then distributed amongst the verifiers proportionally, per the weight: `verifierAccruedSubsidies / poolAccruedSubsidies`
+- where `verifierAccruedSubsidies` => total subsidies accrued based on their verification fee expenditure, for that specific pool
+- where `poolAccruedSubsidies` => the sum total of subsidies accrued by all verifiers, in that pool [*schema group*]
+
+Hence, the need for PaymentsController to have mappings: `_epochPoolSubsidies` & `_epochPoolVerifierSubsidies`; which are updated in `deductBalance`
+`VotingController.claimSubsidies()` will reference these values for calculating verifier subsidies, by calling `PaymentsController.getVerifierAndPoolAccruedSubsidies()`
+
+> **VotingController.claimSubsidies()` will handle the precision differential when calculating verifier weighted subsidies**
+
+## Handling Voter Rewards [Voting Fee]
+
+- voters receive rewards, financed by the `VOTING_FEE_PERCENTAGE` cut from total verification fees accrued for that epoch
+- rewards are distributed to voters based on which pools they voted on, and what that pool accrued `feesAccruedToVoters`
+- `userVotes/PoolTotalVotes` * `feesAccruedToVoters`
+- hence we need to track `feesAccruedToVoters` on a per pool basis in PaymentsController => `_epochPoolFeesAccrued` mapping
+
+>**The VotingController does not call PaymentsController directly, as we need to swap USD8 for esMoca**
+
 ---
 
 ## Integration with VotingController
