@@ -8,49 +8,55 @@
 
 ## Issuers
 
+All new issuers must create their on-chain profile on the contract to receive a unique identifying code: `issuerId`
+
 **Onboarding Flow:**
 
-1. New Issuer calls `setupIssuer`
-2. Subsequently, call `setupSchema`, defining verification fee
+1. New Issuer calls `createIssuer`
+2. Subsequently, call `setupSchema`; which creates a schema[will have unique id: `schemaId`] and setting its verification fee
 3. Repeat step 2 as required
 
-**Explanation**
+### 1. createIssuer()
+
+`function createIssuer(address assetAddress) external returns (bytes32)`
+- returns issuerId, for better integration with middleware translation layer.
 
 The following struct defines the on-chain attributes of an issuer:
 
 ```solidity
     struct Issuer {
         bytes32 issuerId;
-        address configAddress;     // for interacting w/ contract 
-        address wallet;            // for claiming fees 
-        
-        //uint128 stakedMoca;
-        
+        address adminAddress;            // for interacting w/ contract 
+        address assetAddress;            // for claiming fees 
+                
         // credentials
-        uint128 totalIssuances; // incremented on each verification
+        uint128 totalVerified;          // incremented on each verification
         
-        // USD8
-        uint128 totalEarned;
+        // USD8 | 6dp precision
+        uint128 totalNetFeesAccrued;    // net of protocol and voter fees
         uint128 totalClaimed;
     }
 ```
 
-A new issuer is required to call `setupIssuer`, wherein which a random bytes32 id will be generated for them.
+- `issuerId` will be a random unique bytes32 id
+- `adminAddress` = `msg.sender`
+- `assetAddress` = `assetAddress`;
 
-```solidity
-function setupIssuer(address wallet) external returns (bytes32)
-```
-
-- expected to specify `wallet` - which is address to which fees will be claimable to.
-- `configAddress` will be set to `msg.sender`
+The `assetAddress` will be "wallet", to which issuers would claim their accrued fees.
+The `adminAddress` will be the "owner" account through which the issuer will interact with the contract to createSchema, set/update fees, update addresses.
 
 **The necessity for an issuer id on-chain:**
 
-- allows issuers to switch config addresses
+- allows issuers to switch admin addresses
 - allows issuers to switch fee claim wallet address
 - allows issuers to silo access control between an address that is used to handle configurations, and another for asset management
 
 Without an issuer id, issuers are beholden to use the same address for everything; have no ability to switch addresses.
+
+We cannot be sure how our issuing partners should have their addresses setup [multi-sig, etc]. 
+To avoid forcing them to use a specific pattern, hence this approach.
+
+### 2. createSchema
 
 ### Issuers: Schemas and Fees
 
@@ -105,7 +111,9 @@ When `setupSchema` is called, it's purpose is two-fold:
 
 Thereafter, the `schemaId` is used to track fees accrued from verifications and number of issuances. 
 
-### Schemas and Voting
+---
+
+# Schemas and Voting
 
 The schema struct contains `bytes32 poolId`, to associate a schema with a voting pool.
 - by default this is `bytes32(0)`, indicating that is it not attached to a voting pool.

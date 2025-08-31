@@ -117,7 +117,7 @@ contract PaymentsController is EIP712, Pausable {
         // generate issuerId
         bytes32 issuerId;
         {
-            uint256 salt = ++block.number; 
+            uint256 salt = block.number; 
             issuerId = _generateId(salt, msg.sender, assetAddress);
             // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
             while (_issuers[issuerId].issuerId != bytes32(0) || _verifiers[issuerId].verifierId != bytes32(0) || _schemas[issuerId].schemaId != bytes32(0)) {
@@ -154,7 +154,7 @@ contract PaymentsController is EIP712, Pausable {
         // generate schemaId
         bytes32 schemaId;
         {
-            uint256 salt = ++block.number; 
+            uint256 salt = block.number; 
             schemaId = _generateSchemaId(salt, issuerId);
             // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
             while (_schemas[schemaId].schemaId != bytes32(0) || _verifiers[schemaId].verifierId != bytes32(0) || _issuers[schemaId].issuerId != bytes32(0)) {
@@ -242,6 +242,7 @@ contract PaymentsController is EIP712, Pausable {
         IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, claimableFees);
     }
 
+
 //-------------------------------verifier functions-----------------------------------------
 
     /**
@@ -258,7 +259,7 @@ contract PaymentsController is EIP712, Pausable {
         // generate verifierId
         bytes32 verifierId;
         {
-            uint256 salt = ++block.number; 
+            uint256 salt = block.number; 
             verifierId = _generateId(salt, msg.sender, assetAddress);
             // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
             while (_verifiers[verifierId].verifierId != bytes32(0) || _issuers[verifierId].issuerId != bytes32(0) || _schemas[verifierId].schemaId != bytes32(0)) {
@@ -431,6 +432,34 @@ contract PaymentsController is EIP712, Pausable {
         return newAssetAddress;
     }
 
+    /**
+     * @notice Generic function to update the admin address for either an issuer or a verifier.
+     * @dev Caller must be the current admin of the provided ID. IDs are unique across types, preventing cross-updates.
+     * @param id The unique identifier (issuerId or verifierId).
+     * @param newAdminAddress The new admin address to set.
+     * @return newAdminAddress The updated admin address.
+     */
+    function updateAdminAddress(bytes32 id, address newAdminAddress) external returns (address) {
+        require(newAdminAddress != address(0), Errors.InvalidAddress());
+
+        if (_issuers[id].issuerId != bytes32(0)) {
+            // Issuer admin update
+            require(_issuers[id].adminAddress == msg.sender, Errors.InvalidCaller());
+            _issuers[id].adminAddress = newAdminAddress;
+            
+        } else if (_verifiers[id].verifierId != bytes32(0)) {
+            // Verifier admin update
+            require(_verifiers[id].adminAddress == msg.sender, Errors.InvalidCaller());
+            _verifiers[id].adminAddress = newAdminAddress;
+            
+        } else {
+            revert Errors.InvalidId();
+        }
+
+        emit Events.AdminAddressUpdated(id, newAdminAddress);
+        return newAdminAddress;
+    }
+
 
 //-------------------------------UniversalVerificationContract functions-----------------------------------------
 
@@ -475,9 +504,9 @@ contract PaymentsController is EIP712, Pausable {
         ++_verifierNonces[signerAddress];
 
 
-        // ----- Calc. fee split -----
-        uint128 protocolFee = (PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
-        uint128 votingFee = (VOTING_FEE_PERCENTAGE > 0) ? (amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+        // ----- Calc. fee split ----- | downcasting to uint128 should be safe since 100% fee <= 2.56e18 (2^128)
+        uint128 protocolFee = uint128((PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0);
+        uint128 votingFee = uint128((VOTING_FEE_PERCENTAGE > 0) ? (amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0);
 
         // get current epoch
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
@@ -490,14 +519,15 @@ contract PaymentsController is EIP712, Pausable {
         }
 
         // ---------------------------------------------------------------------
+        uint128 amountDownCasted = uint128(amount);
 
         // issuer: global accounting
-        _issuers[issuerId].totalNetFeesAccrued += (amount - protocolFee - votingFee);  // all uint128
+        _issuers[issuerId].totalNetFeesAccrued += (amountDownCasted - protocolFee - votingFee);  // all uint128
         ++_issuers[issuerId].totalVerified;
 
         // verifier: global accounting
-        _verifiers[verifierId].currentBalance -= amount;
-        _verifiers[verifierId].totalExpenditure += amount;
+        _verifiers[verifierId].currentBalance -= amountDownCasted;
+        _verifiers[verifierId].totalExpenditure += amountDownCasted;
 
         // schema: global accounting
         _schemas[schemaId].totalGrossFeesAccrued += amount;     // disregards protocol and voting fees

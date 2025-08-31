@@ -48,8 +48,8 @@ library DataTypes {
     struct Verifier {
         bytes32 verifierId;
         address adminAddress;
-        address signerAddress;
         address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
+        address signerAddress;
 
         // MOCA | 18 dp precision
         uint128 mocaStaked;
