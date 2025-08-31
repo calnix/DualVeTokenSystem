@@ -23,6 +23,8 @@ library Events {
     event DelegateFeeIncreased(address indexed delegate, uint256 currentFeePct, uint256 feePct, uint256 nextFeePctEpoch);
     // claimRewards
     event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
+    event RewardsClaimedFromDelegate(uint256 indexed epoch, address indexed caller, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
+
     // claimSubsidies
     event SubsidiesClaimed(address indexed verifier, uint256 epoch, bytes32[] poolIds, uint256 totalSubsidiesClaimed);
     // depositSubsidies
