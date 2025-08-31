@@ -74,11 +74,7 @@ contract PaymentsController is EIP712, Pausable {
     // for VotingController.claimRewards()
     mapping(uint256 epoch => mapping(bytes32 poolId => FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
-    mapping(uint256 epoch => FeesAccrued feesAccrued) private _epochFeesAccrued;
-
-    //@follow-up  not needed or used, but nice to have for completeness:
-    //mapping(uint256 epoch => mapping(bytes32 schemaId => FeesAccrued feesAccrued)) private _epochSchemaFeesAccrued;
-    
+    mapping(uint256 epoch => FeesAccrued feesAccrued) private _epochFeesAccrued;    
 
 //-------------------------------constructor-----------------------------------------
 
