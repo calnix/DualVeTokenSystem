@@ -88,13 +88,4 @@ Voters vote on credential pools in Epoch N:
 # TO-FIX
 
 0. redo so tt rewards are epoch locked, not adhoc
-
 1. claimRewardsDelegate
-
-
-
-# Others
-
-## Users can opt for rewards to be auto-staked to the same lock
-
-no. either claim, or claim and lock as a batch/multicall.
