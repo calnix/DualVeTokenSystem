@@ -2,5 +2,30 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+optimizer = true
+via_ir = true
+
+[lint]
+    exclude_lints = ["mixed-case-function", "unwrapped-modifier-logic", "unsafe-typecast"]
+    ignore = ['*.t.sol']
+    lint_on_build = false
+
+[rpc_endpoints]
+    sepolia = "https://eth-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+    arbitrum_sepolia = "https://arb-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+    optimism_sepolia = "https://opt-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+    base_sepolia = "https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+    polygon_mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+    bnb_testnet = "https://bsc-testnet.drpc.org/"
+
+[etherscan]
+    arbitrum_sepolia = { key = "${ARBISCAN_API_KEY}" }
+    optimism_sepolia = { key = "${OPSCAN_API_KEY}" }
+    base_sepolia = { key = "${BASESCAN_API_KEY}" }
+    sepolia = { key = "${ETHERSCAN_API_KEY}" }
+    mainnet = { key = "${ETHERSCAN_API_KEY}" }
+    polygon = { key = "${POLYGONSCAN_API_KEY}" }
+    polygon_mumbai = { key = "${POLYGONSCAN_API_KEY}" }
+    bnb_testnet = { key = "${BSCSCAN_API_KEY}" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

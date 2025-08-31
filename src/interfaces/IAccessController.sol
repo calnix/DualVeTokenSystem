@@ -11,7 +11,9 @@ interface IAccessController {
 
     function isMonitor(address addr) external view returns (bool);
     function isOperator(address addr) external view returns (bool);
-
+    function isCronJob(address addr) external view returns (bool);
+    function isEmergencyExitHandler(address addr) external view returns (bool);
+    function isGlobalAdmin(address addr) external view returns (bool);
 
     //function isTreasury(address addr) external view returns (bool);
 

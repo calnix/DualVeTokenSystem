@@ -1,41 +1,44 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+// External: OZ
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-import {veMoca} from "./VotingEscrowMoca.sol";
-import {IAirKit} from "./interfaces/IAirKit.sol";
-import {Constants} from "./Constants.sol";
+// libraries
+import {Constants} from "./libraries/Constants.sol";
+import {EpochMath} from "./libraries/EpochMath.sol";
+import {DataTypes} from "./libraries/DataTypes.sol";
+import {Events} from "./libraries/Events.sol";
+import {Errors} from "./libraries/Errors.sol";
+
+
+// interfaces
+import {IAddressBook} from "./interfaces/IAddressBook.sol";
+import {IAccessController} from "./interfaces/IAccessController.sol";
+import {IEscrowedMoca} from "./interfaces/IEscrowedMoca.sol";
+import {IPaymentsController} from "./interfaces/IPaymentsController.sol";
 
 //TODO: standardize naming conventions: {subsidy,incentive}
 
-contract VotingController is AccessControl {
+contract VotingController is Pausable {
     using SafeERC20 for IERC20;
 
-    VotingEscrowMoca public immutable veMoca;
-    IAirKit public immutable AIRKIT;    // airkit contract: books verification payments by verifiers
-    address public immutable TREASURY;
-
-    //IERC20 public immutable veMOCA;
-    IERC20 public immutable esMOCA;
-    IERC20 public immutable MOCA;       // MOCA token for registration fees
-        
-    // epoch anchor
-    uint128 public immutable EPOCH_ZERO_TIMESTAMP;
-    // CURRENT_EPOCH note: needed ? for external contract calls?
-
+    // protocol yellow pages
+    IAddressBook internal immutable _addressBook;
+    
     // safety check
-    uint128 public totalNumberOfPools;
+    uint128 public TOTAL_NUMBER_OF_POOLS;
 
     // incentives
     uint256 public INCENTIVE_FACTOR;
     uint256 public TOTAL_SUBSIDIES_DEPOSITED;
     uint256 public TOTAL_SUBSIDIES_CLAIMED;
+    uint256 public UNCLAIMED_SUBSIDIES_DELAY;
 
     // delegate
-    uint256 public REGISTRATION_FEE;
-    uint256 public MAX_DELEGATE_FEE_PCT; // 100%: 100, 1%: 1 | no decimal places
+    uint256 public REGISTRATION_FEE;           // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    uint256 public MAX_DELEGATE_FEE_PCT;       // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint256 public TOTAL_REGISTRATION_FEES;
     
     
@@ -45,406 +48,704 @@ contract VotingController is AccessControl {
         uint128 totalVotes;
         
         // incentives
-        uint128 totalBaseIncentives;    // Total esMOCA subsidies; disregards any special bonuses granted for this epoch
-        uint128 totalBonusIncentives;   // Aggregated bonus esMOCA subsidies; tracks summation of all special bonuses granted for this epoch
-        uint128 incentivePerVote;       // subsidiesPerVote: totalIncentives / totalVotes | note: bonuses are handled separately; dependent on their granularity
-        uint128 totalClaimed;           // Total esMOCA subsidies claimed; serves as indicator for surplus, accounting for base and bonus incentives
+        uint128 totalSubsidies;        // Total esMOCA subsidies
+        uint128 subsidyPerVote;        // subsidiesPerVote: totalSubsidies / totalVotes 
+        uint128 totalClaimed;          // Total esMOCA subsidies claimed
 
         // safety check
-        uint128 poolsFinalized;
+        uint128 poolsFinalized;         // number of pools that have been finalized for this epoch
         bool isFullyFinalized;
     }
     
-    // pool data [global]
+        
+    // Pool data [global]
     struct Pool {
         bytes32 poolId;       // poolId = credentialId  
         bool isActive;        // active+inactive: pause pool
-        bool isWhitelisted;   // whitelist+blacklist
+        //bool isWhitelisted;   // whitelist+blacklist
 
-        uint128 totalVotes;
-        uint128 totalBaseIncentives;    // allocated esMOCA subsidies: based on EpochData.incentivePerVote
-        uint128 totalBonusIncentives;   // optional: additional esMOCA subsidies tt have been granted to this pool, in totality
-        uint128 totalClaimed;           // total esMOCA subsidies claimed; for both base and bonus incentives
+        // note: newly added        
+        uint128 totalRewards;           // manually deposited weekly, at minimum 
+
+        // global metrics
+        uint128 totalVotes;             // how many votes pool accrued throughout all epochs
+        uint128 totalSubsidies;         // allocated esMOCA subsidies: based on EpochData.subsidyPerVote
+        uint128 totalClaimed;           // total esMOCA subsidies claimed; for both base and bonus subsidies
     }
 
     // pool data [epoch]
+    // a pool is a collection of similar credentials
     struct PoolEpoch {
+        // voter data
         uint128 totalVotes;
-        uint128 totalBaseIncentives;    // allocated esMOCA subsidies: based on EpochData.incentivePerVote
-        uint128 totalBonusIncentives;   // optional: any additional esMOCA subsidies granted to this pool, for this epoch
-        uint128 totalClaimed;           // total esMOCA subsidies claimed; for both base and bonus incentives
+        uint128 totalRewards;           // manually deposited weekly, at minimum 
+        uint128 rewardsPerVote;         // verification fees per vote | get totol poolFees frm OmPm
+
+        // verifier data
+        uint128 totalSubsidies;        // allocated esMoca subsidies: based on EpochData.subsidyPerVote
+        uint128 totalClaimed;          // total esMoca subsidies claimed; for both base and bonus subsidies
     }
 
-
-    struct Verifier {
-        //uint256 totalSpend; -- logged on the other contract
-        uint128 baseIncentivesClaimed;
-        uint128 bonusIncentivesClaimed;
-    }
-
-
-
-    // user data | perEpoch | perPoolPerEpoch
-    struct User {
-        uint128 totalVotesSpent;
-        uint128 totalRewards;
-        uint128 totalClaimed;
+    // delegate data
+    struct Delegate {
+        bool isRegistered;             
+        uint128 currentFeePct;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
         
-        // delegation
-        uint128 totalDelegated;
-        address delegate;
-    }
-
-    struct DelegateData {
-        bool isActive;             
-        address delegate;
-        uint128 currentFeePct;    // 100%: 100, 1%: 1 | no decimal places
-        
-        uint128 totalDelegated;   // total voting power delegated 
-
-        //uint128 totalRewards;
-        //uint128 totalClaimed;
-
         // fee change
         uint128 nextFeePct;       // to be in effect for next epoch
         uint128 nextFeePctEpoch;  // epoch of next fee change
+
+        uint128 totalRewards;      // total gross voting rewards accrued by delegate [from delegated votes]
+        uint128 totalFees;         // total fees accrued by delegate
+        //uint128 totalClaimed;
+    }
+
+
+    // user data     | perEpoch | perPoolPerEpoch
+    // delegate data | perEpoch | perPoolPerEpoch
+    struct Account {
+        // personal
+        uint128 totalVotesSpent;
+        uint128 totalRewards;       // total accrued rewards
+        uint128 totalClaimed;
+        
+        // delegated
+        //uint128 totalVotesDelegated; --> votes are booked under delegate's name
+        //uint128 rewardsFromDelegations;
+        //uint128 claimedFromDelegations;
     }
 
 //-------------------------------mapping------------------------------------------
 
     // epoch data
-    mapping(uint128 epoch => EpochData epochData) public epochs;    //note: does it help to use uint128 instead of uint256?
+    mapping(uint256 epoch => EpochData epochData) public epochs;    //note: does it help to use uint128 instead of uint256?
 
     // pool data
     mapping(bytes32 poolId => Pool pool) public pools;
     mapping(uint256 epoch => mapping(bytes32 poolId => PoolEpoch poolEpoch)) public epochPools;
 
-    // user data
-    mapping(uint256 epoch => mapping(address user => User userEpochData)) public userEpochData;
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => User userPoolData))) public userEpochPoolData;
+    // user personal data: perEpoch | perPoolPerEpoch
+    mapping(uint256 epoch => mapping(address user => Account user)) public usersEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account user))) public usersEpochPoolData;
     
-    // delegate data
-    mapping(address delegateAgent => DelegateData delegateData) public delegateData;           
+    // Delegate registration data + fee data
+    mapping(address delegate => Delegate delegate) public delegates;           
+    mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFees;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
 
-    // pool emissions
 
+    // Delegate aggregated data (delegated votes spent, rewards, commissions)
+    mapping(uint256 epoch => mapping(address delegate => Account delegate)) public delegateEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => Account delegate))) public delegatesEpochPoolData;
+
+    // User-Delegate tracking [for this user-delegate pair, what was the user's {rewards,claimed}]
+    mapping(uint256 epoch => mapping(address user => mapping(address delegate => Account userDelegateAccounting))) public userDelegateAccounting;
+
+    // pool emissions [TODO: maybe]
 
     // verifier | note: optional: drop verifierData | verifierEpochData | if we want to streamline storage. only verifierEpochPoolData is mandatory
-    mapping(address verifier => Verifier verifierData) public verifierData;                  
-    mapping(uint256 epoch => mapping(address verifier => Verifier verifier)) public verifierEpochData;
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => Verifier verifier))) public verifierEpochPoolData;
+    // epoch is epoch number, not timestamp
+    mapping(address verifier => uint256 totalSubsidies) public verifierData;                  
+    mapping(uint256 epoch => mapping(address verifier => uint256 totalSubsidies)) public verifierEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => uint256 totalSubsidies))) public verifierEpochPoolData;
+    
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address veMoca_, address esMoca_, address airKit, address owner) {
-        
-        veMOCA = IERC20(veMoca_);
-        MOCA = IERC20(moca_);
-        esMOCA = IERC20(esMoca_);
-        AIRKIT = IAirKit(airKit);
-
-        // epoch: epoch 0 will start in the future | in-line with veMoca's 4 week bucket
-        EPOCH_ZERO_TIMESTAMP = CURRENT_EPOCH_START_TIME = epochs[0].epochStart = WeekMath.getNextEpochStart(uint128(block.timestamp));
-        
-        //CURRENT_EPOCH = 0;
-        //CURRENT_EPOCH_END_TIME = EPOCH_ZERO_TIMESTAMP + Constants.EPOCH_DURATION;
-        
-        // roles
-        _grantRole(DEFAULT_ADMIN_ROLE, owner);
+    constructor(address addressBook) {
+        ADDRESS_BOOK = IAddressBook(addressBook);
     }
 
 
-//-------------------------------veHolder functions------------------------------------------
+//-------------------------------voting functions------------------------------------------
 
-    // note: isDelegated: true = vote on behalf of delegate, false = vote on behalf of self
-    function vote(bytes32[] calldata poolIds, uint128[] calldata weights, bool isDelegated) external {
-        _vote(msg.sender, poolIds, weights, isDelegated);
-    }
+    /**
+     * @notice Cast votes for one or more pools using either personal or delegated voting power.
+     * @dev If `isDelegated` is true, the caller's delegated voting power is used; otherwise, personal voting power is used.
+     *      If `isDelegated` is true, caller must be registered as delegate
+     * @param poolIds Array of pool IDs to vote for.
+     * @param votes Array of vote weights corresponding to each pool.
+     * @param isDelegated Boolean flag indicating whether to use delegated voting power.
 
-    //TODO: refactor to use _vote() if possible
-    function migrateVotes(bytes32 fromPoolId, bytes32 toPoolId, uint128 amount) external {
-        require(fromPoolId != toPoolId, "Cannot migrate to same pool");
-        require(amount > 0, "Zero amount");
+     */
+    function vote(address caller, bytes32[] calldata poolIds, uint128[] calldata votes, bool isDelegated) external {
+        require(poolIds.length > 0, Errors.InvalidArray());
+        require(poolIds.length == votes.length, Errors.MismatchedArrayLengths());
 
-        require(pools[fromPoolId].poolId != bytes32(0), "Source pool does not exist");
-        require(pools[toPoolId].poolId != bytes32(0), "Destination pool does not exist");
-        require(pools[toPoolId].isActive, "Destination pool is not active");
-        require(pools[toPoolId].isWhitelisted, "Destination pool is not whitelisted");
+        // epoch should not be finalized
+        uint256 epoch = EpochMath.getCurrentEpochNumber();          
+        require(!epochs[epoch].isFullyFinalized, Errors.EpochFinalized());
 
-        uint128 epoch = _getCurrentEpoch();
-        EpochData storage epochData = epochs[epoch];
-        require(!epochData.isFullyFinalized, "Epoch finalized");
+        // mapping lookups based on isDelegated | account:{personal,delegate}
+        mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData;
+        mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData;
 
-        // get user's existing votes in the fromPool
-        User storage userFrom = userEpochPoolData[epoch][fromPoolId][msg.sender];
-        require(userFrom.totalVotesSpent >= amount, "Insufficient votes to migrate");
+        if (isDelegated) {
+            require(delegates[caller].isRegistered, Errors.DelegateNotRegistered());
+            accountEpochData = delegateEpochData;
+            accountEpochPoolData = delegatesEpochPoolData;
+        } else {
+            accountEpochData = usersEpochData;
+            accountEpochPoolData = usersEpochPoolData;
+        }
 
-        // Deduct from old pool
-        userFrom.totalVotesSpent -= amount;
-        epochPools[epoch][fromPoolId].totalVotes -= amount;
-        pools[fromPoolId].totalVotes -= amount;
-        epochData.totalVotes -= amount;
+        // votingPower: benchmarked to end of epoch [forward-decay]
+        uint256 epochEndTime = EpochMath.getCurrentEpochEnd();
 
-        // Add to new pool
-        User storage userTo = userEpochPoolData[epoch][toPoolId][msg.sender];
-        userTo.totalVotesSpent += amount;
-        epochPools[epoch][toPoolId].totalVotes += amount;
-        pools[toPoolId].totalVotes += amount;
-        epochData.totalVotes += amount;
+        // get account's voting power[personal, delegated] and used votes
+        uint128 votingPower = _veMoca().balanceAtEpochEnd(caller, epochEndTime, isDelegated);
+        uint128 spentVotes = accountEpochData[epoch][caller].totalVotesSpent;
 
-        //     emit VotesMigrated(msg.sender, epoch, fromPoolId, toPoolId, amount);
-    }
+        // check if account has spare votes
+        uint128 spareVotes = votingPower - spentVotes;
+        require(spareVotes > 0, Errors.NoSpareVotes());
 
-//-------------------------------delegator functions------------------------------------------
+        // update votes at a pool+epoch level | account:{personal,delegate}
+        uint128 totalNewVotes;
+        for(uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            uint128 votes = votes[i];
 
-    // active on registration
-    function registerAsDelegate(uint128 feePct) external {
-        require(feePct > 0, "Invalid fee: zero");
-        require(feePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
+            // sanity check: do not skip on 0 vote, as it indicates incorrect array inputs
+            require(votes > 0, Errors.ZeroVote()); 
+            
+            // sanity checks: pool exists, is active
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(pools[poolId].isActive, Errors.PoolInactive());
+            
+            // sanity check: spare votes should not be exceeded
+            totalNewVotes += votes;
+            require(totalNewVotes <= spareVotes, Errors.InsufficientVotes());
 
-        DelegateData storage delegate = delegateData[msg.sender];
-        require(delegate.delegate == address(0), "Already registered");
+            // increment votes at a pool+epoch level | account:{personal,delegate}
+            accountEpochPoolData[epoch][poolId][caller].totalVotesSpent += votes;
+            epochPools[epoch][poolId].totalVotes += votes;
+            epochs[epoch].totalVotes += votes;
+            //increment pool votes at a global level
+            pools[poolId].totalVotes += votes;       
+        }
 
-        // collect registration fee | note: may want to transfer directly to treasury
-        MOCA.safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
-        TOTAL_REGISTRATION_FEES += REGISTRATION_FEE;
-
-        // storage: create delegate
-        delegate.isActive = true;
-        delegate.delegate = msg.sender;
-        delegate.currentFeePct = feePct;
+        // update account's epoch voting power counter
+        accountEpochData[epoch][caller].totalVotesSpent += totalNewVotes;
         
         // event
-        
-        // note: to mark as active
-        veMoca.registerAsDelegate(msg.sender);
+        emit Events.Voted(epoch, caller, poolIds, votes, isDelegated);
     }
 
-    // if increase, only applicable currentEpoch+2
-    // if decrease, applicable immediately        
-    function updateDelegateFee(uint128 feePct) external {
-        require(feePct > 0, "Invalid fee: zero");
-        require(feePct <= MAX_DELEGATE_FEE_PCT, "Fee must be < MAX_DELEGATE_FEE_PCT");
+    /**
+     * @notice Migrate votes from one or more source pools to destination pools within the current epoch.
+     * @dev Allows users to move their votes between pools before the epoch is finalized.
+     *      Supports both partial and full vote migration. Can migrate from inactive to active pools, but not vice versa.
+     * @param srcPoolIds Array of source pool IDs from which votes will be migrated.
+     * @param dstPoolIds Array of destination pool IDs to which votes will be migrated.
+     * @param votes Array of vote amounts to migrate for each pool pair.
+     * @param isDelegated Boolean indicating if the migration is for delegated votes.
+     * If isDelegated: true, caller must be registered as delegate
+     * Emits a {VotesMigrated} event on success.
+     * Reverts if input array lengths mismatch, pools do not exist, destination pool is not active,
+     * insufficient votes in source pool, or epoch is finalized.
+     */
+    function migrateVotes(bytes32[] calldata srcPoolIds, bytes32[] calldata dstPoolIds, uint128[] calldata votes, bool isDelegated) external {
+        require(srcPoolIds.length > 0, Errors.InvalidArray());
+        require(srcPoolIds.length == dstPoolIds.length, Errors.MismatchedArrayLengths());
+        require(srcPoolIds.length == votes.length, Errors.MismatchedArrayLengths());
 
-        DelegateData storage delegate = delegateData[msg.sender];
-        require(delegate.isActive, "Not active");
-        require(delegate.delegate != address(0), "Not registered");
-        
-        // if increase, only applicable currentEpoch+2
-        if(feePct > delegate.currentFeePct) {
+        // epoch should not be finalized
+        uint256 epoch = EpochMath.getCurrentEpochNumber();          
+        require(!epochs[epoch].isFullyFinalized, Errors.EpochFinalized());
+
+        // mapping lookups based on isDelegated | account:{personal,delegate}
+        mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData;
+        mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => Account accountEpochPoolData))) storage accountEpochPoolData;
+
+        if (isDelegated) {
+            require(delegates[caller].isRegistered, Errors.DelegateNotRegistered());
+            accountEpochData = delegateEpochData;
+            accountEpochPoolData = delegatesEpochPoolData;
+        } else {
+            accountEpochData = usersEpochData;
+            accountEpochPoolData = usersEpochPoolData;
+        }
+
+        // can migrate votes from inactive pool to active pool; but not vice versa
+        for(uint256 i; i < srcPoolIds.length; ++i) {
+            bytes32 srcPoolId = srcPoolIds[i];
+            bytes32 dstPoolId = dstPoolIds[i];
+            uint128 votesToMigrate = votes[i];
+
+            // sanity check: pools exists, dstPool is active
+            require(pools[srcPoolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(pools[dstPoolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(pools[dstPoolId].isActive, Errors.PoolInactive());
+
+            // get user's existing votes in the srcPool
+            uint128 votesInSrcPool = accountEpochPoolData[epoch][srcPoolId][msg.sender].totalVotesSpent;
+            require(votesInSrcPool >= votesToMigrate, Errors.InsufficientVotes());
+
+            // deduct from old pool
+            accountEpochPoolData[epoch][srcPoolId][msg.sender].totalVotesSpent -= votesToMigrate;
+            epochPools[epoch][srcPoolId].totalVotes -= votesToMigrate;
+            pools[srcPoolId].totalVotes -= votesToMigrate;
+            epochs[epoch].totalVotes -= votesToMigrate;
+
+            // add to new pool
+            accountEpochPoolData[epoch][dstPoolId][msg.sender].totalVotesSpent += votesToMigrate;
+            epochPools[epoch][dstPoolId].totalVotes += votesToMigrate;
+            pools[dstPoolId].totalVotes += votesToMigrate;
+            epochs[epoch].totalVotes += votesToMigrate;
+
+        }
+
+        // event
+        emit Events.VotesMigrated(epoch, msg.sender, srcPoolIds, dstPoolIds, votes, isDelegated);
+    }
+
+//-------------------------------delegate functions------------------------------------------
+
+    /**
+     * @notice Registers the caller as a delegate and activates their status.
+     * @dev Requires payment of the registration fee. Marks the delegate as active upon registration.
+     *      Calls VotingEscrowMoca.registerAsDelegate() to mark the delegate as active.
+     * @param feePct The fee percentage to be applied to the delegate's rewards. 0 allowed.
+     * Emits a {DelegateRegistered} event on success.
+     * Reverts if the fee is greater than the maximum allowed fee, the caller is already registered,
+     * or the registration fee cannot be transferred from the caller.
+     */
+    function registerAsDelegate(uint128 feePct) external {
+        require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());
+
+        Delegate storage delegate = delegates[msg.sender];
+        require(!delegate.isRegistered, Errors.DelegateAlreadyRegistered());
+
+        // collect registration fee & increment global counter
+        _moca().safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);      // note: may want to transfer directly to treasury
+        TOTAL_REGISTRATION_FEES += REGISTRATION_FEE;
+
+        // storage: register delegate
+        delegate.isRegistered = true;
+        delegate.currentFeePct = feePct;
+
+        // to mark as true
+        _veMoca().registerAsDelegate(msg.sender);
+
+        // event
+        emit Events.DelegateRegistered(msg.sender, feePct);
+    }
+
+    /**
+     * @notice Updates the delegate fee percentage.
+     * @dev If the fee is increased, the new fee takes effect from currentEpoch + 2 to prevent last-minute increases.
+     *      If the fee is decreased, the new fee takes effect immediately.
+     * @param feePct The new fee percentage to be applied to the delegate's rewards.
+     * Emits a {DelegateFeeUpdated} event on success.
+     * Reverts if the fee is greater than the maximum allowed fee, the caller is not registered, or the fee is not a valid percentage.
+     */
+    function updateDelegateFee(uint128 feePct) external {
+        //require(feePct > 0, "Invalid fee: zero");
+        require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());
+
+        Delegate storage delegate = delegates[msg.sender];
+        require(delegate.isRegistered, Errors.DelegateNotRegistered());
+            
+        uint256 currentFeePct = delegate.currentFeePct;
+        // if increase, only applicable from currentEpoch+2
+        if(feePct > currentFeePct) {
             delegate.nextFeePct = feePct;
-            delegate.nextFeePctEpoch = getCurrentEpoch() + 2;  // buffer of 2 epochs to prevent last-minute fee increases
+            delegate.nextFeePctEpoch = EpochMath.getCurrentEpochNumber() + 2;  // buffer of 2 epochs to prevent last-minute fee increases
+            emit Events.DelegateFeeIncreased(msg.sender, currentFeePct, feePct, delegate.nextFeePctEpoch);
+
         } else {
             // if decrease, applicable immediately
             delegate.currentFeePct = feePct;
+            emit Events.DelegateFeeDecreased(msg.sender, currentFeePct, feePct);
         }
-
-        // event
-        //emit DelegateFeeUpdated(msg.sender, feePct, delegate.nextFeePctEpoch);
     }
 
-    // TODO: handle rewards, delegated votes
-    // resign as delegate: registration fee is not refunded
-    function resignAsDelegate() external {
-        DelegateData storage delegate = delegateData[msg.sender];
+    /**
+     * @notice Unregister the caller as a delegate.
+     * @dev Removes the delegate's registration status.
+     *      Calls VotingEscrowMoca.unregisterAsDelegate() to mark the delegate as inactive.
+     *      Note: registration fee is not refunded
+     * Emits a {DelegateUnregistered} event on success.
+     * Reverts if the caller is not registered.
+     */
+    function unregisterAsDelegate() external {
+        Delegate storage delegate = delegates[msg.sender];
         
-        require(delegate.isActive, "Not active");
-        require(delegate.delegate == msg.sender, "Not registered as delegate");
+        require(delegate.isRegistered, Errors.DelegateNotRegistered());
         
-        // remove delegation
-        delete delegate.isActive;
-        delete delegate.delegate;
-        //delete delegate.currentFeePct; // note: may want to keep for calc. rewards
-        delete delegate.nextFeePct;
-        delete delegate.nextFeePctEpoch;
+        // storage: unregister delegate
+        delete delegate.isRegistered;
         
-        // update delegate's total delegated voting power
-        //delegate.totalDelegated -= userEpochData[getCurrentEpoch()][msg.sender].totalDelegated;
-        
-        // event
-
-        // note: to mark as inactive
-        veMoca.unregisterAsDelegate(msg.sender);
-    }
-
-
-
-/* TODO
-    // allows seamless booking of votes accurately across epochs, w/o manual epoch management
-    function _checkEpoch() internal {
-        // note: >= or > ?
-        if(block.timestamp >= CURRENT_EPOCH_END_TIME) {
-            // update epoch
-            ++CURRENT_EPOCH;
-            // update epoch start time
-            CURRENT_EPOCH_END_TIME = block.timestamp + EPOCH_DURATION;
-        }
+        // to mark as false
+        _veMoca().unregisterAsDelegate(msg.sender);
 
         // event
+        emit Events.DelegateUnregistered(msg.sender);
     }
-*/
 
 //-------------------------------voters: claiming rewards----------------------------------------------
 
-    /** NOTE:
 
-    ## auto-staking
-
-    Users can opt for rewards to be auto-staked to the same lock
-
-    1. claim on a per lock basis and auto-compound/stack
-    2. claimAll()
-    */
-
-
-
-
-    //TODO: handle rewards, delegated votes
     // for veHolders tt voted get esMoca -> from verification fee split
-    function claimRewards(uint256 epochNumber, bytes32 poolId) external {
-        // check epoch
-        _checkEpoch();
+    // vote at epoch:N, get the pool verification fees of the next epoch:N+1
+    function claimRewards(uint256 epoch, bytes32[] calldata poolIds) external {
+        require(poolIds.length > 0, Errors.InvalidArray());
+
+        // sanity check: epoch; can claim on epochs from past till current
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        require(epoch <= currentEpoch, Errors.FutureEpoch());
+        //require(epochs[epoch].isFullyFinalized, "Epoch not finalized"); ---> if current, not required to be finalized, as rewards distributed weekly
+
+        uint256 totalClaimableRewards;
+        for(uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            
+            //sanity check: pool exists
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            //require(pools[poolId].isActive, "Pool inactive");  ---> pool could be currently inactive but have unclaimed prior rewards 
+
+            // get pool's rewardsPerVote
+            uint256 latestRewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;
+            require(latestRewardsPerVote > 0, Errors.NoRewardsToClaim());     // either no deposit made, or no fees accrued
         
-        // can only claim rewards for epoch that has ended
-        require(epochNumber < CURRENT_EPOCH, "Cannot claim rewards for current or future epochs");
+            // get user's pool votes for the epoch
+            uint256 userPoolVotes = usersEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent;
+            require(userPoolVotes > 0, Errors.NoVotesInPool());
 
-        // get veHolder's total votes spent for the epoch
-        uint256 userTotalVotesSpent = userEpochData[epochNumber][msg.sender].totalVotesSpent;
-        require(userTotalVotesSpent > 0, "No votes spent in epoch");
+            // calc. user's latest total rewards [accounting for new deposits made]
+            uint256 userLatestTotalRewards = userPoolVotes * latestRewardsPerVote;
 
-        /**
-            on AIRKIT:
-            - get total verification fees for {pool, epoch}
-            - get how much of the verification fee is to be split to veHolders
-            - get how much of the split is to be claimed by veHolder
-            - transfer esMoca to veHolder
-            - update veHolder's claimed
-            - update veHolder's rewards
-         */
+            // calc. claimable rewards + update user's total claimed
+            uint256 claimableRewards = userLatestTotalRewards - usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed;
+            require(claimableRewards > 0, Errors.NoRewardsToClaim());
+
+            // STORAGE: overwrite user's .totalRewards & .totalClaimed
+            usersEpochPoolData[epoch][poolId][msg.sender].totalRewards = userLatestTotalRewards;
+            usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed = userLatestTotalRewards;
+
+            // update counter
+            totalClaimableRewards += claimableRewards;
+        }
+
+        // update user's total claimed for all pools    
+        usersEpochData[epoch][msg.sender].totalClaimed += totalClaimableRewards;
+
+        // transfer esMoca to user
+        _esMoca().safeTransfer(msg.sender, totalClaimableRewards);
+
+        emit Events.RewardsClaimed(msg.sender, epoch, poolIds, totalClaimableRewards);
     }
 
+    //TODO:
+    // user claims rewards on votes tt were delegated to a delegate
+    // user could have multiple delegates; must specify which delegate he is claiming from
+    function claimRewardsFromDelegate(uint256 epoch, bytes32 poolId, address delegate) external {
+        // sanity check: delegate
+        require(delegate > address(0), Errors.InvalidAddress());
+        require(delegates[delegate].isRegistered, Errors.DelegateNotRegistered());
 
-    //TODO
-    function claimAndLock(uint256 amount, uint128 expiry, bool isMoca) external {
-        // need to call VotingEscrowMoca.increaseAmount()
+        // sanity check: epoch | can claim on epochs from past till current
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        require(epoch <= currentEpoch, Errors.FutureEpoch());
+        //require(epochs[epoch].isFullyFinalized, "Epoch not finalized"); ---> if current, not required to be finalized, as rewards distributed weekly
+
+            //sanity check: pool
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            //require(pools[poolId].isActive, "Pool inactive");  ---> pool could be currently inactive but have unclaimed prior rewards 
+            //require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
+
+            // get pool's rewardsPerVote | can increase on repeated calls of depositRewards(), for the same epoch
+            uint256 latestRewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;
+            require(latestRewardsPerVote > 0, Errors.NoRewardsToClaim());     // either no deposit made, or no fees accrued
+
+            // get delegate's votes for specified pool
+            uint256 delegatePoolVotes = delegateEpochPoolData[epoch][poolId][delegate].totalVotesSpent;
+            require(delegatePoolVotes > 0, "No votes in pool for this epoch");
+            // calc. delegate's new total pool rewards | increments when rewardsPerVote is incremented through depositRewards()
+            uint256 latestDelegatePoolRewards = delegatePoolVotes * latestRewardsPerVote;
+
+            // get user's delegated votes, for this delegate | user's endEpoch voting power
+            uint256 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(IAddressBook.getVotingEscrowMoca()).getDelegatedBalanceAtEpochEnd(msg.sender, epoch, true);
+            require(userVotesAllocatedToDelegateForEpoch > 0, Errors.NoVotesAllocatedToDelegate());
+
+
+            // calc. user's new total rewards, from delegating to the delegate [latest rewards per vote]
+            uint256 delegateTotalVotesForEpoch = delegateEpochData[epoch][delegate].totalVotesSpent;
+            uint256 userDelegatedRewardsForPool = userVotesAllocatedToDelegateForEpoch * latestDelegatePoolRewards / delegateTotalVotesForEpoch;
+
+            // calc. latest claimable rewards 
+            uint256 newGrossClaimableRewards  = userDelegatedRewardsForPool - userDelegateAccounting[epoch][msg.sender][delegate].totalClaimed;
+            require(newGrossClaimableRewards  > 0, "No rewards to claim");
+
+            // calc. delegate's fee
+            uint256 delegateFee = newGrossClaimableRewards * delegates[delegate].currentFeePct / Constants.PRECISION_BASE;
+            uint256 newNetClaimableRewards = newGrossClaimableRewards  - delegateFee;   // fee would be reounded down
+            require(newNetClaimableRewards > 0, "No rewards after fees to claim");      // wait for next weekly deposit to claim
+
+
+            // book user's incoming rewards
+            userDelegateAccounting[epoch][msg.sender][delegate].totalClaimed += newNetClaimableRewards;
+            //book delegate's incoming commission + rewards earned for delegation
+            delegates[delegate].totalCommissions += delegateFee;
+            delegates[delegate].totalRewards += newGrossClaimableRewards;
+
+            // transfer esMoca to user
+            // note: must whitelist this contract for transfers
+            esMOCA.transfer(msg.sender, newNetClaimableRewards);
+
+        // emit
+        //emit Claimed(msg.sender, epoch, poolId, claimableRewards);
     }
 
-
-
+    //TODO: claimAndLock - but via router.
 
 //-------------------------------verifiers: claiming subsidies-----------------------------------------
 
-    // called by verifiers
-    function claimIncentives(uint128 epoch, bytes32[] calldata poolIds) external {
-        require(poolIds.length > 0, "No pools specified");
+    //TODO: subsidies claimable based off their expenditure accrued for a pool-epoch
+    // called by verifiers: subsidies received as esMoca
+    function claimSubsidies(uint128 epoch, bytes32[] calldata poolIds) external {
+        require(poolIds.length > 0, Errors.InvalidArray());
+        
+        // epoch must be finalized
+        require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
 
-        require(epoch < getCurrentEpoch(), "Cannot claim for current or future epochs");
-        require(epochs[epoch].isFullyFinalized, "Epoch not finalized");
+        //TODO[maybe]: epoch: calculate subsidies if not already done; so can front-run/incorporate finalizeEpoch()
 
-        //TODO[maybe]: epoch: calculate incentives if not already done; so can front-run finalizeEpoch()
-
-        uint128 totalClaimableSubsidies;    
+        uint128 totalSubsidiesClaimed;    
         for (uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
 
-            // check if pool exists and has emissions
-            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-            require(epochPools[epoch][poolId].totalIncentives > 0, "No emissions for pool");
+            // check if pool exists and has subsidies allocated
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            uint256 poolAllocatedSubsidies = epochPools[epoch][poolId].totalSubsidies;
+            require(poolAllocatedSubsidies > 0, Errors.NoSubsidiesForPool());
 
-            // get verifier's total spend for {pool, epoch}
-            uint256 verifierTotalSpend = AIRKIT.getTotalSpend(msg.sender, epochNumber, poolId);
-            require(verifierTotalSpend > 0, "No verification fees in epoch");
-            
             // check if already claimed
-            require(verifierClaimedSubsidies[epoch][poolId][msg.sender] == 0, "Already claimed for this pool");
+            require(verifierEpochPoolData[epoch][poolId][msg.sender] == 0, Errors.SubsidyAlreadyClaimed());
 
-            // calculate subsidies
-            uint256 subsidies = verifierTotalSpend * epoch.incentivePerVote * INCENTIVE_FACTOR / PRECISION_BASE;
-            totalClaimableSubsidies += subsidies;
+            // get verifier's accrued subsidies for {pool, epoch} & pool's total accrued subsidies for the epoch
+            (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) 
+                = IPaymentsController(IAddressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, msg.sender);
+            
+            // calculate subsidy receivable
+            uint256 subsidyReceivable = (verifierAccruedSubsidies * poolAllocatedSubsidies) / poolAccruedSubsidies;
+            require(subsidyReceivable > 0, Errors.NoSubsidiesToClaim());
 
-            // book verifier's subsidies for the epoch
-            verifierClaimedSubsidies[epochNumber][poolId][msg.sender] = subsidies;
+            totalSubsidiesClaimed += subsidyReceivable;
 
-            // update epoch's total claimed
-            epochPools[epochNumber][poolId].totalClaimed += subsidies;
+            // book verifier's subsidy receivable for the epoch
+            verifierEpochPoolData[epoch][poolId][msg.sender] = subsidyReceivable;
+            verifierEpochData[epoch][msg.sender] += subsidyReceivable;
+            verifierData[msg.sender] += subsidyReceivable;
+
+            // update pool & epoch total claimed
+            pools[poolId].totalClaimed += subsidyReceivable;
+            epochPools[epoch][poolId].totalClaimed += subsidyReceivable;
         }
 
-        // update total claimed
-        epochs[epochNumber].totalClaimed += totalClaimableSubsidies;
-        TOTAL_SUBSIDIES_CLAIMED += totalClaimableSubsidies;
-    
+        // update epoch & pool total claimed
+        TOTAL_SUBSIDIES_CLAIMED += totalSubsidiesClaimed;
+        epochs[epoch].totalClaimed += totalSubsidiesClaimed;
+
         // event
-        
-        // transfer esMoca to verifier: 
-        // note: must whitelist this contract for transfers
-        esMOCA.transfer(msg.sender, totalClaimableSubsidies);        // use vault?
+        emit Events.SubsidiesClaimed(msg.sender, epoch, poolIds, totalSubsidiesClaimed);
+
+        // transfer esMoca to verifier
+        // note: must whitelist VotingController on esMoca for transfers
+        _esMoca().transfer(msg.sender, totalSubsidiesClaimed);      
     }
 
 
-//-------------------------------admin functions-----------------------------------------
+//-------------------------------admin: finalize, deposit, withdraw subsidies-----------------------------------------
 
-    //note: REVIEW
-    function finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(poolIds.length > 0, "No pools to finalize");
+    // to be called at the end of an epoch
+    // @follow-up what if subsidies are 0 for an epoch? intentionally?
+    function finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds) external onlyVotingControllerAdmin {
+        require(poolIds.length > 0, Errors.InvalidArray());
 
+        // sanity check: epoch must not be finalized
         EpochData storage epochData = epochs[epoch];
-        require(epochData.incentivePerVote == 0, "Epoch already finalized");
+        require(epochData.subsidyPerVote == 0, Errors.EpochFinalized());
 
-        uint128 epochStart = getEpochStartTimestamp(epoch);
-        require(block.timestamp >= epochStart + Constants.EPOCH_DURATION, "Epoch not ended");
+        // sanity check: epoch must have ended
+        uint256 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epoch);
+        require(block.timestamp >= epochEndTimestamp, Errors.EpochNotEnded());
 
-        uint256 totalVotes = epochData.totalVotes;
-        uint256 totalIncentives = epochData.totalIncentives;
+        // if either votes or subsidies are 0; subsidyPerVote is 0 or txn reverts on division by 0 
+        // --> we not bother individually checking for 0 
+        uint256 subsidyPerVote;
 
-        uint256 incentivePerVote;
-        if (totalVotes > 0 && totalIncentives > 0) {
-            incentivePerVote = (totalIncentives * 1e18) / totalVotes;
-            // storage update
-            if(incentivePerVote > 0) epochData.incentivePerVote = incentivePerVote;
+        // calc. subsidy per vote on 1st call | on subsequent calls, subsidy per vote is already set
+        if(epochData.subsidyPerVote == 0) {
+            // calc. subsidy per vote | subsidies are esMoca, expressed in 1e18 | votes are 1e18 [_veMoca().balanceAtEpochEnd]
+            subsidyPerVote = (epochData.totalSubsidies * 1e18) / epochData.totalVotes;
+            require(subsidyPerVote > 0, Errors.SubsidyPerVoteZero());
+
+            // STORAGE: update subsidy per vote
+            epochData.subsidyPerVote = subsidyPerVote;
+            emit Events.EpochSubsidyPerVoteSet(epoch, subsidyPerVote);
         }
 
-        for (uint256 i; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
+        // cac. pool subsidies for each pool
+        if(subsidyPerVote > 0) {
 
-            if (poolVotes > 0) {
-                uint256 poolIncentives = (poolVotes * totalIncentives) / totalVotes;
-                // pool epoch
-                epochPools[epoch][poolId].totalIncentives = poolIncentives;
-                // pool global
-                pools[poolId].totalIncentives += poolIncentives;
+            // subsidies are esMoca, expressed in 1e18 | votes are 1e18 [_veMoca().balanceAtEpochEnd]
+            for (uint256 i; i < poolIds.length; ++i) {
+                bytes32 poolId = poolIds[i];
+                uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
 
-                // emit PoolEmissionsFinalized(epoch, poolId, poolIncentives);
-            } else {
-                // no votes in pool: no incentives
-                //epochPools[epoch][poolId].totalIncentives = 0;
-                //pools[poolId].totalIncentives = 0;
+                if (poolVotes > 0) {
+                    uint256 poolSubsidies = (poolVotes * subsidyPerVote) / 1e18;
+                    
+                    // STORAGE: pool epoch + pool global
+                    epochPools[epoch][poolId].totalSubsidies = poolSubsidies;
+                    pools[poolId].totalSubsidies += poolSubsidies;
+                }
             }
         }
-        
-        // event
-        //emit EpochFinalizedPartially(epoch, poolIds, epochData.incentivePerVote);
 
-        // update epoch data
+        emit Events.EpochPartiallyFinalized(epoch, poolIds);
+
+        // STORAGE: increment count of pools finalized
         epochData.poolsFinalized += uint128(poolIds.length);
-        if(epochData.poolsFinalized == totalNumberOfPools) {
-            epochData.isFullyFinalized = true;
 
-            // emit EpochFinalized(epoch);
+        // check if epoch is fully finalized
+        if(epochData.poolsFinalized == TOTAL_NUMBER_OF_POOLS) {
+            epochData.isFullyFinalized = true;
+            emit Events.EpochFullyFinalized(epoch);
         }
     }
 
-    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(maxFeePct > 0, "Invalid fee: zero");
-        require(maxFeePct < Constants.PRECISION_BASE, "MAX_DELEGATE_FEE_PCT must be < 100%");
+    // to be called at the end of an epoch
+    // subsidies for verifiers, for an epoch. to be distributed amongst pools based on votes
+    // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
+    function depositSubsidies(uint256 epoch, uint256 depositSubsidies) external onlyVotingControllerAdmin {
+        require(epoch > EpochMath.getCurrentEpochNumber(), Errors.CanOnlySetSubsidiesForFutureEpochs());
+
+        epochs[epoch].totalSubsidies += depositSubsidies;
+        TOTAL_SUBSIDIES_DEPOSITED += depositSubsidies;
+
+        // transfer esMoca to depositor
+        _esMoca().transferFrom(msg.sender, address(this), depositSubsidies);
+
+        // event
+        emit Events.SubsidiesDeposited(msg.sender, epoch, depositSubsidies, epochs[epoch].totalSubsidies);
+    }
+
+    // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
+    function withdrawSubsidies(uint256 epoch, uint256 withdrawSubsidies) external onlyVotingControllerAdmin {
+        require(epoch > EpochMath.getCurrentEpochNumber(), Errors.CanOnlySetSubsidiesForFutureEpochs());
+        require(epochs[epoch].totalSubsidies >= withdrawSubsidies, Errors.InsufficientSubsidies());
+        
+        epochs[epoch].totalSubsidies -= withdrawSubsidies;
+        TOTAL_SUBSIDIES_DEPOSITED -= withdrawSubsidies;
+        
+        // transfer esMoca to depositor
+        _esMoca().transfer(msg.sender, withdrawSubsidies);
+
+        // event
+        emit Events.SubsidiesWithdrawn(msg.sender, epoch, withdrawSubsidies, epochs[epoch].totalSubsidies);
+    }
+
+    //REVIEW: withdraw unclaimed subsidies | after 6 epochs?
+    function withdrawUnclaimedSubsidies(uint256 epoch) external onlyVotingControllerAdmin {
+        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedSubsidiesAfterDelay());
+
+        uint256 unclaimedSubsidies = epochs[epoch].totalSubsidies - epochs[epoch].totalClaimed;
+        require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
+
+        // transfer esMoca to depositor
+        _esMoca().transfer(msg.sender, unclaimedSubsidies);
+
+        // event
+        emit Events.UnclaimedSubsidiesWithdrawn(msg.sender, epoch, unclaimedSubsidies);
+    }
+    
+//-------------------------------admin: setters -----------------------------------------
+
+    // note: implicitly minimum of 1 epoch delay
+    function setUnclaimedSubsidiesDelay(uint256 delay) external onlyVotingControllerAdmin {
+        require(delay > 0, "Delay must be positive");
+        UNCLAIMED_SUBSIDIES_DELAY = delay;
+
+        // event
+        emit Events.UnclaimedSubsidiesDelaySet(delay);
+    }
+
+    // 0 accepted
+    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyVotingControllerAdmin {
+        //require(maxFeePct > 0, "Invalid fee: zero");
+        require(maxFeePct < Constants.PRECISION_BASE, Errors.InvalidFeePct());
 
         MAX_DELEGATE_FEE_PCT = maxFeePct;
 
-        // event
-        //emit MaxDelegateFeePctUpdated(maxFeePct);
+        emit Events.MaxDelegateFeePctUpdated(maxFeePct);
     }
 
-    //-------------------------------pool functions----------------------------------------------
+
+//-------------------------------admin: deposit voting rewards-----------------------------------------
+
+    /** deposit rewards for a pool
+        - a pool is a thematic collection of schemas
+        - PaymentsController cannot track which schemas belong to which pool; therefore it cannot aggregate rewards for a pool
+        - therefore, we will refer to PaymentsController.getPoolVotersFeesAccrued(uint256 epoch, bytes32 poolId), and aggregate manually
+        - then deposit the total aggregated rewards to the pool for that epoch
+        
+        Since we wish to distribute rewards on an adhoc basis, we opt not to reference PaymentsController to get the rewards for each pool.
+        The automated approach would require depositRewards() to be executed once, preferably at the end of an epoch, nested within finalizeEpoch().
+        
+        For rewards distribution on an ad-hoc basis, depositRewards() will be called repeatedly.
+        - this means that the total rewards for a pool must be overwritten; not incremented
+
+    */
+    ///@dev update pool's PoolEpoch.totalRewards and PoolEpoch.rewardsPerVote
+    function depositRewards(uint256 epoch, bytes32[] calldata poolIds) external onlyVotingControllerAdmin {
+        require(poolIds.length > 0, Errors.InvalidArray());
+        
+        // sanity check: epoch | can deposit on epochs from past till current | can deposit on current epoch 
+        // cannot deposit for future, since no verification txns have occurred yet
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        require(epoch <= currentEpoch, Errors.FutureEpoch());
+
+        uint256 totalAmount;
+        for(uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+        
+            // sanity checks: pool
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            //require(pools[poolId].isWhitelisted, "Pool is not whitelisted"); ---> ? for past pools what is the treatment?
+
+            // get pool's latest total rewards/feesAccruedToVoters
+            uint256 latestPoolTotalRewards = IPaymentsController(IAddressBook.getPaymentsController()).getPoolVotingFeesAccrued(epoch, poolId);
+
+            // check: fees must have incremented from when this function was last called; for the same epoch
+            uint256 incomingRewards = latestPoolTotalRewards - epochPools[epoch][poolId].totalRewards;
+            require(incomingRewards > 0, Errors.NoRewardsAccrued());
+
+            // overwrite pool's total rewards
+            epochPools[epoch][poolId].totalRewards = latestPoolTotalRewards;
+
+            /** overwrite pool's rewardsPerVote
+                if epochPools[epoch][poolId].totalVotes is 0, reverts; no need to check for 0
+                latestPoolTotalRewards is always > 0, due to (incomingRewards > 0) check
+
+                both rewards(esMoca) and totalVotes(veMoca) are expressed in 1e18
+            */
+            uint256 rewardsPerVote = latestPoolTotalRewards * 1E18 / epochPools[epoch][poolId].totalVotes;
+            epochPools[epoch][poolId].rewardsPerVote = rewardsPerVote;
+            
+            totalAmount += incomingRewards;
+                        
+            emit Events.RewardsPerVoteUpdated(epoch, poolId, rewardsPerVote);
+        }
+    
+        emit Events.RewardsDeposited(epoch, poolIds, totalAmount);
+
+        // deposit esMoca to voting contract
+        _esMoca().transferFrom(msg.sender, address(this), totalAmount);
+    }
+
+//-------------------------------admin: pool functions----------------------------------------------
 
     function createPool(bytes32 poolId, bool isActive) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(poolId != bytes32(0), "Pool ID cannot be zero");
@@ -476,213 +777,38 @@ contract VotingController is AccessControl {
         // event
     }
 
-    // white or blacklist pool
-    function whitelistPool(bytes32 poolId, bool isWhitelisted) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-        pools[poolId].isWhitelisted = isWhitelisted;
-
-        // event
-    }
-
-//-------------------------------incentives functions----------------------------------------------
-   
-    // incentives for a specific epoch
-    function setEpochIncentives(uint128 epoch, uint128 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(amount > 0, "Amount must be non-zero");
-        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
-
-        // get current total base incentives
-        uint128 currentTotalIncentives = epochs[epoch].totalBaseIncentives;
-        if(currentTotalIncentives == amount) revert("Incentives already set");
-
-        // if no base incentives set yet: set
-        if(currentTotalIncentives == 0) {
-            epochs[epoch].totalBaseIncentives = amount;
-            TOTAL_INCENTIVES_DEPOSITED += amount;
-
-            // event
-
-            // transfer esMoca to voting contract
-            esMOCA.transfer(address(this), amount);
-        } 
-
-        // decrease base incentives | note: there will be surplus to be withdrawn
-        if(currentTotalIncentives > amount) {
-            // update incentives for the epoch
-            epochs[epoch].totalBaseIncentives = amount;
-            
-            uint256 delta = currentTotalIncentives - amount;
-            TOTAL_INCENTIVES_DEPOSITED -= delta;
-            
-            // event
-        }
-
-        // increase base incentives
-        if(currentTotalIncentives < amount) {
-            // update incentives for the epoch
-            epochs[epoch].totalIncentives = amount;
-         
-            uint256 delta = amount - currentTotalIncentives;
-            TOTAL_INCENTIVES_DEPOSITED += delta;
-            
-            // event
-
-            // transfer esMoca to voting contract
-            esMOCA.transfer(address(this), delta);
-        }
-
-        // emit EpochEmissionsSet(epoch, amount);
-    }
-
-    //note: we do not add bonus incentives at a global level - pointless. rather just increment the totalBonusIncentives
-    // hence, epoch.totalBonusIncentives is used to track the total bonus incentives for an epoch [sum of pool bonuses + verifier bonuses]
-    //function setBonusIncentivesGlobal(uint128 epoch, uint128 extraAmount) external onlyRole(ADMIN_ROLE) {}
-
-    function setPoolBonusIncentives(uint128 epoch, bytes32[] calldata poolIds, uint128[] calldata bonusAmounts) external onlyRole(ADMIN_ROLE) {
-        require(poolIds.length > 0, "No pools specified");
-        require(poolIds.length == bonusAmounts.length, "Array length mismatch");
-        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
-
-        uint128 totalBonusAmounts;
-        for(uint256 i; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint128 bonusAmount = bonusAmounts[i];
-
-            // sanity checks
+        // white or blacklist pool
+    /*    function whitelistPool(bytes32 poolId, bool isWhitelisted) external onlyRole(DEFAULT_ADMIN_ROLE) {
             require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-            require(pools[poolId].isActive, "Pool inactive");
-            require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
-            require(bonusAmount > 0, "Bonus amount must be positive");
-
-            // update pool's bonus incentives
-            pools[poolId].totalBonusIncentives += bonusAmount;
-            epochPools[epoch][poolId].totalBonusIncentives += bonusAmount;
-
-            // increment counter 
-            totalBonusAmounts += bonusAmount;
+            pools[poolId].isWhitelisted = isWhitelisted;
 
             // event
-            //emit PoolBonusIncentivesSet(epoch, poolId, bonusAmount);
-        }
-        
-        // increment global tracker for epoch
-        epochs[epoch].totalBonusIncentives += totalBonusAmounts;
-    }
+        }*/
 
-    // TODO
-    function setVerifierBonusIncentives(uint128 epoch, address verifier, uint128 bonusAmount) external onlyRole(ADMIN_ROLE) {
-        require(bonusAmount > 0, "Bonus amount must be positive");
-        require(epoch > _getCurrentEpoch(), "Can only set incentives for future epochs");
-        
-        // note: any other sanity checks for verifiers?
-        require(verifier != address(0), "Verifier cannot be zero address"); 
-        
-        
-        // update verifier's bonus incentives
-        verifierEpochData[epoch][verifier].bonusIncentivesClaimed += bonusAmount;
-
-        //TODO: continue
-    }
-
-    //TODO: withdraw unclaimed incentives
-    function withdrawUnclaimedIncentives() external onlyRole(DEFAULT_ADMIN_ROLE) {}
-    
 
 //-------------------------------internal functions-----------------------------------------
 
-    // isDelegated = true: delegate's voting power, false: voter's personal voting power
-    function _vote(address voter, bytes32[] calldata poolIds, uint128[] calldata weights, bool isDelegated) internal {
-        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
 
-        uint128 epoch = _getCurrentEpoch(); // based on timestamp
-        require(!epochs[epoch].isFullyFinalized, "Epoch finalized");
-
-        uint128 epochStart = _getEpochStartTimestamp(epoch);
-
-        // Get snapshot voting power
-        uint128 votingPower = veMOCA.balanceOfAt(voter, epochStart, isDelegated);
-        uint128 usedVotes = userEpochData[epoch][voter].totalVotesSpent;
-        require(votingPower > usedVotes, "No unused votes");
-
-        uint128 totalNewVotes = 0;
-        for (uint256 i = 0; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint128 weight = weights[i];
-
-            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-            require(pools[poolId].isActive, "Pool inactive");
-            require(pools[poolId].isWhitelisted, "Pool is not whitelisted");
-            require(weight > 0, "Zero weight");
-
-            userEpochPoolData[epoch][poolId][voter].totalVotesSpent += weight;
-            epochPools[epoch][poolId].totalVotes += weight;
-            pools[poolId].totalVotes += weight;
-            epochs[epoch].totalVotes += weight;
-
-            totalNewVotes += weight;
-        }
-
-        require(usedVotes + totalNewVotes <= votingPower, "Exceeds available voting power");
-        userEpochData[epoch][voter].totalVotesSpent += totalNewVotes;
-        
-        //emit Voted(msg.sender, epoch, poolIds, weights);
+    function _veMoca() internal view returns (IVotingEscrowMoca){
+        return IVotingEscrowMoca(ADDRESS_BOOK.getVotingEscrowMoca());
     }
 
-    // returns start time of specified epoch number
-    function _getEpochStartTimestamp(uint128 epoch) internal view returns (uint128) {
-        return EPOCH_ZERO_TIMESTAMP + (epoch * Constants.EPOCH_DURATION);
+    function _esMoca() internal view returns (IERC20){
+        return IERC20(ADDRESS_BOOK.getEscrowedMoca());
     }
 
-    // returns end time of specified epoch number
-    function _getEpochEndTimestamp(uint128 epoch) internal view returns (uint128) {
-        return EPOCH_ZERO_TIMESTAMP + ((epoch + 1) * Constants.EPOCH_DURATION);
+    function _moca() internal view returns (IERC20){
+        return IERC20(ADDRESS_BOOK.getMoca());
     }
 
-    //returns current epoch number
-    function _getCurrentEpoch() internal view returns (uint128) {
-        return _getEpochNumber(uint128(block.timestamp));
-    }
+//-------------------------------Modifiers---------------------------------------------------------------
 
-    //returns epoch number for a given timestamp
-    function _getEpochNumber(uint128 timestamp) internal view returns (uint128) {
-        require(timestamp >= EPOCH_ZERO_TIMESTAMP, "Before epoch 0");
-        return (timestamp - EPOCH_ZERO_TIMESTAMP) / Constants.EPOCH_DURATION;
+    modifier onlyVotingControllerAdmin() {
+        require(hasRole(VOTING_CONTROLLER_ADMIN_ROLE, msg.sender), "Caller is not a voting controller admin");
+        _;
     }
-
-    //returns current epoch start timestamp
-    function _getCurrentEpochStart() internal view returns (uint128) {
-        return _getEpochStartTimestamp(_getCurrentEpoch());
-    }
-
 
 //-------------------------------view functions-----------------------------------------
-
-    // returns start time of specified epoch number
-    function getEpochStartTimestamp(uint128 epoch) external view returns (uint128) {
-        return _getEpochStartTimestamp(epoch);
-    }
-
-    // returns end time of specified epoch number
-    function getEpochEndTimestamp(uint128 epoch) external view returns (uint128) {
-        return _getEpochEndTimestamp(epoch);
-    }
-
-    //returns current epoch number
-    function getCurrentEpoch() external view returns (uint128) {
-        return _getCurrentEpoch();
-    }
-
-    //returns epoch number for a given timestamp
-    function getEpochNumber(uint128 timestamp) external view returns (uint128) {
-        return _getEpochNumber(timestamp);
-    }
-
-    // returns current epoch start timestamp
-    function getCurrentEpochStart() external view returns (uint128) {
-        return _getCurrentEpochStart();
-    }
-
-
 
     function getEligibleSubsidy(address verifier, uint128 epoch, bytes32[] calldata poolIds) external view returns (uint128[] memory eligibleSubsidies) {
         require(poolIds.length > 0, "No pools specified");
@@ -718,3 +844,11 @@ contract VotingController is AccessControl {
         return eligibleSubsidies;
     }
 }
+
+
+/**
+    REMOVE EPOCH_ZERO_TIMESTAMP
+    drop the anchor and have all contracts work off unix
+    no need for epoch controller that way
+
+ */

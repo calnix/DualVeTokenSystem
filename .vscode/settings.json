@@ -1,0 +1,12 @@
+{
+    "wake.compiler.solc.remappings": [
+        "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+        "erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/",
+        "forge-std/=lib/forge-std/src/",
+        "halmos-cheatcodes/=lib/openzeppelin-contracts/lib/halmos-cheatcodes/src/",
+        "openzeppelin-contracts/=lib/openzeppelin-contracts/"
+    ],
+    "inline-bookmarks.view.showVisibleFilesOnly": false,
+    "inline-bookmarks.view.expanded": true,
+    "solidity.compileUsingRemoteVersion": "v0.8.27+commit.40a35a09"
+}

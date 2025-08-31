@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
-import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
+// External: OZ
+import {Ownable2Step, Ownable} from "./../lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 
 /**
  * @title AddressBook
  * @author Calnix
- * @notice Centralized address book for all system addresses.
+ * @notice Centralized address book for all system addresses [Main registry of addresses part of or connected to the protocol]
+ * @dev Owned by Governance multisig
  */
 
-contract AddressBook is Ownable {
+contract AddressBook is Ownable2Step {
 
     // ..... Main identifiers .....
 
@@ -20,16 +22,17 @@ contract AddressBook is Ownable {
     bytes32 private constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
     
     // Controllers
-    bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
+    //bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
     bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
     bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
-    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER';
+    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER';   //OmPm.sol
     
     // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
 
-    // Admin roles
-    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
+    // TODO: Admin -> check for coherence against ACL
+    bytes32 private constant DEFAULT_ADMIN_ROLE = 0x00;
+
 
     // Map of registered addresses
     mapping(bytes32 identifier => address registeredAddress) private _addresses;
@@ -38,7 +41,7 @@ contract AddressBook is Ownable {
     constructor(address globalAdmin_) Ownable(globalAdmin_) {
 
         // set global admin: DEFAULT_ADMIN_ROLE
-        _addresses[GLOBAL_ADMIN] = globalAdmin_;
+        _addresses[DEFAULT_ADMIN_ROLE] = globalAdmin_;
     }
 
 
@@ -49,11 +52,11 @@ contract AddressBook is Ownable {
     }
 
 
-    function getUSD8Token() external view returns (address) {
+    function getUSD8Token() external view returns (address) {   // forge-lint: disable-line(mixed-case-function)
         return _addresses[USD8];
     }
 
-    function getMocaToken() external view returns (address) {
+    function getMoca() external view returns (address) {
         return _addresses[MOCA];
     }
 
@@ -61,9 +64,8 @@ contract AddressBook is Ownable {
         return _addresses[ES_MOCA];
     }
 
-
-    function getEpochController() external view returns (address) {
-        return _addresses[EPOCH_CONTROLLER];
+    function getVotingEscrowMoca() external view returns (address) {
+        return _addresses[VOTING_ESCROW_MOCA];
     }
 
     function getAccessController() external view returns (address) {
@@ -84,7 +86,7 @@ contract AddressBook is Ownable {
     }
 
     function getGlobalAdmin() external view returns (address) {
-        return _addresses[GLOBAL_ADMIN];
+        return _addresses[DEFAULT_ADMIN_ROLE];
     }
 
 // ------------------------------ Setters --------------------------------
@@ -96,20 +98,3 @@ contract AddressBook is Ownable {
     }
 
 }
-
-
- 
-// https://github.com/aave-dao/aave-v3-origin/blob/main/src/contracts/protocol/configuration/PoolAddressesProvider.sol
-
-// on batch:
-// https://samczsun.com/two-rights-might-make-a-wrong/
-// https://blog.trailofbits.com/2021/12/16/detecting-miso-and-opyns-msg-value-reuse-vulnerability-with-slither/
-
-/** NOTE TODO 
-    If I combine AddressBook and AccessController, it streamlines a fair bit on the calls
-    However, that means that i cannot redeploy AccessController separately.
-
-    Aave allows for repdloyment of ACL, and its latest address is updated in AddressBook.
-    - is this useful for us?
-
- */
