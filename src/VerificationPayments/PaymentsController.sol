@@ -490,7 +490,6 @@ contract PaymentsController is EIP712, Pausable {
         uint256 subsidy;
         bytes32 poolId = _schemas[schemaId].poolId;
         if (poolId != bytes32(0)) {
-
             // for VotingController.claimSubsidies(): which calls getVerifierAndPoolAccruedSubsidies() on this contract
             subsidy = _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
         }
@@ -498,7 +497,7 @@ contract PaymentsController is EIP712, Pausable {
         // ---------------------------------------------------------------------
 
         // issuer accounting
-        _issuers[issuerId].totalFeesAccrued += (amount - protocolFee);
+        _issuers[issuerId].totalFeesAccrued += (amount - protocolFee - votingFee);  //total net fees?
         ++_issuers[issuerId].totalVerified;
 
         // verifier accounting
@@ -523,7 +522,6 @@ contract PaymentsController is EIP712, Pausable {
         //note: not needed; drop to reduce storage updates
         //_epochSchemaFeesAccrued[currentEpoch][schemaId].feesAccruedToProtocol = protocolFee;
         //_epochSchemaFeesAccrued[currentEpoch][schemaId].feesAccruedToVoters = votingFee;
-
 
         // ---------------------------------------------------------------------
 
@@ -552,7 +550,7 @@ contract PaymentsController is EIP712, Pausable {
         // book verifier's subsidy
         _epochPoolSubsidies[currentEpoch][poolId] += subsidy;
         _epochPoolVerifierSubsidies[currentEpoch][poolId][verifierId] += subsidy;
-        _epochPoolSchemaSubsidies[currentEpoch][poolId][schemaId] += subsidy;
+        _epochPoolSchemaSubsidies[currentEpoch][poolId][schemaId] += subsidy;  // @follow-up not used; only for completeness. drop?
 
         emit Events.SubsidyBooked(verifierId, poolId, schemaId, subsidy);
 
@@ -596,6 +594,9 @@ contract PaymentsController is EIP712, Pausable {
     function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyPaymentsAdmin {
         // protocol fee cannot be greater than 100%
         require(protocolFeePercentage < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
+        // total fee percentage cannot be greater than 100%
+        require(protocolFeePercentage + VOTER_FEE_PERCENTAGE < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
+
         PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
 
         emit Events.ProtocolFeePercentageUpdated(protocolFeePercentage);
@@ -605,6 +606,9 @@ contract PaymentsController is EIP712, Pausable {
     function updateVoterFeePercentage(uint256 voterFeePercentage) external onlyPaymentsAdmin {
         // voter fee cannot be greater than 100%
         require(voterFeePercentage < Constants.PRECISION_BASE, "Invalid voter fee percentage");
+        // total fee percentage cannot be greater than 100%
+        require(voterFeePercentage + PROTOCOL_FEE_PERCENTAGE < Constants.PRECISION_BASE, "Invalid voter fee percentage");
+        
         VOTER_FEE_PERCENTAGE = voterFeePercentage;
 
         emit Events.VoterFeePercentageUpdated(voterFeePercentage);

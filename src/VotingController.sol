@@ -558,6 +558,7 @@ contract VotingController is Pausable {
 
 //-------------------------------admin: finalize, deposit, withdraw subsidies-----------------------------------------
 
+    // to be called at the end of an epoch
     // @follow-up what if subsidies are 0 for an epoch? intentionally?
     function finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds) external onlyVotingControllerAdmin {
         require(poolIds.length > 0, Errors.InvalidArray());
@@ -615,6 +616,7 @@ contract VotingController is Pausable {
         }
     }
 
+    // to be called at the end of an epoch
     // subsidies for verifiers, for an epoch. to be distributed amongst pools based on votes
     // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
     function depositSubsidies(uint256 epoch, uint256 depositSubsidies) external onlyVotingControllerAdmin {
