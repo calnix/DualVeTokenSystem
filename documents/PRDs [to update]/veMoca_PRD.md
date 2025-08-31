@@ -67,9 +67,34 @@ Extend your lock; what happens to veMOCA?
 ## Redeeming veMoca for Moca
 
 - Staked $MOCA is redeemable in full only after full lock expiry.
-- Early redemption is allowed with a penalty
+- Early redemption is not allowed
 
-### Early Redemption Penalty
+## Locking esMoca for veMoca
+
+- treated as MOCA
+- same formula applies
+
+## stakeOnBehalf for user
+
+- stake moca for them
+- we will decide duration
+
+## auto-staking
+
+Users can opt for rewards to be auto-staked to the same lock
+
+1. claim on a per lock basis and auto-compound
+2. claimAll()
+
+# Archive
+
+## 7-Day Unbonding Delay (Archived)
+
+- ignore for now
+
+## Early of veMoca
+
+Early Redemption Penalty 
 
 The early redemption penalty is calculated based on the time elapsed since locking:
 
@@ -103,24 +128,3 @@ User immediately loses all voting rights of the early redemption amount.
 *calculate asset ratio on initial veMoca or current VeMoca -decay*
 
 Early redemption is blockable by admin. enable/disable.
-
-## Locking esMoca for veMoca
-
-- treated as MOCA
-- same formula applies
-
-## stakeOnBehalf for user
-
-- stake moca for them
-- we will decide duration
-
-## auto-staking
-
-Users can opt for rewards to be auto-staked to the same lock
-
-1. claim on a per lock basis and auto-compound
-2. claimAll()
-
-## 7-Day Unbonding Delay (Archived)
-
-- ignore for now

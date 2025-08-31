@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
-import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+// External: OZ
+import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
+
+// libraries
+import {Errors} from "./libraries/Errors.sol";
 
 // interfaces
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
@@ -30,20 +34,24 @@ contract AccessController is AccessControl {
             );
     */
     
-    // ROLES
-    bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause
+    // ROLES w/ scripts
+    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause | attached to script
+    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // createLockFor | attached to script
+    bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // emergencyExit | attached to script
+    
+    
+    bytes32 private constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256('PAYMENTS_CONTROLLER_ADMIN_ROLE'); 
+    bytes32 private constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256('VOTING_CONTROLLER_ADMIN_ROLE');    
 
+    bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params | attached to script
 
-    //bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params
-    //bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // stakeOnBehalf
-    //bytes32 public constant EMERGENCY_ADMIN_ROLE = keccak256('EMERGENCY_ADMIN');
+    // ROLES w/o scripts
+    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
 
 
     /**
-    * @dev Constructor
-    * @dev Global admin address should be initialized at the AddressBook beforehand
-    * @dev Global admin is the DEFAULT_ADMIN_ROLE for this contract
-    * @param _addressBook The address of the AddressBook
+     * @dev Constructor
+     * @param addressBook_ The address of the AddressBook
     */
     constructor(address addressBook_) {
 
@@ -54,7 +62,7 @@ contract AccessController is AccessControl {
         address globalAdmin = _addressBook.getGlobalAdmin();
         require(globalAdmin != address(0), Errors.GlobalAdminCannotBeZero());
 
-        _setupRole(DEFAULT_ADMIN_ROLE, globalAdmin);
+        _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
     }
 
 // ----- external -----
@@ -67,6 +75,26 @@ contract AccessController is AccessControl {
     */
     function setRoleAdmin(bytes32 role, bytes32 adminRole) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRoleAdmin(role, adminRole);
+    }
+
+// ----- GLOBAL_ADMIN ROLE -----
+
+    /** note
+        do you want to have a separate global admin tt is not DEFAULT_ADMIN_ROLE[0x00]?
+        - how would it be useful?
+     */
+
+
+    function addGlobalAdmin(address addr) external {
+        _grantRole(DEFAULT_ADMIN_ROLE, addr);
+    }
+
+    function removeGlobalAdmin(address addr) external {
+        _revokeRole(DEFAULT_ADMIN_ROLE, addr);
+    }
+
+    function isGlobalAdmin(address addr) external view returns (bool) {
+        return hasRole(DEFAULT_ADMIN_ROLE, addr);
     }
 
 // ----- MONITOR ROLE -----
@@ -87,19 +115,64 @@ contract AccessController is AccessControl {
         return hasRole(MONITOR_ROLE, addr);
     }
 
-// ----- PaymentsController Admin: PaymentsAdmin -----
+// ----- CRON_JOB ROLE -----
 
-    function addPaymentsAdmin(address addr) external {
-        grantRole(PAYMENTS_ADMIN_ROLE, addr);
+    function addCronJob(address addr) external {
+        grantRole(CRON_JOB_ROLE, addr);
     }
 
-    function removePaymentsAdmin(address addr) external {
-        revokeRole(PAYMENTS_ADMIN_ROLE, addr);
+    function removeCronJob(address addr) external {
+        revokeRole(CRON_JOB_ROLE, addr);
     }
 
-    function isPaymentsAdmin(address addr) external view returns (bool) {
-        return hasRole(PAYMENTS_ADMIN_ROLE, addr);
+    function isCronJob(address addr) external view returns (bool) {
+        return hasRole(CRON_JOB_ROLE, addr);
     }
+
+
+// ----- EMERGENCY_EXIT ROLE -----
+
+    function addEmergencyExitHandler(address addr) external {
+        grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    }
+
+    function removeEmergencyExitHandler(address addr) external {
+        revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    }
+
+    function isEmergencyExitHandler(address addr) external view returns (bool) {
+        return hasRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    }
+
+
+// ----- PaymentsController Admin -----
+
+    function addPaymentsControllerAdmin(address addr) external {
+        grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+    function removePaymentsControllerAdmin(address addr) external {
+        revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+    function isPaymentsControllerAdmin(address addr) external view returns (bool) {
+        return hasRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+// ----- VotingController Admin -----
+
+    function addVotingControllerAdmin(address addr) external {
+        grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+    function removeVotingControllerAdmin(address addr) external {
+        revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+    function isVotingControllerAdmin(address addr) external view returns (bool) {
+        return hasRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
 
 // ----- OPERATOR ROLE -----
 
@@ -115,7 +188,6 @@ contract AccessController is AccessControl {
         return hasRole(OPERATOR_ROLE, addr);
     }
 
-// ----- CRON JOB ROLE -----
 
 
 
