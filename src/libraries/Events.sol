@@ -58,9 +58,10 @@ library Events {
     event VerifierMocaUnstaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
     event VerifierSignerAddressUpdated(bytes32 indexed verifierId, address signerAddress);
 
-    // updateAssetAddress
+    // updateAssetAddress + updateAdminAddress
     event AssetAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
-    
+    event AdminAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAdminAddress);
+
     // deductBalance()
     event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
     event BalanceDeducted(bytes32 indexed verifierId, bytes32 indexed schemaId, bytes32 indexed issuerId, uint256 amount);
