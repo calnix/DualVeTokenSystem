@@ -72,9 +72,9 @@ contract PaymentsController is EIP712, Pausable {
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) private _epochPoolVerifierSubsidies;        // totalSubsidiesPerPoolPerEpochPerVerifier
     
     // for VotingController.claimRewards()
-    mapping(uint256 epoch => mapping(bytes32 poolId => FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
+    mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
-    mapping(uint256 epoch => FeesAccrued feesAccrued) private _epochFeesAccrued;    
+    mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) private _epochFeesAccrued;    
 
 //-------------------------------constructor-----------------------------------------
 
@@ -95,7 +95,7 @@ contract PaymentsController is EIP712, Pausable {
         // check if voter fee percentage is valid
         require(voterFeePercentage < Constants.PRECISION_BASE, Errors.InvalidFeePercentage());
         require(voterFeePercentage > 0, Errors.InvalidFeePercentage());
-        VOTER_FEE_PERCENTAGE = voterFeePercentage;
+        VOTING_FEE_PERCENTAGE = voterFeePercentage;
 
         // min. delay period is 1 epoch; value must be in epoch intervals
         require(delayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
@@ -149,7 +149,7 @@ contract PaymentsController is EIP712, Pausable {
 
         // sanity check: fee cannot be greater than 1000 USD8
         // fee is an absolute value expressed in USD8 terms | free credentials are allowed
-        require(fee < 1000 * Constants.USD8_PRECISION, Errors.InvalidFee());
+        require(fee < 1000 * Constants.USD8_PRECISION, Errors.InvalidAmount());
 
         // generate schemaId
         bytes32 schemaId;
@@ -181,16 +181,16 @@ contract PaymentsController is EIP712, Pausable {
      * @param newFee The new fee to set, expressed in USD8 (6 decimals).
      * @return newFee The new fee that was set. Returns value for better middleware integration.
      */
-    function updateSchemaFee(bytes32 issuerId, bytes32 schemaId, uint256 newFee) external returns (uint256) {
+    function updateSchemaFee(bytes32 issuerId, bytes32 schemaId, uint128 newFee) external returns (uint256) {
         // check if issuerId matches msg.sender
         require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
         // check if schemaId is valid
-        require(_schemas[schemaId].schemaId != bytes32(0), Errors.InvalidSchema());
+        require(_schemas[schemaId].schemaId != bytes32(0), Errors.InvalidId());
 
 
         // sanity check: fee cannot be greater than 10,000 USD8
         // fee is an absolute value expressed in USD8 terms | free credentials are allowed
-        require(newFee < 10_000 * Constants.USD8_PRECISION, Errors.InvalidFee());
+        require(newFee < 10_000 * Constants.USD8_PRECISION, Errors.InvalidAmount());
 
         // decrementing fee is applied immediately
         uint256 currentFee = _schemas[schemaId].currentFee;
@@ -204,7 +204,7 @@ contract PaymentsController is EIP712, Pausable {
             _schemas[schemaId].nextFee = newFee;
             
             // set next fee timestamp
-            uint256 nextFeeTimestamp = block.timestamp + DELAY_PERIOD;
+            uint128 nextFeeTimestamp = uint128(block.timestamp + DELAY_PERIOD);
             _schemas[schemaId].nextFeeTimestamp = nextFeeTimestamp;
 
             emit Events.SchemaNextFeeSet(schemaId, newFee, nextFeeTimestamp, currentFee);
@@ -225,13 +225,13 @@ contract PaymentsController is EIP712, Pausable {
         // check if issuerId matches msg.sender
         require(_issuers[issuerId].assetAddress == msg.sender, Errors.InvalidCaller());
 
-        uint256 claimableFees = _issuers[issuerId].totalFeesAccrued - _issuers[issuerId].totalClaimed;
+        uint256 claimableFees = _issuers[issuerId].totalNetFeesAccrued - _issuers[issuerId].totalClaimed;
 
         // check if issuer has claimable fees
         require(claimableFees > 0, Errors.NoClaimableFees());
 
-        // overwrite .totalClaimed with .totalFeesAccrued
-        _issuers[issuerId].totalClaimed = _issuers[issuerId].totalFeesAccrued;
+        // overwrite .totalClaimed with .totalNetFeesAccrued
+        _issuers[issuerId].totalClaimed = _issuers[issuerId].totalNetFeesAccrued;
 
         // update global counter
         TOTAL_CLAIMED_VERIFICATION_FEES += claimableFees;
@@ -285,14 +285,15 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier to deposit for.
      * @param amount The amount of USD8 to deposit.
      */
-    function deposit(bytes32 verifierId, uint256 amount) external {
+    function deposit(bytes32 verifierId, uint128 amount) external {
         // check msg.sender is verifierId's asset address
-        require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
+        address assetAddress = _verifiers[verifierId].assetAddress;
+        require(assetAddress == msg.sender, Errors.InvalidCaller());
 
         // STORAGE: update balance
         _verifiers[verifierId].currentBalance += amount;
 
-        emit Events.VerifierDeposited(verifierId, msg.sender, assetAddress, amount);
+        emit Events.VerifierDeposited(verifierId, assetAddress, amount);
 
         // transfer funds to verifier
         IERC20(_addressBook.getUSD8Token()).safeTransferFrom(msg.sender, address(this), amount);
@@ -306,20 +307,21 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier to withdraw from.
      * @param amount The amount of USD8 to withdraw.
      */
-    function withdraw(bytes32 verifierId, uint256 amount) external {
+    function withdraw(bytes32 verifierId, uint128 amount) external {
         require(amount > 0, Errors.InvalidAmount());
 
         // check msg.sender is verifierId's asset address
-        require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
+        address assetAddress = _verifiers[verifierId].assetAddress;
+        require(assetAddress == msg.sender, Errors.InvalidCaller());
 
         // check if verifier has enough balance
-        uint256 balance = _verifiers[verifierId].currentBalance;
+        uint128 balance = _verifiers[verifierId].currentBalance;
         require(balance >= amount, Errors.InvalidAmount());
 
         // STORAGE: update balance
-        _verifiers[verifierId].balance -= amount;
+        _verifiers[verifierId].currentBalance -= amount;
 
-        emit Events.VerifierWithdrew(verifierId, msg.sender, assetAddress, amount);
+        emit Events.VerifierWithdrew(verifierId, assetAddress, amount);
 
         // transfer funds to verifier
         IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, amount);
@@ -353,11 +355,12 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier to stake MOCA for.
      * @param amount The amount of MOCA to stake.
      */
-    function stakeMoca(bytes32 verifierId, uint256 amount) external {
+    function stakeMoca(bytes32 verifierId, uint128 amount) external {
         require(amount > 0, Errors.InvalidAmount());
         
         // check msg.sender is verifierId's asset address
-        require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
+        address assetAddress = _verifiers[verifierId].assetAddress;
+        require(assetAddress == msg.sender, Errors.InvalidCaller());
 
         // STORAGE: update moca staked
         _verifiers[verifierId].mocaStaked += amount;
@@ -376,11 +379,12 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier to unstake MOCA for.
      * @param amount The amount of MOCA to unstake.
      */
-    function unstakeMoca(bytes32 verifierId, uint256 amount) external {
+    function unstakeMoca(bytes32 verifierId, uint128 amount) external {
         require(amount > 0, Errors.InvalidAmount());
 
         // check msg.sender is verifierId's asset address
-        require(_verifiers[verifierId].assetAddress == msg.sender, Errors.InvalidCaller());
+        address assetAddress = _verifiers[verifierId].assetAddress;
+        require(assetAddress == msg.sender, Errors.InvalidCaller());
 
         // check if verifier has enough moca staked
         require(_verifiers[verifierId].mocaStaked >= amount, Errors.InvalidAmount());
@@ -432,16 +436,16 @@ contract PaymentsController is EIP712, Pausable {
 
     //TODO: subsidy based on staking tiers -> calculate and book subsidy into _verifierSubsidies
     // make this fn as gas optimized as possible
-    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 amount, uint256 expiry, bytes calldata signature) external {
+    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external {
         require(expiry > block.timestamp, Errors.SignatureExpired());
 
         // nextFee check
-        uint256 nextFee = _schemas[schemaId].nextFee;
+        uint128 nextFee = _schemas[schemaId].nextFee;
         // if nextFee is set, check if it's time to apply it
         if(nextFee > 0) {
             if(_schemas[schemaId].nextFeeTimestamp <= block.timestamp) {
                 // apply nextFee
-                uint256 currentFee = _schemas[schemaId].currentFee;
+                uint128 currentFee = _schemas[schemaId].currentFee;
                 _schemas[schemaId].currentFee = nextFee;
                 // delete nextFee and nextFeeTimestamp
                 delete _schemas[schemaId].nextFee;
@@ -462,8 +466,8 @@ contract PaymentsController is EIP712, Pausable {
 
 
         // ----- Verify signature -----
-            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
             address signerAddress = _verifiers[verifierId].signerAddress;
+            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
             // handles both EOA and contract signatures | returns true if signature is valid
             require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
         
@@ -472,8 +476,8 @@ contract PaymentsController is EIP712, Pausable {
 
 
         // ----- Calc. fee split -----
-        uint256 protocolFee = (PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
-        uint256 votingFee = (VOTING_FEE_PERCENTAGE > 0) ? (amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+        uint128 protocolFee = (PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
+        uint128 votingFee = (VOTING_FEE_PERCENTAGE > 0) ? (amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0;
 
         // get current epoch
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
@@ -488,7 +492,7 @@ contract PaymentsController is EIP712, Pausable {
         // ---------------------------------------------------------------------
 
         // issuer: global accounting
-        _issuers[issuerId].totalNetFeesAccrued += (amount - protocolFee - votingFee);  
+        _issuers[issuerId].totalNetFeesAccrued += (amount - protocolFee - votingFee);  // all uint128
         ++_issuers[issuerId].totalVerified;
 
         // verifier: global accounting
@@ -555,7 +559,7 @@ contract PaymentsController is EIP712, Pausable {
 
     function updateDelayPeriod(uint256 delayPeriod) external onlyPaymentsAdmin {
         require(delayPeriod > 0, "Invalid delay period");
-        require(delayPeriod % Constants.EPOCH_DURATION == 0, "Delay period must be a multiple of epoch duration");
+        require(delayPeriod % EpochMath.EPOCH_DURATION == 0, "Delay period must be a multiple of epoch duration");
 
         DELAY_PERIOD = delayPeriod;
 
@@ -567,7 +571,7 @@ contract PaymentsController is EIP712, Pausable {
         // protocol fee cannot be greater than 100%
         require(protocolFeePercentage < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
         // total fee percentage cannot be greater than 100%
-        require(protocolFeePercentage + VOTER_FEE_PERCENTAGE < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
+        require(protocolFeePercentage + VOTING_FEE_PERCENTAGE < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
 
         PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
 
@@ -575,15 +579,15 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     // voter fee can be 0
-    function updateVoterFeePercentage(uint256 voterFeePercentage) external onlyPaymentsAdmin {
+    function updateVotingFeePercentage(uint256 votingFeePercentage) external onlyPaymentsAdmin {
         // voter fee cannot be greater than 100%
-        require(voterFeePercentage < Constants.PRECISION_BASE, "Invalid voter fee percentage");
+        require(votingFeePercentage < Constants.PRECISION_BASE, "Invalid voting fee percentage");
         // total fee percentage cannot be greater than 100%
-        require(voterFeePercentage + PROTOCOL_FEE_PERCENTAGE < Constants.PRECISION_BASE, "Invalid voter fee percentage");
+        require(votingFeePercentage + PROTOCOL_FEE_PERCENTAGE < Constants.PRECISION_BASE, "Invalid voting fee percentage");
         
-        VOTER_FEE_PERCENTAGE = voterFeePercentage;
+        VOTING_FEE_PERCENTAGE = votingFeePercentage;
 
-        emit Events.VoterFeePercentageUpdated(voterFeePercentage);
+        emit Events.VotingFeePercentageUpdated(votingFeePercentage);
     }
 
     // used to set/overwrite/update
@@ -591,7 +595,7 @@ contract PaymentsController is EIP712, Pausable {
         require(mocaStaked > 0, "Invalid moca staked");
         require(subsidyPercentage < Constants.PRECISION_BASE, "Invalid subsidy percentage");
 
-        _verifierStakingTiers[mocaStaked] = subsidyPercentage;
+        _verifiersStakingTiers[mocaStaked] = subsidyPercentage;
 
         emit Events.VerifierStakingTierUpdated(mocaStaked, subsidyPercentage);
     }
@@ -622,7 +626,7 @@ contract PaymentsController is EIP712, Pausable {
 
         emit Events.VotersFeesWithdrawn(epoch, votersFees);
     }
-
+/*
     function withdrawFees(uint256 epoch, bool isProtocolFee) external onlyPaymentsAdmin {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
         
@@ -668,15 +672,15 @@ contract PaymentsController is EIP712, Pausable {
                 emit Events.VotersFeesWithdrawn(epoch, votersFees);
             } 
         */
-    }
-
+ /*   }
+*/
 //------------------------------- risk -------------------------------------------------------
 
     /**
      * @notice Pause contract. Cannot pause once frozen
      */
     function pause() external whenNotPaused onlyMonitor {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        if(_isFrozen == 1) revert Errors.IsFrozen(); 
         _pause();
     }
 
@@ -684,7 +688,7 @@ contract PaymentsController is EIP712, Pausable {
      * @notice Unpause pool. Cannot unpause once frozen
      */
     function unpause() external whenPaused onlyGlobalAdmin {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        if(_isFrozen == 1) revert Errors.IsFrozen(); 
         _unpause();
     }
 
@@ -695,9 +699,9 @@ contract PaymentsController is EIP712, Pausable {
      *      Enables emergencyExit() to be called.
      */
     function freeze() external whenPaused onlyGlobalAdmin {
-        if(isFrozen == 1) revert Errors.IsFrozen();
-        isFrozen = 1;
-        emit Events.ContractFrozen(block.timestamp);
+        if(_isFrozen == 1) revert Errors.IsFrozen();
+        _isFrozen = 1;
+        emit Events.ContractFrozen();
     }  
 
 
@@ -713,14 +717,14 @@ contract PaymentsController is EIP712, Pausable {
         for(uint256 i; i < verifierIds.length; ++i) {
             
             // get balance: if 0, skip
-            uint256 verifierBalance = _verifiers[verifierIds[i]].balance;
+            uint256 verifierBalance = _verifiers[verifierIds[i]].currentBalance;
             if(verifierBalance == 0) continue;
 
-            // get deposit address
-            address verifierDepositAddress = _verifiers[verifierIds[i]].depositAddress;
+            // get asset address
+            address verifierAssetAddress = _verifiers[verifierIds[i]].assetAddress;
 
             // transfer balance to verifier
-            IERC20(usd8).safeTransfer(verifierDepositAddress, verifierBalance);
+            IERC20(usd8).safeTransfer(verifierAssetAddress, verifierBalance);
         }
 
         emit Events.EmergencyExitVerifiers(verifierIds);
@@ -738,14 +742,14 @@ contract PaymentsController is EIP712, Pausable {
         for(uint256 i; i < issuerIds.length; ++i) {
 
             // get unclaimed fees: if 0, skip
-            uint256 issuerBalance = _issuers[issuerIds[i]].totalEarned - _issuers[issuerIds[i]].totalClaimed;
+            uint256 issuerBalance = _issuers[issuerIds[i]].totalNetFeesAccrued - _issuers[issuerIds[i]].totalClaimed;
             if(issuerBalance == 0) continue;
 
-            // get wallet address
-            address issuerWallet = _issuers[issuerIds[i]].wallet;
+            // get asset address
+            address issuerAssetAddress = _issuers[issuerIds[i]].assetAddress;
 
             // transfer balance to issuer
-            IERC20(usd8).safeTransfer(issuerWallet, issuerBalance);
+            IERC20(usd8).safeTransfer(issuerAssetAddress, issuerBalance);
         }
 
         emit Events.EmergencyExitIssuers(issuerIds);
@@ -775,8 +779,10 @@ contract PaymentsController is EIP712, Pausable {
 //-------------------------------view functions---------------------------------------------
    
     // called by VotingController.claimSubsidies
-    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier) external view returns (uint256, uint256) {
-        return (_epochPoolVerifierSubsidies[epoch][poolId][verifier], _epochPoolSubsidies[epoch][poolId]);
+    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint256, uint256) {
+        // verifiers's asset address must be the caller of VotingController.claimSubsidies
+        require(caller == _verifiers[verifierId].assetAddress, Errors.InvalidCaller());
+        return (_epochPoolVerifierSubsidies[epoch][poolId][verifierId], _epochPoolSubsidies[epoch][poolId]);
     }
 
     // called by VotingController.depositRewards()
@@ -784,38 +790,21 @@ contract PaymentsController is EIP712, Pausable {
         return _epochPoolFeesAccrued[epoch][poolId].feesAccruedToVoters;
     }
 
-    
 
-
-    /**
-     * @notice Returns the fees accrued to voters for a given epoch
-     * @param epoch The epoch number
-     * @param schemaId The schema id
-     * @return feesAccruedToVoters The amount of fees accrued to voters in the given epoch
-     */
-    function feesAccruedToVoters(uint256 epoch, bytes32 schemaId) external view returns (uint256) {
-        return _epochs[epoch][schemaId].feesAccruedToVoters;
-    }
-
-
-    function getIssuer(bytes32 issuerId) external view returns (Issuer memory) {
+    function getIssuer(bytes32 issuerId) external view returns (DataTypes.Issuer memory) {
         return _issuers[issuerId];
     }
 
-    function getSchema(bytes32 schemaId) external view returns (Schema memory) {
+    function getSchema(bytes32 schemaId) external view returns (DataTypes.Schema memory) {
         return _schemas[schemaId];
     }
 
-    function getVerifier(bytes32 verifierId) external view returns (Verifier memory) {
+    function getVerifier(bytes32 verifierId) external view returns (DataTypes.Verifier memory) {
         return _verifiers[verifierId];
     }
 
     function getVerifierNonce(address verifier) external view returns (uint256) {
         return _verifierNonces[verifier];
-    }
-
-    function getEpoch(uint256 epoch) external view returns (Epoch memory) {
-        return _epochs[epoch];
     }
 
     // nice to have
@@ -828,7 +817,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     function getVoterFeePercentage() external view returns (uint256) {
-        return VOTER_FEE_PERCENTAGE;
+        return VOTING_FEE_PERCENTAGE;
     }
 
     function getDelayPeriod() external view returns (uint256) {
@@ -838,10 +827,6 @@ contract PaymentsController is EIP712, Pausable {
     /*
     function getAddressBook() external view returns (IAddressBook) {
         return _addressBook;
-    }
-
-    function getEpochController() external view returns (IEpochController) {
-        return _epochController;
     }
 */
 

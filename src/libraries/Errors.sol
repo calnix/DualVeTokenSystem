@@ -6,10 +6,13 @@ library Errors {
     // --------- Generic ---------
     error InvalidUser(); 
     error InvalidAmount();
+    error InvalidAddress();
     error InvalidExpiry();
+    error InvalidEpoch();
     error InvalidArray();
     error MismatchedArrayLengths();
-
+    error InvalidFeePercentage();
+    error InvalidDelayPeriod();
     error IsFrozen();
 
     // Access control
@@ -17,6 +20,8 @@ library Errors {
 
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
+    error InvalidId();
+    error SignatureExpired();
     error NoClaimableFees();
     error InvalidSchemaFee();
     error InsufficientBalance();
@@ -24,6 +29,8 @@ library Errors {
     error ZeroSubsidy();
     error ZeroProtocolFee();
     error ProtocolFeeAlreadyWithdrawn();
+    error VotersFeeAlreadyWithdrawn();
+    error ZeroVotersFee();
 
 // --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();

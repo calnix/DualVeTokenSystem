@@ -8,14 +8,14 @@ library Events {
 
 
 
-    // --------- VotingEscrowMoca.sol ---------
+// --------- VotingEscrowMoca.sol ---------
     event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);
     // delegate
     event DelegateRegistered(address indexed delegate);
     event DelegateUnregistered(address indexed delegate);
     event EmergencyExit(bytes32[] lockIds);
 
-    // --------- VotingController.sol ---------
+// --------- VotingController.sol ---------
     event Voted(uint256 indexed epoch, address indexed caller, bytes32[] poolIds, uint256[] votes, bool isDelegated);
     event VotesMigrated(uint256 indexed epoch, address indexed caller, bytes32[] srcPoolIds, bytes32[] dstPoolIds, uint256[] votes, bool isDelegated);
     event DelegateRegistered(address indexed delegate, uint256 feePct);
@@ -40,7 +40,7 @@ library Events {
     event EpochPartiallyFinalized(uint256 indexed epoch, bytes32[] poolIds);
     event EpochFullyFinalized(uint256 indexed epoch);
 
-    // --------- PaymentsController.sol ---------
+// --------- PaymentsController.sol ---------
     event IssuerCreated(bytes32 indexed issuerId, address adminAddress, address assetAddress);
     event VerifierCreated(bytes32 indexed verifierId, address adminAddress, address signerAddress, address assetAddress);
     event SchemaCreated(bytes32 indexed schemaId, bytes32 issuerId, uint256 fee);
@@ -52,10 +52,12 @@ library Events {
     event IssuerFeesClaimed(bytes32 indexed issuerId, uint256 claimableFees);
 
     // verifier: deposit(), withdraw(), stakeMoca(), unstakeMoca()
-    event VerifierDeposited(bytes32 indexed verifierId, address indexed assetAddress, uint256 amount);
-    event VerifierWithdrew(bytes32 indexed verifierId, address indexed assetAddress, uint256 amount);
+    event VerifierDeposited(bytes32 indexed verifierId, address indexed assetAddress, uint128 amount);
+    event VerifierWithdrew(bytes32 indexed verifierId, address indexed assetAddress, uint128 amount);
     event VerifierMocaStaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
     event VerifierMocaUnstaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
+    event VerifierSignerAddressUpdated(bytes32 indexed verifierId, address signerAddress);
+
     // updateAssetAddress
     event AssetAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
     
@@ -66,11 +68,12 @@ library Events {
     event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);
     event DelayPeriodUpdated(uint256 delayPeriod);
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
-    event VoterFeePercentageUpdated(uint256 voterFeePercentage);
+    event VotingFeePercentageUpdated(uint256 voterFeePercentage);
     event VerifierStakingTierUpdated(uint256 stakingTier, uint256 stakingAmount);
     
-    // withdrawProtocolFees
+    // withdrawProtocolFees, withdrawVotersFees
     event ProtocolFeesWithdrawn(uint256 epoch, uint256 protocolFees);
+    event VotersFeesWithdrawn(uint256 epoch, uint256 votersFees);
 
     // emergencyExit
     event EmergencyExitIssuers(bytes32[] issuerIds);
