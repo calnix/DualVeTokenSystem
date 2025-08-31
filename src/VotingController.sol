@@ -106,7 +106,7 @@ contract VotingController is Pausable {
         // personal
         uint128 totalVotesSpent;
         uint128 totalRewards;       // total accrued rewards
-        uint128 totalClaimed;
+        uint128 totalClaimed;       // @follow-up : convert to bool?
         
         // delegated
         //uint128 totalVotesDelegated; --> votes are booked under delegate's name
@@ -390,44 +390,39 @@ contract VotingController is Pausable {
     function claimRewards(uint256 epoch, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, Errors.InvalidArray());
 
-        // sanity check: epoch | can only claim for ended epochs
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(epoch < currentEpoch, Errors.InvalidEpoch());
+        // epoch must be finalized
+        require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
 
         uint256 totalClaimableRewards;
         for(uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
             
-            //sanity check: pool exists
+            //sanity check: pool exists + user has not claimed rewards yet
             require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed == 0, Errors.RewardsAlreadyClaimed());    
+
             //require(pools[poolId].isActive, "Pool inactive");  ---> pool could be currently inactive but have unclaimed prior rewards 
 
-            // get pool's rewardsPerVote
-            uint256 latestRewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;
-            require(latestRewardsPerVote > 0, Errors.NoRewardsToClaim());     // either no deposit made, or no fees accrued
-        
-            // get user's pool votes for the epoch
+            // get pool's rewardsPerVote + user's pool votes 
+            uint256 rewardsPerVote = epochPools[epoch][poolId].rewardsPerVote;          
             uint256 userPoolVotes = usersEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent;
-            require(userPoolVotes > 0, Errors.NoVotesInPool());
 
-            // calc. user's latest total rewards [accounting for new deposits made]
-            uint256 userLatestTotalRewards = userPoolVotes * latestRewardsPerVote;
+            // calc. user's rewards for the pool
+            uint256 userRewards = userPoolVotes * rewardsPerVote;
+            require(userRewards > 0, Errors.NoRewardsToClaim());
 
-            // calc. claimable rewards + update user's total claimed
-            uint256 claimableRewards = userLatestTotalRewards - usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed;
-            require(claimableRewards > 0, Errors.NoRewardsToClaim());
-
-            // STORAGE: overwrite user's .totalRewards & .totalClaimed
-            usersEpochPoolData[epoch][poolId][msg.sender].totalRewards = userLatestTotalRewards;
-            usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed = userLatestTotalRewards;
+            // STORAGE: update user's .totalRewards & .totalClaimed
+            usersEpochPoolData[epoch][poolId][msg.sender].totalRewards = userRewards;
+            usersEpochPoolData[epoch][poolId][msg.sender].totalClaimed = userRewards;
 
             // update counter
-            totalClaimableRewards += claimableRewards;
+            totalClaimableRewards += userRewards;
         }
 
-        // update user's total claimed for all pools    
+        // update user's total claimed+rewards for all pools
+        usersEpochData[epoch][msg.sender].totalRewards += totalClaimableRewards;
         usersEpochData[epoch][msg.sender].totalClaimed += totalClaimableRewards;
-
+        
         // transfer esMoca to user
         _esMoca().safeTransfer(msg.sender, totalClaimableRewards);
 

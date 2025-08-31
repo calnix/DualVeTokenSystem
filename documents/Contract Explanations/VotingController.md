@@ -89,7 +89,7 @@ Voters vote on credential pools in Epoch N:
 
 0. redo so tt rewards are epoch locked, not adhoc
 
-1. claimRewards + claimRewardsDelegate
+1. claimRewardsDelegate
 
 
 
