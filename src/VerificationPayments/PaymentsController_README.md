@@ -219,15 +219,24 @@ Verifier contract will call `deductBalance()`, passing the following as inputs:
 
 - For each epoch, verifier receives subsidies based on: `(verifierAccruedSubsidies / poolAccruedSubsidies) * poolAllocatedSubsidies`
 - TotalSubsidies to be distributed across pools for an epoch is decided by the protocol [can be set at the start or end on `VotingController.setEpochSubsidies()`]
-- subsidies are distributed proportionally based on the votes each pool receives -> `poolAllocatedSubsidies` [`VotingController.finalizeEpoch()`]
-- a pool's allocated subsidies is then distributed amongst the verifiers proportionally, per the weight: `verifierAccruedSubsidies / poolAccruedSubsidies`
+- Subsidies are distributed proportionally based on the votes each pool receives -> `poolAllocatedSubsidies` [`VotingController.finalizeEpoch()`]
+- A pool's allocated subsidies is then distributed amongst the verifiers proportionally, per the weight: `verifierAccruedSubsidies / poolAccruedSubsidies`
 - where `verifierAccruedSubsidies` => total subsidies accrued based on their verification fee expenditure, for that specific pool
 - where `poolAccruedSubsidies` => the sum total of subsidies accrued by all verifiers, in that pool [*schema group*]
 
-Hence, the need for PaymentsController to have mappings: `_epochPoolSubsidies` & `_epochPoolVerifierSubsidies`; which are updated in `deductBalance`
+Hence, the need for PaymentsController to have the two mappings:
+1. `_epochPoolSubsidies` 
+2. `_epochPoolVerifierSubsidies`; 
+
+which are updated in `deductBalance`.
+
 `VotingController.claimSubsidies()` will reference these values for calculating verifier subsidies, by calling `PaymentsController.getVerifierAndPoolAccruedSubsidies()`
 
+Subsidies are paid out to the `assetAddress` of the verifier, so it is required that, `assetAddress` calls `VotingController.claimSubsidies`
+
 > **VotingController.claimSubsidies()` will handle the precision differential when calculating verifier weighted subsidies**
+
+> Subsidies are calculated on the gross amount; before protocol and voting fee are deducted
 
 ## Handling Voter Rewards [Voting Fee]
 
@@ -236,7 +245,9 @@ Hence, the need for PaymentsController to have mappings: `_epochPoolSubsidies` &
 - `userVotes/PoolTotalVotes` * `feesAccruedToVoters`
 - Hence we need to track `feesAccruedToVoters` on a per pool basis in PaymentsController => `_epochPoolFeesAccrued` mapping
 
->**The VotingController does not call PaymentsController directly, as we need to swap USD8 for esMoca**
+**VotingController does not directly query PaymentsController for this mapping.**
+- This mapping tracks the total USD8 accrued; which needs to be converted to esMoca.
+- It determines the amount to deposit into VotingController after conversion, via `VotingController.depositRewardsForEpoch()`.
 
 ---
 
@@ -250,12 +261,5 @@ Hence, the need for PaymentsController to have mappings: `_epochPoolSubsidies` &
 
 # Questions
 
-1. Block/blacklist issuer/verifiers?
-
-2. are subsidies calculated on the base verification fee?
-- meaning, do not deduct protocol fee and voting rewards from it
-
-**impacts deductBalance():**
-- since the current process calcs. everything on the base verification fee
-- there could be a scenario where all the haircuts added up together is `> amount`
--> can we streamline by just charging a single protocol fee.
+1. Block/blacklist issuer/verifiers
+-> can Tony handle this via middleware?

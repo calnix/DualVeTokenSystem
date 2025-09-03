@@ -69,10 +69,10 @@ contract PaymentsController is EIP712, Pausable {
 
 
     // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
-    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) private _epochPoolSubsidies;        // totalSubsidiesPerPoolPerEpoch
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) private _epochPoolVerifierSubsidies;        // totalSubsidiesPerPoolPerEpochPerVerifier
+    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) private _epochPoolSubsidies;                                                     // totalSubsidiesPerPoolPerEpoch
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) private _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
     
-    // for VotingController.claimRewards()
+    // To track fees accrued to each pool, per epoch 
     mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
     mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) private _epochFeesAccrued;    
@@ -817,7 +817,7 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------view functions---------------------------------------------
    
-    // called by VotingController.claimSubsidies
+    // called by VotingController.claimSubsidies | no need for zero address check on the caller
     function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint256, uint256) {
         // verifiers's asset address must be the caller of VotingController.claimSubsidies
         require(caller == _verifiers[verifierId].assetAddress, Errors.InvalidCaller());
