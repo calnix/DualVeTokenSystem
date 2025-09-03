@@ -184,19 +184,21 @@ Verifier contract will call `deductBalance()`, passing the following as inputs:
 - amount is the fee deductible
 - expiry is the expiry of signature
 
-**deductBalance process:**
+### deductBalance process:
 
 1. nextFee check: checks if the schema has an incoming fee increment; if so, updates currentFee to nextFee. nextFee will apply for this txn.
-2. checks that `amount` matches the schema fee exactly; else reverts.
-3. checks that verifier has sufficient USD8 balance on the contract to pay for verification
-4. verifies signature provided; to ensure that the verifier did indeed sign-off on this verification request
-5. updates verifier nonce 
-6. calculates `votingFee` and `protocolFee` based on `amount`
-7. checks if schema has a non-zero `poolId` tag; if it does, `_bookSubsidy()` is executed:
+2. verifies signature provided; to ensure that the verifier did indeed sign-off on this verification request
+3. updates verifier nonce 
+
+4. If the schema fee is non-zero:
+    - check that `amount` matches exactly to schemaFee; else revert
+    - check that verifier's balance is >= `amount`; else revert
+    - calc. protocol and voting fee
+
+4.1. For VotingController: **checks if schema has a non-zero `poolId` tag; if it does, `_bookSubsidy()` is executed:**
     - gets subsidyPct for the verifier, based on his MOCA staked 
-    - calc. subsidy applicable [could be 0]
-    - if non-zero subsidy, book subsidy accrued -> `_epochPoolSubsidies` & `_epochPoolVerifierSubsidies`
-    - if 0 subsidy -> skip
+    - calc. subsidy applicable
+    - book subsidy accrued -> `_epochPoolSubsidies` & `_epochPoolVerifierSubsidies`
     - Increment protocol & voting fees, for the pool associated w/ this schema: `_epochPoolFeesAccrued:{feesAccruedToVoters,feesAccruedToProtocol}`
     - `_epochPoolFeesAccrued` mapping is needed to track how much `USD8` was accrued to each pool
     - referencing this value, to know how much `esMoca` to deposit per pool via `VotingController.depositRewards(uint256 epoch, bytes32[] calldata poolIds)`
@@ -229,10 +231,10 @@ Hence, the need for PaymentsController to have mappings: `_epochPoolSubsidies` &
 
 ## Handling Voter Rewards [Voting Fee]
 
-- voters receive rewards, financed by the `VOTING_FEE_PERCENTAGE` cut from total verification fees accrued for that epoch
-- rewards are distributed to voters based on which pools they voted on, and what that pool accrued `feesAccruedToVoters`
+- Voters receive rewards, financed by the `VOTING_FEE_PERCENTAGE` cut from total verification fees accrued for that epoch
+- Rewards are distributed to voters based on which pools they voted on, and what that pool accrued `feesAccruedToVoters`
 - `userVotes/PoolTotalVotes` * `feesAccruedToVoters`
-- hence we need to track `feesAccruedToVoters` on a per pool basis in PaymentsController => `_epochPoolFeesAccrued` mapping
+- Hence we need to track `feesAccruedToVoters` on a per pool basis in PaymentsController => `_epochPoolFeesAccrued` mapping
 
 >**The VotingController does not call PaymentsController directly, as we need to swap USD8 for esMoca**
 
@@ -242,9 +244,9 @@ Hence, the need for PaymentsController to have mappings: `_epochPoolSubsidies` &
 
 **Should PaymentsController call VotingController to update accrued rewards/subsidies/fees?**
 - No
-- don't want PaymentsController to have external call dependencies to other contracts.
+- do not want PaymentsController to have external call dependencies to other contracts.
 - may create problems when upgrading to new contracts. 
-- PaymentsController should be silo-ed off as much as possible. Other contracts can call this if needed.
+- PaymentsController should be standalone as much as possible.
 
 # Questions
 

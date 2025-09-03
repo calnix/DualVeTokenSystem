@@ -486,14 +486,6 @@ contract PaymentsController is EIP712, Pausable {
 
         // ---- TODO:try: so that fee updates occur regardless of subsequent revert ---
 
-        // amount must match latest schema fee [set by issuer] | could be 0
-        uint256 schemaFee = _schemas[schemaId].currentFee;
-        if(schemaFee > 0) {
-            // check if amount matches schema fee + verifier has sufficient balance
-            require(amount == schemaFee, Errors.InvalidSchemaFee());
-            require(_verifiers[verifierId].currentBalance >= amount, Errors.InsufficientBalance());
-        }
-
         // ----- Verify signature -----
             address signerAddress = _verifiers[verifierId].signerAddress;
             bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
@@ -503,49 +495,61 @@ contract PaymentsController is EIP712, Pausable {
         // ----- Update nonce -----
         ++_verifierNonces[signerAddress];
 
+        // amount must match latest schema fee [set by issuer] | could be 0
+        uint256 schemaFee = _schemas[schemaId].currentFee;
+        uint128 protocolFee;
+        uint128 votingFee;
+        if(schemaFee > 0) {
+            // check if amount matches schema fee + verifier has sufficient balance
+            require(amount == schemaFee, Errors.InvalidSchemaFee());
+            require(_verifiers[verifierId].currentBalance >= amount, Errors.InsufficientBalance());
 
-        // ----- Calc. fee split ----- | downcasting to uint128 should be safe since 100% fee <= 2.56e18 (2^128)
-        // TODO: confirm that fees will never be 0
-        uint128 protocolFee = uint128((PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0);
-        uint128 votingFee = uint128((VOTING_FEE_PERCENTAGE > 0) ? (amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0);
+            // ----- Calc. fee split ----- | downcasting to uint128 should be safe since 100% fee <= 2.56e18 (2^128)
+            protocolFee = uint128((PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0);
+            votingFee = uint128((VOTING_FEE_PERCENTAGE > 0) ? (amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0);
+        
+            // -----------------------For VotingController------------------------------------------
+            
+            // get current epoch
+            uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
 
-        // get current epoch
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+            // ----- Book subsidy & fees (voting rewards) if poolId is set -----
+            bytes32 poolId = _schemas[schemaId].poolId;
+            if (poolId != bytes32(0)) {
+                // for VotingController.claimSubsidies(): which calls getVerifierAndPoolAccruedSubsidies() on this contract
+                _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
 
-        // -----------------------For VotingController------------------------------------------
+                // track how much `USD8` was accrued to each pool 
+                // feesAccruedToVoters will be converted to esMoca off-chain and deposited to VotingController.depositRewards()
+                _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToProtocol += protocolFee;
+                _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToVoters += votingFee;
+            }
 
-        // ----- Book subsidy & fees (voting rewards) if poolId is set ----- | schemaFee could be 0
-        bytes32 poolId = _schemas[schemaId].poolId;
-        if (poolId != bytes32(0)) {
-            // for VotingController.claimSubsidies(): which calls getVerifierAndPoolAccruedSubsidies() on this contract
-            if(schemaFee > 0) _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
 
-            // track how much `USD8` was accrued to each pool 
-            // feesAccruedToVoters will be converted to esMoca off-chain and deposited to VotingController.depositRewards()
-            // TODO: confirm that fees will never be 0
-            if(protocolFee > 0) _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToProtocol += protocolFee;
-            if(votingFee > 0) _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToVoters += votingFee;
+            // -----------------------Global Accounting------------------------------------------
+            // issuer: global accounting
+            _issuers[issuerId].totalNetFeesAccrued += (amount - protocolFee - votingFee);  // all uint128
+            ++_issuers[issuerId].totalVerified;
+
+            // verifier: global accounting
+            _verifiers[verifierId].currentBalance -= amount;
+            _verifiers[verifierId].totalExpenditure += amount;
+            
+            // schema: global accounting
+            _schemas[schemaId].totalGrossFeesAccrued += amount;     // disregards protocol and voting fees
+
+            // protocol + voting fees accounting | to enable withdrawal of fees at the end of an epoch
+            _epochFeesAccrued[currentEpoch].feesAccruedToProtocol += protocolFee;
+            _epochFeesAccrued[currentEpoch].feesAccruedToVoters += votingFee;  
+
+            emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
         }
 
         // -----------------------Global Accounting------------------------------------------
 
-        // issuer: global accounting
-        _issuers[issuerId].totalNetFeesAccrued += (amount - protocolFee - votingFee);  // all uint128
-        ++_issuers[issuerId].totalVerified;
-
-        // verifier: global accounting
-        _verifiers[verifierId].currentBalance -= amount;
-        _verifiers[verifierId].totalExpenditure += amount;
-
-        // schema: global accounting
-        _schemas[schemaId].totalGrossFeesAccrued += amount;     // disregards protocol and voting fees
+        // increment schema count
         ++_schemas[schemaId].totalVerified;
-        
-        // protocol + voting fees accounting | to enable withdrawal of fees at the end of an epoch
-        _epochFeesAccrued[currentEpoch].feesAccruedToProtocol += protocolFee;
-        _epochFeesAccrued[currentEpoch].feesAccruedToVoters += votingFee;  
-
-        emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
+        emit Events.SchemaVerified(schemaId);
     }
 
     // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
