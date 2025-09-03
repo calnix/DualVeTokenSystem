@@ -4,12 +4,12 @@ pragma solidity 0.8.27;
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
+// sig.
 import "openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker, ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/SignatureChecker.sol";
 
 // risk management
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
-import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
 // libraries
 import {Events} from "../libraries/Events.sol";
@@ -20,7 +20,6 @@ import {DataTypes} from "../libraries/DataTypes.sol";
 
 // interfaces
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
-import {IEscrowedMoca} from "../interfaces/IEscrowedMoca.sol";
 import {IAccessController} from "../interfaces/IAccessController.sol";
 
 contract PaymentsController is EIP712, Pausable {
