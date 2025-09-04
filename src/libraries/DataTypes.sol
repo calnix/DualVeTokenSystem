@@ -53,11 +53,10 @@ library DataTypes {
 
         // MOCA | 18 dp precision
         uint128 mocaStaked;
+
         // USD8 | 6dp precision
         uint128 currentBalance;
-
-        // count: never decremented
-        uint128 totalExpenditure;           
+        uint128 totalExpenditure;  // count: never decremented
     }
 
     struct Schema {

@@ -478,7 +478,7 @@ contract PaymentsController is EIP712, Pausable {
             }
         }
 
-        // ---- TODO:try: so that fee updates occur regardless of subsequent revert ---
+        // ---- TODO:try: so that fee updates occur regardless of subsequent revert --- @follow-up check with R
 
         // ----- Verify signature -----
             address signerAddress = _verifiers[verifierId].signerAddress;
@@ -539,7 +539,7 @@ contract PaymentsController is EIP712, Pausable {
             emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
         }
 
-        // -----------------------Global Accounting------------------------------------------
+        // -----------------------Increment counter------------------------------------------
 
         // increment schema count
         ++_schemas[schemaId].totalVerified;
