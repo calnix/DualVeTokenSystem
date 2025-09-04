@@ -247,7 +247,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param assetAddress The address where verifier fees will be claimed.
      * @return verifierId The unique identifier assigned to the new verifier.
      */
-    function createVerifier(address signerAddress, address assetAddress) external returns (bytes32) {
+    function createVerifier(address signerAddress, address assetAddress) external whenNotPaused returns (bytes32) {
         require(signerAddress != address(0), Errors.InvalidAddress());
         require(assetAddress != address(0), Errors.InvalidAddress());
 
@@ -281,7 +281,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier to deposit for.
      * @param amount The amount of USD8 to deposit.
      */
-    function deposit(bytes32 verifierId, uint128 amount) external {
+    function deposit(bytes32 verifierId, uint128 amount) external whenNotPaused {
         // check msg.sender is verifierId's asset address
         address assetAddress = _verifiers[verifierId].assetAddress;
         require(assetAddress == msg.sender, Errors.InvalidCaller());
@@ -303,7 +303,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier to withdraw from.
      * @param amount The amount of USD8 to withdraw.
      */
-    function withdraw(bytes32 verifierId, uint128 amount) external {
+    function withdraw(bytes32 verifierId, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
         // check msg.sender is verifierId's asset address
@@ -329,7 +329,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier.
      * @param signerAddress The new signer address to set.
      */
-    function updateSignerAddress(bytes32 verifierId, address signerAddress) external {
+    function updateSignerAddress(bytes32 verifierId, address signerAddress) external whenNotPaused {
         require(signerAddress != address(0), Errors.InvalidAddress());
         
         // check msg.sender is verifierId's admin address
@@ -351,7 +351,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier to stake MOCA for.
      * @param amount The amount of MOCA to stake.
      */
-    function stakeMoca(bytes32 verifierId, uint128 amount) external {
+    function stakeMoca(bytes32 verifierId, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
         
         // check msg.sender is verifierId's asset address
@@ -375,7 +375,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param verifierId The unique identifier of the verifier to unstake MOCA for.
      * @param amount The amount of MOCA to unstake.
      */
-    function unstakeMoca(bytes32 verifierId, uint128 amount) external {
+    function unstakeMoca(bytes32 verifierId, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
         // check msg.sender is verifierId's asset address
@@ -404,7 +404,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param newAssetAddress The new asset address to set.
      * @return newAssetAddress The updated asset address.
      */
-    function updateAssetAddress(bytes32 id, address newAssetAddress) external returns (address) {
+    function updateAssetAddress(bytes32 id, address newAssetAddress) external whenNotPaused returns (address) {
         require(newAssetAddress != address(0), Errors.InvalidAddress());
 
         if (_issuers[id].issuerId != bytes32(0)) {
@@ -434,7 +434,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param newAdminAddress The new admin address to set.
      * @return newAdminAddress The updated admin address.
      */
-    function updateAdminAddress(bytes32 id, address newAdminAddress) external returns (address) {
+    function updateAdminAddress(bytes32 id, address newAdminAddress) external whenNotPaused returns (address) {
         require(newAdminAddress != address(0), Errors.InvalidAddress());
 
         if (_issuers[id].issuerId != bytes32(0)) {
@@ -459,7 +459,7 @@ contract PaymentsController is EIP712, Pausable {
 //-------------------------------UniversalVerificationContract functions-----------------------------------------
 
     // make this fn as gas optimized as possible
-    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external {
+    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
         require(expiry > block.timestamp, Errors.SignatureExpired());
 
         // nextFee check
@@ -566,7 +566,7 @@ contract PaymentsController is EIP712, Pausable {
         }
     }
  
-//-------------------------------internal functions-----------------------------------------
+//-------------------------------internal functions---------------------------------------------
 
     ///@dev Generate a issuer or verifier id. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
     // adminAddress: msg.sender
@@ -633,10 +633,10 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.VerifierStakingTierUpdated(mocaStaked, subsidyPercentage);
     }
 
-//-------------------------------admin: withdraw functions-----------------------------------------
+//-------------------------------admin: withdraw functions----------------------------------------
 
     //note: can only withdraw protocol fees after epoch ended
-    function withdrawProtocolFees(uint256 epoch) external onlyPaymentsAdmin {
+    function withdrawProtocolFees(uint256 epoch) external onlyPaymentsAdmin whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
         require(!_epochFeesAccrued[epoch].isProtocolFeeWithdrawn, Errors.ProtocolFeeAlreadyWithdrawn());
 
@@ -648,7 +648,7 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
     }
 
-    function withdrawVotersFees(uint256 epoch) external onlyPaymentsAdmin {
+    function withdrawVotersFees(uint256 epoch) external onlyPaymentsAdmin whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
         require(!_epochFeesAccrued[epoch].isVotersFeeWithdrawn, Errors.VotersFeeAlreadyWithdrawn());
 
@@ -659,54 +659,7 @@ contract PaymentsController is EIP712, Pausable {
 
         emit Events.VotersFeesWithdrawn(epoch, votersFees);
     }
-/*
-    function withdrawFees(uint256 epoch, bool isProtocolFee) external onlyPaymentsAdmin {
-        require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
-        
-        bool storage isWithdrawn;
-        uint256 accruedFees;
 
-        (isWithdrawn, accruedFees) = isProtocolFee ? 
-            (_epochFeesAccrued[epoch].isProtocolFeeWithdrawn, _epochFeesAccrued[epoch].feesAccruedToProtocol) : 
-            (_epochFeesAccrued[epoch].isVotersFeeWithdrawn, _epochFeesAccrued[epoch].feesAccruedToVoters);
-
-        require(!isWithdrawn, isProtocolFee ? Errors.ProtocolFeeAlreadyWithdrawn() : Errors.VotersFeeAlreadyWithdrawn());
-        require(accruedFees > 0, isProtocolFee ? Errors.ZeroProtocolFee() : Errors.ZeroVotersFee());
-
-        isWithdrawn = true;
-
-        if(isProtocolFee) {
-            emit Events.ProtocolFeesWithdrawn(epoch, accruedFees);
-        } else {
-            emit Events.VotersFeesWithdrawn(epoch, accruedFees);
-        }
-
-        /*
-            if(isProtocolFee) {
-
-                require(!_epochFeesAccrued[epoch].isProtocolFeeWithdrawn, Errors.ProtocolFeeAlreadyWithdrawn());
-
-                uint256 protocolFees = _epochFeesAccrued[epoch].feesAccruedToProtocol;
-                require(protocolFees > 0, Errors.ZeroProtocolFee());
-                
-                _epochFeesAccrued[epoch].isProtocolFeeWithdrawn = true;
-
-                emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
-
-            } else {
-
-                require(!_epochFeesAccrued[epoch].isVotersFeeWithdrawn, Errors.VotersFeeAlreadyWithdrawn());
-
-                uint256 votersFees = _epochFeesAccrued[epoch].feesAccruedToVoters;
-                require(votersFees > 0, Errors.ZeroVotersFee());
-                
-                _epochFeesAccrued[epoch].isVotersFeeWithdrawn = true;
-
-                emit Events.VotersFeesWithdrawn(epoch, votersFees);
-            } 
-        */
- /*   }
-*/
 //------------------------------- risk -------------------------------------------------------
 
     /**
@@ -922,25 +875,3 @@ contract PaymentsController is EIP712, Pausable {
         return _epochFeesAccrued[epoch];
     }
 }
-
-
-/**
-    TODO: how to upgrade?
-
-    1. pause old contract, deploy new contract. 
-        - requires downtime
-        - requires issuers and verifiers to repeat setup on new contract [more work for them]
-    
-    2. Make contract upgradable
-        - repeat setup might not be required; contingent on added logic
-        - allows extension of logic
-        - but dangerous if extending incorrectly & if new logic is introduced
-
-        Potentially more seamless, but could introduce critical risks if not done correctly
-
-    TODO: contracts should not directly refer to each other
-        - instead, use a central contract to manage the relationships
-        - AddressBook contract can be used to:
-            - track contract address changes [upgrades]
-            - manage permissions
- */

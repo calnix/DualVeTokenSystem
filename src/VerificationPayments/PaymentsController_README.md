@@ -281,3 +281,21 @@ Subsidies are paid out to the `assetAddress` of the verifier, so it is required 
 - may create problems when upgrading to new contracts. 
 - PaymentsController should be standalone as much as possible.
 
+
+## Upgradability
+
+1. Deploy new PaymentsControllerV2
+2. Setup PaymentsControllerV2 
+    - either we expect issuers/verifiers to recreate their profiles
+    - or an owner function to populate the new contract with their profile data, referencing the old contract
+3. Update AddressBook to map to PaymentsControllerV2 address 
+4. Have verifiers deposit USD8 balances for payments
+5. Old contract will be frozen once all issuers have claimed fees and verifiers have migrated their balances.
+
+
+    TODO: contracts should not directly refer to each other
+        - instead, use a central contract to manage the relationships
+        - AddressBook contract can be used to:
+            - track contract address changes [upgrades]
+            - manage permissions
+
