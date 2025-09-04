@@ -914,11 +914,11 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     // note: manually refer to this, to know how much esMoca to deposit per pool on VotingController.depositRewardsForEpoch()
-    function getEpochPoolFeesAccrued(uint256 epoch, bytes32 poolId) external view returns (uint256) {
+    function getEpochPoolFeesAccrued(uint256 epoch, bytes32 poolId) external view returns (DataTypes.FeesAccrued memory) {
         return _epochPoolFeesAccrued[epoch][poolId];
     }
 
-    function getEpochFeesAccrued(uint256 epoch) external view returns (uint256) {
+    function getEpochFeesAccrued(uint256 epoch) external view returns (DataTypes.FeesAccrued memory) {
         return _epochFeesAccrued[epoch];
     }
 }
