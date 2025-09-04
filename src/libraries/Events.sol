@@ -71,7 +71,7 @@ library Events {
 
     // admin update fns
     event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);
-    event DelayPeriodUpdated(uint256 delayPeriod);
+    event FeeIncreaseDelayPeriodUpdated(uint256 newDelayPeriod);
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VotingFeePercentageUpdated(uint256 voterFeePercentage);
     event VerifierStakingTierUpdated(uint256 stakingTier, uint256 stakingAmount);

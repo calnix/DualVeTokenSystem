@@ -259,7 +259,3 @@ Subsidies are paid out to the `assetAddress` of the verifier, so it is required 
 - may create problems when upgrading to new contracts. 
 - PaymentsController should be standalone as much as possible.
 
-# Questions
-
-1. Block/blacklist issuer/verifiers
--> can Tony handle this via middleware?

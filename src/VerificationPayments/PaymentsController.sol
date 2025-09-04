@@ -33,19 +33,14 @@ contract PaymentsController is EIP712, Pausable {
     uint256 internal PROTOCOL_FEE_PERCENTAGE;    
     uint256 internal VOTING_FEE_PERCENTAGE;   
 
-    // issuer's fee increase delay | for schema
-    uint256 internal DELAY_PERIOD;            // in seconds
+    // delay period before an issuer's fee increase becomes effective for a given schema
+    uint256 internal FEE_INCREASE_DELAY_PERIOD;            // in seconds
 
-    // verification fees
-    uint256 internal TOTAL_VERIFICATION_FEES_ACCRUED;
-    uint256 internal TOTAL_CLAIMED_VERIFICATION_FEES;
+    // total claimed by issuers | proxy for total verification fees accrued - to reduce storage updates in deductBalance()
+    uint256 internal TOTAL_CLAIMED_VERIFICATION_FEES;   // expressed in USD8 terms
 
     // staked by verifiers
     uint256 internal TOTAL_MOCA_STAKED;
-
-    // protocol fees accrued note: drop to reduce storage updates
-    //uint256 internal TOTAL_PROTOCOL_FEES_ACCRUED;
-    //uint256 internal TOTAL_CLAIMED_PROTOCOL_FEES;
 
     // risk management
     uint256 internal _isFrozen;
@@ -64,14 +59,14 @@ contract PaymentsController is EIP712, Pausable {
     mapping(address signerAddress => uint256 nonce) internal _verifierNonces;
 
     // Staking tiers: determines subsidy percentage for each verifier | admin fn will setup the tiers
-    mapping(uint256 mocaStaked => uint256 subsidyPercentage) internal _verifiersStakingTiers;
+    mapping(uint256 mocaStaked => uint256 subsidyPercentage) internal _verifiersSubsidyPercentages;
 
 
     // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
     mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) private _epochPoolSubsidies;                                                     // totalSubsidiesPerPoolPerEpoch
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) private _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
     
-    // To track fees accrued to each pool, per epoch 
+    // To track fees accrued to each pool, per epoch | for voting rewards tracking
     mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
     mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) private _epochFeesAccrued;    
@@ -100,7 +95,7 @@ contract PaymentsController is EIP712, Pausable {
         // min. delay period is 1 epoch; value must be in epoch intervals
         require(delayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
         require(EpochMath.isValidEpochTime(delayPeriod), Errors.InvalidDelayPeriod());
-        DELAY_PERIOD = delayPeriod;
+        FEE_INCREASE_DELAY_PERIOD = delayPeriod;
     }
 
 //-------------------------------issuer functions-----------------------------------------
@@ -204,7 +199,7 @@ contract PaymentsController is EIP712, Pausable {
             _schemas[schemaId].nextFee = newFee;
             
             // set next fee timestamp
-            uint128 nextFeeTimestamp = uint128(block.timestamp + DELAY_PERIOD);
+            uint128 nextFeeTimestamp = uint128(block.timestamp + FEE_INCREASE_DELAY_PERIOD);
             _schemas[schemaId].nextFeeTimestamp = nextFeeTimestamp;
 
             emit Events.SchemaNextFeeSet(schemaId, newFee, nextFeeTimestamp, currentFee);
@@ -555,7 +550,7 @@ contract PaymentsController is EIP712, Pausable {
     // expectation: amount is non-zero
     function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint256 amount, uint256 currentEpoch) internal {
         // get verifier's subsidy percentage
-        uint256 subsidyPct = _verifiersStakingTiers[_verifiers[verifierId].mocaStaked];
+        uint256 subsidyPct = _verifiersSubsidyPercentages[_verifiers[verifierId].mocaStaked];
 
         // if subsidy percentage is non-zero, calculate and book subsidy
         if(subsidyPct > 0) {
@@ -595,13 +590,13 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.PoolIdUpdated(schemaId, poolId);
     }
 
-    function updateDelayPeriod(uint256 delayPeriod) external onlyPaymentsAdmin {
-        require(delayPeriod > 0, "Invalid delay period");
-        require(delayPeriod % EpochMath.EPOCH_DURATION == 0, "Delay period must be a multiple of epoch duration");
+    function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyPaymentsAdmin {
+        require(newDelayPeriod > 0, "Invalid delay period");
+        require(newDelayPeriod % EpochMath.EPOCH_DURATION == 0, "Delay period must be a multiple of epoch duration");
 
-        DELAY_PERIOD = delayPeriod;
+        FEE_INCREASE_DELAY_PERIOD = newDelayPeriod;
 
-        emit Events.DelayPeriodUpdated(delayPeriod);
+        emit Events.FeeIncreaseDelayPeriodUpdated(newDelayPeriod);
     }
 
     // protocol fee can be 0
@@ -629,11 +624,11 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     // used to set/overwrite/update
-    function updateVerifierStakingTiers(uint256 mocaStaked, uint256 subsidyPercentage) external onlyPaymentsAdmin {
+    function updateVerifierSubsidyPercentages(uint256 mocaStaked, uint256 subsidyPercentage) external onlyPaymentsAdmin {
         require(mocaStaked > 0, "Invalid moca staked");
         require(subsidyPercentage < Constants.PRECISION_BASE, "Invalid subsidy percentage");
 
-        _verifiersStakingTiers[mocaStaked] = subsidyPercentage;
+        _verifiersSubsidyPercentages[mocaStaked] = subsidyPercentage;
 
         emit Events.VerifierStakingTierUpdated(mocaStaked, subsidyPercentage);
     }
@@ -816,58 +811,116 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------view functions---------------------------------------------
    
-    // called by VotingController.claimSubsidies | no need for zero address check on the caller
+    // note: called by VotingController.claimSubsidies | no need for zero address check on the caller
     function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint256, uint256) {
         // verifiers's asset address must be the caller of VotingController.claimSubsidies
         require(caller == _verifiers[verifierId].assetAddress, Errors.InvalidCaller());
         return (_epochPoolVerifierSubsidies[epoch][poolId][verifierId], _epochPoolSubsidies[epoch][poolId]);
     }
 
-    // manually refer to this, to know how much esMoca to deposit per pool | make array?
-    function getPoolVotingFeesAccrued(uint256 epoch, bytes32 poolId) external view returns (uint256) {
-        return _epochPoolFeesAccrued[epoch][poolId].feesAccruedToVoters;
+    /**
+     * @notice Returns the address book.
+     * @return addressBook The address book.
+     */
+    function getAddressBook() external view returns (IAddressBook) {
+        return _addressBook;
     }
-
-
-    function getIssuer(bytes32 issuerId) external view returns (DataTypes.Issuer memory) {
-        return _issuers[issuerId];
-    }
-
-    function getSchema(bytes32 schemaId) external view returns (DataTypes.Schema memory) {
-        return _schemas[schemaId];
-    }
-
-    function getVerifier(bytes32 verifierId) external view returns (DataTypes.Verifier memory) {
-        return _verifiers[verifierId];
-    }
-
-    function getVerifierNonce(address verifier) external view returns (uint256) {
-        return _verifierNonces[verifier];
-    }
-
-    // nice to have
-    function getSchemaFee(bytes32 schemaId) external view returns (uint256) {
-        return _schemas[schemaId].currentFee;
-    }
-
+    
+    /**
+     * @notice Returns the protocol fee percentage.
+     * @return protocolFeePercentage The protocol fee percentage.
+     */
     function getProtocolFeePercentage() external view returns (uint256) {
         return PROTOCOL_FEE_PERCENTAGE;
     }
 
+    /**
+     * @notice Returns the voting fee percentage.
+     * @return votingFeePercentage The voting fee percentage.
+     */
     function getVoterFeePercentage() external view returns (uint256) {
         return VOTING_FEE_PERCENTAGE;
     }
-
-    function getDelayPeriod() external view returns (uint256) {
-        return DELAY_PERIOD;
+    
+    /**
+     * @notice Returns the fee increase delay period.
+     * @return feeIncreaseDelayPeriod The fee increase delay period.
+     */
+    function getFeeIncreaseDelayPeriod() external view returns (uint256) {
+        return FEE_INCREASE_DELAY_PERIOD;
     }
 
-    /*
-    function getAddressBook() external view returns (IAddressBook) {
-        return _addressBook;
+    function getTotalClaimedVerificationFees() external view returns (uint256) {
+        return TOTAL_CLAIMED_VERIFICATION_FEES;
     }
-*/
 
+    function getTotalMocaStaked() external view returns (uint256) {
+        return TOTAL_MOCA_STAKED;
+    }
+
+    function getIsFrozen() external view returns (uint256) {
+        return _isFrozen;
+    }
+
+
+
+    /**
+     * @notice Returns the Issuer struct for a given issuerId.
+     * @param issuerId The unique identifier of the issuer.
+     * @return issuer The Issuer struct containing all issuer data.
+     */
+    function getIssuer(bytes32 issuerId) external view returns (DataTypes.Issuer memory) {
+        return _issuers[issuerId];
+    }
+
+    /** 
+     * @notice Returns the Schema struct for a given schemaId.
+     * @param schemaId The unique identifier of the schema.
+     * @return schema The Schema struct containing all schema data.
+     */
+    function getSchema(bytes32 schemaId) external view returns (DataTypes.Schema memory) {
+        return _schemas[schemaId];
+    }
+
+    /**
+     * @notice Returns the Verifier struct for a given verifierId.
+     * @param verifierId The unique identifier of the verifier.
+     * @return verifier The Verifier struct containing all verifier data.
+     */
+    function getVerifier(bytes32 verifierId) external view returns (DataTypes.Verifier memory) {
+        return _verifiers[verifierId];
+    }
+
+    /**
+     * @notice Returns the nonce for a given signerAddress.
+     * @param signerAddress The address of the signer.
+     * @return nonce The nonce for the signer.
+     */
+    function getVerifierNonce(address signerAddress) external view returns (uint256) {
+        return _verifierNonces[signerAddress];
+    }
+
+    function getVerifierSubsidyPercentage(uint256 mocaStaked) external view returns (uint256) {
+        return _verifiersSubsidyPercentages[mocaStaked];
+    }
+
+    // note: overlap with getVerifierAndPoolAccruedSubsidies
+    function getEpochPoolSubsidies(uint256 epoch, bytes32 poolId) external view returns (uint256) {
+        return _epochPoolSubsidies[epoch][poolId];
+    }
+
+    function getEpochPoolVerifierSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId) external view returns (uint256) {
+        return _epochPoolVerifierSubsidies[epoch][poolId][verifierId];
+    }
+
+    // note: manually refer to this, to know how much esMoca to deposit per pool on VotingController.depositRewardsForEpoch()
+    function getEpochPoolFeesAccrued(uint256 epoch, bytes32 poolId) external view returns (uint256) {
+        return _epochPoolFeesAccrued[epoch][poolId];
+    }
+
+    function getEpochFeesAccrued(uint256 epoch) external view returns (uint256) {
+        return _epochFeesAccrued[epoch];
+    }
 }
 
 
@@ -891,13 +944,3 @@ contract PaymentsController is EIP712, Pausable {
             - track contract address changes [upgrades]
             - manage permissions
  */
-
-
-/**
-    TODO or to be ignored:
-    1. issuers staking moca before being able to issue credentials
-    2. tiering
-
-
- */
-
