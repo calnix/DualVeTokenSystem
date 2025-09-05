@@ -228,7 +228,7 @@ Verifier contract will call `deductBalance()`, passing the following as inputs:
 - verifier: `.currentBalance--`, `totalExpenditure++`
 - schema:  `.totalGrossFeesAccrued++`
     
-5.  Increment `++_schemas[schemaId].totalVerified;`
+5. Increment `++_schemas[schemaId].totalVerified;`
     - counter to track number of times a schema has been used in verification
     
 > **Crucial to keep this function as lightweight as possible, to ensure sensible gas costs, esp. during high network usage**
