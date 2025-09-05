@@ -211,22 +211,22 @@ Verifier contract will call `deductBalance()`, passing the following as inputs:
 3. updates verifier nonce. 
 
 **4. If the schema fee is non-zero:**
-    - check that `amount` matches exactly to schemaFee; else revert
-    - check that verifier's `currentBalance` is >= `amount`; else revert
-    - calc. protocol and voting fees
+- check that `amount` matches exactly to schemaFee; else revert
+- check that verifier's `currentBalance` is >= `amount`; else revert
+- calc. protocol and voting fees
 
 *4.1. For VotingController: checks if schema has a non-zero `poolId` tag; if it does, `_bookSubsidy()` is executed:*
-    - gets subsidyPct for the verifier, based on his MOCA staked 
-    - calc. subsidy applicable
-    - book subsidy accrued -> `_epochPoolSubsidies` & `_epochPoolVerifierSubsidies`
-    - Increment protocol & voting fees, for the pool associated w/ this schema: `_epochPoolFeesAccrued:{feesAccruedToVoters,feesAccruedToProtocol}`
-        - `_epochPoolFeesAccrued` mapping is needed to track how much `USD8` was accrued to each pool
-        - referencing this value, to know how much `esMoca` to deposit per pool via `VotingController.depositRewards(uint256 epoch, bytes32[] calldata poolIds)`
+- gets subsidyPct for the verifier, based on his MOCA staked 
+- calc. subsidy applicable
+- book subsidy accrued -> `_epochPoolSubsidies` & `_epochPoolVerifierSubsidies`
+- Increment protocol & voting fees, for the pool associated w/ this schema: `_epochPoolFeesAccrued:{feesAccruedToVoters,feesAccruedToProtocol}`
+    - `_epochPoolFeesAccrued` mapping is needed to track how much `USD8` was accrued to each pool
+    - referencing this value, to know how much `esMoca` to deposit per pool via `VotingController.depositRewards(uint256 epoch, bytes32[] calldata poolIds)`
 
 *4.2. Global Accounting: Increment/decrement the following values referencing `amount`:*
-    - issuer: `.totalNetFeesAccrued++`, `.totalVerified++`
-    - verifier: `.currentBalance--`, `totalExpenditure++`
-    - schema:  `.totalGrossFeesAccrued++`
+- issuer: `.totalNetFeesAccrued++`, `.totalVerified++`
+- verifier: `.currentBalance--`, `totalExpenditure++`
+- schema:  `.totalGrossFeesAccrued++`
     
 5.  Increment `++_schemas[schemaId].totalVerified;`
     - counter to track number of times a schema has been used in verification
