@@ -570,6 +570,52 @@ contract VotingController is Pausable {
 
 //-------------------------------admin: finalize, deposit, withdraw subsidies-----------------------------------------
 
+    // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
+    /**
+     * @notice Deposits esMOCA subsidies for a completed epoch to be distributed among pools based on votes.
+     * @dev Callable only by VotingController admin. Calculates and sets subsidy per vote for the epoch.
+     *      Transfers esMOCA from the caller to the contract if subsidies > 0 and votes > 0.
+     *      Can only be called after the epoch has ended and before it is finalized.
+     * @param epoch The epoch number for which to deposit subsidies.
+     * @param subsidies The total amount of esMOCA subsidies to deposit (1e18 precision).
+     */
+    function depositSubsidies(uint256 epoch, uint256 subsidies) external onlyVotingControllerAdmin {
+        require(epoch <= EpochMath.getCurrentEpochNumber(), Errors.CannotSetSubsidiesForFutureEpochs());
+        
+        // sanity check: epoch must have ended
+        uint256 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epoch);
+        require(block.timestamp >= epochEndTimestamp, Errors.EpochNotEnded());
+
+        // sanity check: epoch must not be finalized
+        EpochData storage epochPtr = epochs[epoch];
+        require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
+
+        // flag check:
+        require(!epochPtr.isSubsidyPerVoteSet, Errors.SubsidyPerVoteAlreadySet());
+
+        // if subsidies are distributed for this epoch: calc. subsidy per vote + update total subsidies deposited + deposit esMoca
+        if(subsidies > 0) {
+            // if there are no votes, we will not distribute subsidies
+            if(epochPtr.totalVotes > 0) {
+                
+                // calc. subsidy per vote | must be non-zero, else funds will be stuck on contract
+                epochPtr.subsidyPerVote = (subsidies * 1e18) / epochPtr.totalVotes;
+                require(epochPtr.subsidyPerVote > 0, Errors.SubsidyPerVoteZero());
+                
+                _esMoca().transferFrom(msg.sender, address(this), subsidies);
+
+                // STORAGE: update total subsidies deposited for epoch + global
+                epochPtr.totalSubsidies = subsidies;
+                TOTAL_SUBSIDIES_DEPOSITED += subsidies;
+            }
+        }
+
+        // STORAGE: set flag 
+        epochPtr.isSubsidyPerVoteSet = true;
+
+        // event
+        emit Events.SubsidiesDeposited(msg.sender, epoch, subsidies, epochPtr.totalSubsidies);
+    }
 
     // rewards are referenced from PaymentsController
     function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint256[] calldata rewards) external onlyVotingControllerAdmin {
@@ -641,69 +687,7 @@ contract VotingController is Pausable {
         }
     }
 
-    // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
-    /**
-     * @notice Deposits esMOCA subsidies for a completed epoch to be distributed among pools based on votes.
-     * @dev Callable only by VotingController admin. Calculates and sets subsidy per vote for the epoch.
-     *      Transfers esMOCA from the caller to the contract if subsidies > 0 and votes > 0.
-     *      Can only be called after the epoch has ended and before it is finalized.
-     * @param epoch The epoch number for which to deposit subsidies.
-     * @param subsidies The total amount of esMOCA subsidies to deposit (1e18 precision).
-     */
-    function depositSubsidies(uint256 epoch, uint256 subsidies) external onlyVotingControllerAdmin {
-        require(epoch <= EpochMath.getCurrentEpochNumber(), Errors.CannotSetSubsidiesForFutureEpochs());
-        
-        // sanity check: epoch must have ended
-        uint256 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epoch);
-        require(block.timestamp >= epochEndTimestamp, Errors.EpochNotEnded());
 
-        // sanity check: epoch must not be finalized
-        EpochData storage epochPtr = epochs[epoch];
-        require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
-
-        // flag check:
-        require(!epochPtr.isSubsidyPerVoteSet, Errors.SubsidyPerVoteAlreadySet());
-
-        // if subsidies are distributed for this epoch: calc. subsidy per vote + update total subsidies deposited + deposit esMoca
-        if(subsidies > 0) {
-            // if there are no votes, we will not distribute subsidies
-            if(epochPtr.totalVotes > 0) {
-                
-                // calc. subsidy per vote | must be non-zero, else funds will be stuck on contract
-                epochPtr.subsidyPerVote = (subsidies * 1e18) / epochPtr.totalVotes;
-                require(epochPtr.subsidyPerVote > 0, Errors.SubsidyPerVoteZero());
-                
-                _esMoca().transferFrom(msg.sender, address(this), subsidies);
-
-                // STORAGE: update total subsidies deposited for epoch + global
-                epochPtr.totalSubsidies = subsidies;
-                TOTAL_SUBSIDIES_DEPOSITED += subsidies;
-            }
-        }
-
-        // STORAGE: set flag 
-        epochPtr.isSubsidyPerVoteSet = true;
-
-        // event
-        emit Events.SubsidiesDeposited(msg.sender, epoch, subsidies, epochPtr.totalSubsidies);
-    }
-
-    function depositRewards(uint256 epoch, uint256 rewards) external onlyVotingControllerAdmin {
-
-    // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
-    function withdrawSubsidies(uint256 epoch, uint256 withdrawSubsidies) external onlyVotingControllerAdmin {
-        require(epoch > EpochMath.getCurrentEpochNumber(), Errors.CanOnlySetSubsidiesForFutureEpochs());
-        require(epochs[epoch].totalSubsidies >= withdrawSubsidies, Errors.InsufficientSubsidies());
-        
-        epochs[epoch].totalSubsidies -= withdrawSubsidies;
-        TOTAL_SUBSIDIES_DEPOSITED -= withdrawSubsidies;
-        
-        // transfer esMoca to depositor
-        _esMoca().transfer(msg.sender, withdrawSubsidies);
-
-        // event
-        emit Events.SubsidiesWithdrawn(msg.sender, epoch, withdrawSubsidies, epochs[epoch].totalSubsidies);
-    }
 
     //REVIEW: withdraw unclaimed subsidies | after 6 epochs?
     function withdrawUnclaimedSubsidies(uint256 epoch) external onlyVotingControllerAdmin {
@@ -752,9 +736,7 @@ contract VotingController is Pausable {
 
         emit Events.UnclaimedRewardsSwept(epoch, poolIds, unclaimed);
     }
-}
-    
-//-------------------------------admin: setters -----------------------------------------
+
 
     // note: implicitly minimum of 1 epoch delay
     function setUnclaimedSubsidiesDelay(uint256 delay) external onlyVotingControllerAdmin {
@@ -764,6 +746,8 @@ contract VotingController is Pausable {
         // event
         emit Events.UnclaimedSubsidiesDelaySet(delay);
     }
+    
+//-------------------------------admin: setters -----------------------------------------
 
     // 0 accepted
     function setMaxDelegateFeePct(uint128 maxFeePct) external onlyVotingControllerAdmin {
@@ -780,58 +764,6 @@ contract VotingController is Pausable {
         require(delayEpochs % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayEpochs());
         FEE_INCREASE_DELAY_EPOCHS = delayEpochs;
         emit Events.FeeIncreaseDelayEpochsUpdated(delayEpochs);
-    }
-
-//-------------------------------admin: deposit voting rewards-----------------------------------------
-
-    /** deposit rewards for a pool
-        - rewards are deposited in esMoca; 
-        - so cannot reference PaymentsController to get each pool's rewards
-        - since PaymentsController tracks feesAccruedToVoters in USD8 terms
-        
-        Process:
-        1. manually reference PaymentsController.getPoolVotingFeesAccrued(uint256 epoch, bytes32 poolId)
-        2. withdraw that amount, convert to esMoca [off-chain]
-        3. deposit the total esMoca to the 
-    */
-    ///@dev update pool's PoolEpoch.totalRewards and PoolEpoch.rewardsPerVote
-    function depositRewardsForEpoch(uint256 epoch, bytes32[] calldata poolIds, uint256[] calldata amounts) external onlyVotingControllerAdmin {
-        require(poolIds.length > 0, Errors.InvalidArray());
-        require(poolIds.length == amounts.length, Errors.MismatchedArrayLengths());
-
-        // sanity check: epoch | can only deposit for ended epochs
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(epoch < currentEpoch, Errors.InvalidEpoch());
-
-        uint256 totalAmount;
-        for(uint256 i; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-            uint256 amount = amounts[i];
-
-            require(amount > 0, Errors.InvalidAmount());
-
-            // sanity checks: pool
-            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-
-            /** update pool's rewardsPerVote:
-                - no need to check if totalVotes > 0 | txn reverts if totalVotes == 0
-                - both rewards(esMoca) and totalVotes(veMoca) are expressed in 1e18 precision
-            */
-            uint256 rewardsPerVote = amount * 1E18 / epochPools[epoch][poolId].totalVotes;
-            // note: pool has rewards, but no votes, 
-        
-            // STORAGE: update epoch-pool & pool global
-            epochPools[epoch][poolId].rewardsPerVote = rewardsPerVote;
-            epochPools[epoch][poolId].totalRewards += amount;
-            pools[poolId].totalRewards += amount;
-           
-            totalAmount += amount;
-        }
-    
-        emit Events.RewardsDeposited(epoch, poolIds, totalAmount);
-
-        // deposit esMoca | TODO: whitelist VotingController on esMoca
-        _esMoca().transferFrom(msg.sender, address(this), totalAmount);
     }
 
 //-------------------------------admin: pool functions----------------------------------------------
@@ -865,15 +797,6 @@ contract VotingController is Pausable {
 
         // event
     }
-
-        // white or blacklist pool
-    /*    function whitelistPool(bytes32 poolId, bool isWhitelisted) external onlyRole(DEFAULT_ADMIN_ROLE) {
-            require(pools[poolId].poolId != bytes32(0), "Pool does not exist");
-            pools[poolId].isWhitelisted = isWhitelisted;
-
-            // event
-        }*/
-
 
 //-------------------------------internal functions-----------------------------------------
 
@@ -929,6 +852,7 @@ contract VotingController is Pausable {
         return (subsidiesToDeposit * 1e18) / epochs[epoch].totalVotes;
     }
 
+    // function previewRewards??
 
     function getAddressBook() external view returns (IAddressBook) {
         return _addressBook;
@@ -945,7 +869,7 @@ contract VotingController is Pausable {
      */
     function getUserDelegatePoolGrossRewards(uint256 epoch, address user, address delegate, bytes32[] calldata poolIds) external view returns (uint128[] memory grossRewards) {
         grossRewards = new uint128[](poolIds.length);
-        for (uint256 i = 0; i < poolIds.length; ++i) {
+        for (uint256 i; i < poolIds.length; ++i) {
             grossRewards[i] = userDelegateAccounting[epoch][user][delegate].poolGrossRewards[poolIds[i]];
         }
     }

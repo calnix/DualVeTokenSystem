@@ -126,6 +126,18 @@ On VotingController, when an epoch ends:
 
 ## Voters and Rewards
 
+    /** deposit rewards for a pool
+        - rewards are deposited in esMoca; 
+        - so cannot reference PaymentsController to get each pool's rewards
+        - since PaymentsController tracks feesAccruedToVoters in USD8 terms
+        
+        Process:
+        1. manually reference PaymentsController.getPoolVotingFeesAccrued(uint256 epoch, bytes32 poolId)
+        2. withdraw that amount, convert to esMoca [off-chain]
+        3. deposit the total esMoca to the 
+    */
+
+
 - voters receive rewards, as esMoca
 - rewards financed by the `VOTING_FEE_PERCENTAGE` cut from PaymentsController.sol
 - voters can only claim rewards on an epoch that has been finalized [admin must have called `finalizeEpoch`]
