@@ -18,9 +18,11 @@ library Events {
 // --------- VotingController.sol ---------
     event Voted(uint256 indexed epoch, address indexed caller, bytes32[] poolIds, uint256[] votes, bool isDelegated);
     event VotesMigrated(uint256 indexed epoch, address indexed caller, bytes32[] srcPoolIds, bytes32[] dstPoolIds, uint256[] votes, bool isDelegated);
+    // delegate
     event DelegateRegistered(address indexed delegate, uint256 feePct);
     event DelegateFeeDecreased(address indexed delegate, uint256 currentFeePct, uint256 feePct);
     event DelegateFeeIncreased(address indexed delegate, uint256 currentFeePct, uint256 feePct, uint256 nextFeePctEpoch);
+    event ClaimDelegateFees(address indexed delegate, uint256 feesClaimed);
     // claimRewards
     event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
     event RewardsClaimedFromDelegate(uint256 indexed epoch, address indexed caller, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
@@ -41,6 +43,9 @@ library Events {
     event EpochSubsidyPerVoteSet(uint256 indexed epoch, uint256 subsidyPerVote);
     event EpochPartiallyFinalized(uint256 indexed epoch, bytes32[] poolIds);
     event EpochFullyFinalized(uint256 indexed epoch);
+
+    // sweepUnclaimedRewards
+    event UnclaimedRewardsSwept(uint256 indexed epoch, bytes32 indexed poolId, uint256 unclaimedRewards);
 
 // --------- PaymentsController.sol ---------
     event IssuerCreated(bytes32 indexed issuerId, address adminAddress, address assetAddress);

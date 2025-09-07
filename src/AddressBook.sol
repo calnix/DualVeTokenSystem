@@ -26,6 +26,7 @@ contract AddressBook is Ownable2Step {
     bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
     bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
     bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER';   //OmPm.sol
+    bytes32 private constant ROUTER = 'ROUTER';
     
     // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
@@ -78,6 +79,10 @@ contract AddressBook is Ownable2Step {
 
     function getPaymentsController() external view returns (address) {
         return _addresses[PAYMENTS_CONTROLLER];
+    }
+
+    function getRouter() external view returns (address) {
+        return _addresses[ROUTER];
     }
 
 

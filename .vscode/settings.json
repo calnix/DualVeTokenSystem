@@ -8,5 +8,8 @@
     ],
     "inline-bookmarks.view.showVisibleFilesOnly": false,
     "inline-bookmarks.view.expanded": true,
-    "solidity.compileUsingRemoteVersion": "v0.8.27+commit.40a35a09"
+    "solidity.compileUsingRemoteVersion": "v0.8.27+commit.40a35a09",
+    "cSpell.words": [
+        "undistributable"
+    ]
 }

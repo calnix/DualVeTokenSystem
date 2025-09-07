@@ -38,7 +38,7 @@ library Errors {
 
 // --------- VotingController.sol ---------
     error EpochFinalized();
-    error NoSpareVotes();
+    error NoAvailableVotes();
     error InvalidFeePct();
     error ZeroVotes();
     error PoolDoesNotExist();
@@ -47,6 +47,7 @@ library Errors {
     // delegation
     error DelegateAlreadyRegistered();
     error DelegateNotRegistered();
+    error NoFeesToClaim();
     //claimRewards
     error NoRewardsToClaim();
     //claimSubsidies
@@ -55,11 +56,14 @@ library Errors {
     error NoSubsidiesToClaim();
     error NoSubsidiesAccrued();
     error SubsidyAlreadyClaimed();
-    // finalizeEpoch
-    error SubsidyPerVoteZero();
     // depositSubsidies
-    error CanOnlySetSubsidiesForFutureEpochs();
+    error CannotSetSubsidiesForFutureEpochs();
+    error SubsidyPerVoteAlreadySet();
     error InsufficientSubsidies();
+    // finalizeEpochRewardsSubsidies
+    error SubsidyPerVoteZero();
+    error SubsidyPerVoteNotSet();
+    
     // withdrawUnclaimedSubsidies
     error CanOnlyWithdrawUnclaimedSubsidiesAfterDelay();
     // depositRewards

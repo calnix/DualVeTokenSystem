@@ -1,7 +1,67 @@
 # VotingControllers
 
-Do we need the whitelist flag in pool struct?
-- just create, remove, activate/deactivate is fine
+# Mappings
+
+## **Generics**
+- `epochs`      -> epoch overview
+- `pools`       -> global pool overview
+- `epochPools`  -> pool overview for a specific epoch
+
+
+## **User/Delegate data**
+- `usersEpochData` / `delegateEpochData`: Track per-epoch data for each address, separately for user and delegate roles (`Account` struct).
+- `usersEpochPoolData` / `delegatesEpochPoolData`: Track per-epoch, per-pool data for each address, again split by user and delegate roles (`Account` struct).
+
+These paired mappings implement a dual-accounting model:
+
+- Every address has two logical accounts: a user account and a delegate account (`struct Account { uint128 totalVotesSpent, uint128 rewards, ... }`).
+- When an address votes with its own voting power, its votes and rewards are recorded in `usersEpochData` and `usersEpochPoolData`.
+- When an address votes using voting power delegated to it by others, its activity is recorded in `delegateEpochData` and `delegatesEpochPoolData`.
+
+In the `vote()` function, these are abstracted as `accountEpochData` and `accountEpochPoolData`.
+All voting activity—whether personal or delegated—is tracked for each address at both the {epoch, address} and {epoch, pool, address} levels.
+
+> Additionally, votes are tracked at a global epoch, global pool, and {epoch-pool} level.
+> `epochs`, `pools`, `epochPools`
+
+### rewards
+
+
+
+`userDelegateAccounting` -> epoch->user->delegate: [Account]
+- for this {user-delegate} pair, what was the user's {rewards,claimed}
+- *used where?*
+
+
+---
+
+**Delegate registration + feePct**
+- `delegates`               ->  `struct Delegate{isRegistered, currentFeePct, nextFeePct, etc}`
+- `delegateHistoricalFees`  -> for historical fee updates, so that users can claim against correct fee, and not prevailing.
+
+
+## Voting
+
+### 1. `vote()`
+
+```solidity
+function vote(address caller, bytes32[] calldata poolIds, uint128[] calldata poolVotes, bool isDelegated)
+```
+
+- users can only vote on the current Epoch
+- current epoch should not be finalized - indicating open season.
+- `isDelegated` flag indicates that the caller is allocating votes from his delegations; instead of personal votes.
+- voting power is determined based on forward-decay: `_veMoca().balanceAtEpochEnd`
+
+\
+### 2. `migrateVotes`
+
+- users can migrate votes from one batch of pools to another
+- dstPools must be active
+- srcPools do not have to be active
+- partial and full migration of votes supported
+
+----
 
 
 ## Delegate Leader Unregisters Mid-Epoch With Active Votes
@@ -67,7 +127,8 @@ On VotingController, when an epoch ends:
 ## Voters and Rewards
 
 - voters receive rewards, as esMoca
-- rewards are based upon verification fees
+- rewards financed by the `VOTING_FEE_PERCENTAGE` cut from PaymentsController.sol
+- voters can only claim rewards on an epoch that has been finalized [admin must have called `finalizeEpoch`]
  
 Voters vote on credential pools in Epoch N: 
 - Voting rewards would be a portion of verification fees in the next epoch, **Epoch N+1**
@@ -83,7 +144,52 @@ Voters vote on credential pools in Epoch N:
 1. depositRewardsForEpoch() -> sets `rewardsPerVote` for each pool
 2. users can call `claimRewards()`
 
+
 ---
+
+
+# Execution flow
+
+At the end of epoch:
+
+## 1. Call `depositSubsidies`
+
+Why call at the end of epoch?
+- `epoch.totalVotes` is finalized
+- can sanity check the calculation: `subsidyPerVote` =  `subsidiesToBeDeposited` / `epoch.totalVotes`
+- to ensure that we do not deposit an insufficient amount of subsidies, such that `subsidyPerVote` is rounded to `0`.
+- this will prevent esMoca subsidy deposit from being stuck on the contract, and unclaimable by verifiers. 
+
+Note:
+- Subsides for each epoch are decided by the protocol and financed by the treasury.
+- Some epochs may have `0` subsidies.
+
+We have a `previewDepositSubsidies` function to get `subsidyPerVote` calc. before calling `depositSubsidies` as a convenient check.
+- hence, `depositSubsidies` is only callable once for the epoch.
+- it cannot be called again to make modifications/overwrites.
+- protocol admin should utilize `previewDepositSubsidies` and make up their minds before calling `depositSubsidies`
+
+
+## 2. `finalizeEpochRewardsSubsidies`
+
+
+- called multiple times, to iterate through full list of pools
+
+**For rewards:**
+- for each pool, sets its rewards, hence `bytes32[] calldata poolIds, uint256[] calldata rewards`
+- rewards financed by the `VOTING_FEE_PERCENTAGE` cut from PaymentsController.sol
+- generating `uint256[] calldata rewards`: protocol will manually refer to `PaymentsController._epochPoolFeesAccrued[epoch][poolId].feesAccruedToVoters`
+
+**For subsidies:**
+- set value of pool's `subsidyPerVote` via `epochPools[epoch][poolId].totalSubsidies`
+- verifiers can claim based on `verifierTotalSubsidyForPool`/`totalSubsidyPerPoolPerEpoch` * `
+
+----
+
+After finalizeEpochRewardsSubsidies is completed, and the flag isFinalized is set to true
+- users can claim rewards
+- verifiers can claim subsidies
+
 
 # TO-FIX
 

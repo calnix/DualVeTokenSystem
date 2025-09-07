@@ -16,3 +16,25 @@
 - **Edge Fuzz**: Fuzz zero/min/max values for votes, rewards, delegations; ensure reverts or 0 outputs as expected.
 
 Run with high coverage; use Slither for static analysis.
+
+
+### Unit Tests
+- testFinalizeWithSmallRewards: Verify finalize sets totalRewards without revert when poolRewards * 1e18 < totalVotes.
+- testClaimSmallRewardsLargeVoter: Ensure user with large vote share claims >0 from small poolRewards; small voter gets 0.
+- testClaimSmallRewardsDelegate: Verify delegate claim distributes small rewards proportionally without 0 truncation revert.
+- testSweepUnclaimedAfterTime: Confirm admin can sweep remainder after 1 year; reverts if too early or no unclaimed.
+- testFinalizeMixedPools: Verify finalize sets totalRewards only for pools with rewards>0 and votes>0; skips 0-reward pools.
+- testClaimZeroRewardPool: Attempt claim on 0-reward pool skips or reverts per-pool without blocking others.
+
+### Integration Tests
+- testFullEpochCycleSmallRewards: Simulate epoch with small fees, finalize, claim partial, sweep remainder.
+- testDepositAdditionalSmall: Verify additional deposit adds to totalRewards; claims use direct calc correctly.
+- testMultiPoolSmallRewards: Simulate epoch with varying pool rewards (some 0, some small); confirm per-pool distributions, partial claims, sweeps.
+
+### Coverage Tests
+- testEdgeZeroRewards: Finalize/claim with poolRewards=0; no transfer.
+- testEdgeZeroVotes: Revert finalize if poolRewards>0 but totalVotes=0.
+- testPrecisionLoss: Fuzz small poolRewards vs varying totalVotes; verify claimed <= totalRewards, remainder sweepable.
+
+These tests target critical paths for small rewards handling and truncation avoidance. Use Foundry for fuzzing edge cases.
+// ... existing code ...
