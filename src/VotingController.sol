@@ -386,9 +386,19 @@ contract VotingController is Pausable {
     }
 
 
-    //TODO: review the delegate mappings
-    // user claims rewards on votes tt were delegated to a delegate
-    // user could have multiple delegates; must specify which delegate he is claiming from
+    /**
+     * @notice Claims rewards for the caller on votes that were delegated to a specific delegate for a given epoch and set of pools.
+     * @dev Depending on the grouping of poolIds in each call, the user may receive zero or non-zero net rewards per claim. This is due to the application of delegate fees.
+     *      Front-end should group poolIds to maximize net rewards per claim.
+     * - Pools may be inactive at the time of claim, but unclaimed prior rewards are still claimable.
+     * - Rewards are calculated based on the user's delegated votes, the delegate's share of pool rewards, and the total votes allocated by the delegate.
+     * - Skips pools with zero rewards or zero votes gracefully.
+     * - Sets per-pool gross rewards for the user-delegate pair and flags them as claimed.
+     * - Prorates and subtracts delegate fee from per-pool claimed (leaves fees as unclaimed for sweep).
+     * @param epoch The epoch number for which to claim rewards.
+     * @param poolIds The array of pool identifiers for which to claim rewards.
+     * @param delegate The address of the delegate from whom the user is claiming rewards.
+     */
     function claimRewardsFromDelegate(uint256 epoch, bytes32[] calldata poolIds, address delegate) external {
         // sanity check: delegate
         //require(delegate > address(0), Errors.InvalidAddress());
@@ -917,11 +927,3 @@ contract VotingController is Pausable {
     }
 
 }
-
-
-/**
-    REMOVE EPOCH_ZERO_TIMESTAMP
-    drop the anchor and have all contracts work off unix
-    no need for epoch controller that way
-
- */

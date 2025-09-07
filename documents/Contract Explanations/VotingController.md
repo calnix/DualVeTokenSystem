@@ -193,5 +193,5 @@ After finalizeEpochRewardsSubsidies is completed, and the flag isFinalized is se
 
 # TO-FIX
 
-0. redo so tt rewards are epoch locked, not adhoc
-1. claimRewardsDelegate
+0. camel principle: Oz's mulDiv()
+
