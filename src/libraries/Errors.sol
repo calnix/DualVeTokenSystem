@@ -68,5 +68,8 @@ library Errors {
     error CanOnlyWithdrawUnclaimedSubsidiesAfterDelay();
     // depositRewards
     error NoRewardsAccrued();
+    //sweepUnclaimedRewards
+    error CanOnlySweepUnclaimedRewardsAfterDelay();
+    error NoUnclaimedRewardsToSweep();
 
 }

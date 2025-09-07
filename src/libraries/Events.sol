@@ -45,7 +45,7 @@ library Events {
     event EpochFullyFinalized(uint256 indexed epoch);
 
     // sweepUnclaimedRewards
-    event UnclaimedRewardsSwept(uint256 indexed epoch, bytes32 indexed poolId, uint256 unclaimedRewards);
+    event UnclaimedRewardsSwept(uint256 indexed epoch, bytes32[] poolIds, uint256 unclaimedRewards);
 
 // --------- PaymentsController.sol ---------
     event IssuerCreated(bytes32 indexed issuerId, address adminAddress, address assetAddress);

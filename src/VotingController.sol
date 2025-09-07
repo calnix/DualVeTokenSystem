@@ -720,29 +720,37 @@ contract VotingController is Pausable {
     }
 
 
+    //REVIEW: ROLE 
     /**
-     * @notice Sweeps unclaimed voting rewards for a specific pool and epoch to the treasury.
-     * @dev Only callable by VotingController admin. Epoch must be fully finalized and pool must exist.
-     *      Transfers all unclaimed esMoca rewards for the given pool and epoch to the treasury address.
+     * @notice Sweep all unclaimed voting rewards for specified pools in a given epoch to the treasury.
+     * @dev Requires the epoch to be fully finalized and a 6-epoch delay.
+     *      Sums and transfers all unclaimed esMoca rewards for the provided poolIds in the specified epoch to the treasury.
+     *      Emits an {UnclaimedRewardsSwept} event on success.
+     *      Reverts if the epoch is not finalized, the treasury address is unset, or there are no unclaimed rewards to sweep.
      * @param epoch The epoch number for which to sweep unclaimed rewards.
-     * @param poolId The identifier of the pool whose unclaimed rewards are to be swept.
-     * Emits an {UnclaimedRewardsSwept} event on success.
-     * Reverts if the epoch is not finalized, the pool does not exist, or there are no unclaimed rewards.
+     * @param poolIds Array of pool identifiers whose unclaimed rewards are to be swept.
      */
-    function sweepUnclaimedRewards(uint128 epoch, bytes32 poolId) external onlyVotingControllerAdmin {
-        // TODO: delay before sweeping is possible -> 6 epochs?
+    function sweepUnclaimedRewards(uint128 epoch, bytes32[] calldata poolIds) external onlyVotingControllerAdmin {
+        // 6 epoch delay before sweeping is possible
+        require(EpochMath.getCurrentEpochNumber() >= epoch + 6, Errors.CanOnlySweepUnclaimedRewardsAfterDelay());
         
-        // sanity check: epoch must be finalized + pool must exist
+        // sanity check: epoch must be finalized [pool exists implicitly]
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
-        require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
 
-        uint256 unclaimed = epochPools[epoch][poolId].totalRewards - epochPools[epoch][poolId].totalClaimedRewards;
-        require(unclaimed > 0, Errors.NoUnclaimed());
+        uint256 unclaimed;
+        for(uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+            unclaimed += epochPools[epoch][poolId].totalRewards - epochPools[epoch][poolId].totalClaimedRewards;
+        }
+
+        require(unclaimed > 0, Errors.NoUnclaimedRewardsToSweep());
 
         address treasury = IAddressBook.getTreasury();
+        require(treasury != address(0), Errors.InvalidAddress());
+        
         _esMoca().safeTransfer(treasury, unclaimed);
 
-        emit Events.UnclaimedRewardsSwept(epoch, poolId, unclaimed);
+        emit Events.UnclaimedRewardsSwept(epoch, poolIds, unclaimed);
     }
 }
     
@@ -924,6 +932,22 @@ contract VotingController is Pausable {
 
     function getAddressBook() external view returns (IAddressBook) {
         return _addressBook;
+    }
+
+    /**
+     * @notice Returns the gross rewards mapping for a user-delegate pair for a given epoch.
+     * @dev Returns an array of gross rewards for the specified poolIds.
+     * @param epoch The epoch number.
+     * @param user The address of the user.
+     * @param delegate The address of the delegate.
+     * @param poolIds The array of pool identifiers to query.
+     * @return grossRewards Array of gross rewards for each poolId.
+     */
+    function getUserDelegatePoolGrossRewards(uint256 epoch, address user, address delegate, bytes32[] calldata poolIds) external view returns (uint128[] memory grossRewards) {
+        grossRewards = new uint128[](poolIds.length);
+        for (uint256 i = 0; i < poolIds.length; ++i) {
+            grossRewards[i] = userDelegateAccounting[epoch][user][delegate].poolGrossRewards[poolIds[i]];
+        }
     }
 
 }
