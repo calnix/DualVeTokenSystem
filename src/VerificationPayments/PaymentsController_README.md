@@ -113,6 +113,11 @@ The schema struct contains `bytes32 poolId`, to associate a schema with a voting
 > VotingController has no visibility of which schemas are associated to its pools. 
 > Voter rewards [VOTING_FEE_PERCENTAGE] will be checked on PaymentsController.sol, then deposited to their respective pools. 
 
+**Important:** [REVIEW] 
+- Adding a schema to a voting pool partway through an epoch means any verifications made before the association will not be eligible for subsidies in that epoch.
+- Removing a schema from a voting pool mid-epoch allows its weight to be excluded from pool and subsidy calculations; verifications made before removal in the same epoch will not receive subsidies. [?!]
+
+
 ### 4. Other issuer functions:
 
 - `updateSchemaFee`
@@ -239,26 +244,36 @@ Verifier contract will call `deductBalance()`, passing the following as inputs:
 
 **While distribution of subsidies are not handled on this contract, but instead on VotingController, we elaborate the process to highlight the requirements needed in PaymentsController to effectively support this. I.e.: what mappings and tracking are required.**
 
-- For each epoch, verifier receives subsidies based on: `(verifierAccruedSubsidies / poolAccruedSubsidies) * poolAllocatedSubsidies`
-- TotalSubsidies to be distributed across pools for an epoch is decided by the protocol [can be set at the start or end on `VotingController.setEpochSubsidies()`]
-- Subsidies are distributed proportionally based on the votes each pool receives -> `poolAllocatedSubsidies` [`VotingController.finalizeEpoch()`]
-- A pool's allocated subsidies is then distributed amongst the verifiers proportionally, per the weight: `verifierAccruedSubsidies / poolAccruedSubsidies`
-- where `verifierAccruedSubsidies` => total subsidies accrued based on their verification fee expenditure, for that specific pool
-- where `poolAccruedSubsidies` => the sum total of subsidies accrued by all verifiers, in that pool [*schema group*]
+- Each epoch, a verifier’s subsidy = `(verifierAccruedSubsidies / poolAccruedSubsidies) * poolAllocatedSubsidies`.
+- Protocol sets total epoch subsidies via `VotingController.setEpochSubsidies()`.
+- Subsidies are split among pools by vote weight (`VotingController.finalizeEpochRewardsSubsidies()`), then among verifiers in each pool by their share of accrued subsidies:
+    - `verifierAccruedSubsidies`: verifier’s total eligible verification fee spend in a pool.
+    - `poolAccruedSubsidies`: sum of all verifiers’ eligible spend in that pool (schema group).
 
-Hence, the need for PaymentsController to have the two mappings:
-1. `_epochPoolSubsidies` 
-2. `_epochPoolVerifierSubsidies`; 
+- `deductBalance` (see implementation) books weights per `{verifier, schema} -> poolId` for the current epoch:
+    - `epoch => poolId => totalWeight` (total pool weight per epoch)
+    - `epoch => poolId => verifierId => verifierTotalWeight`
+    - `epoch => poolId => schemaId => schemaTotalWeight`
+    - All weights increment as `fee * tier`.
+- At epoch end, VotingController deposits subsidies.
+- Verifiers claim: `verifierTotalWeightForPool / totalWeightPerPoolPerEpoch * poolSubsidy`.
 
-which are updated in `deductBalance`.
+PaymentsController maintains:
+1. `_epochPoolSubsidies`
+2. `_epochPoolVerifierSubsidies`
 
-`VotingController.claimSubsidies()` will reference these values for calculating verifier subsidies, by calling `PaymentsController.getVerifierAndPoolAccruedSubsidies()`
+Both are updated in `deductBalance`.
 
-Subsidies are paid out to the `assetAddress` of the verifier, so it is required that, `assetAddress` calls `VotingController.claimSubsidies`
+`VotingController.claimSubsidies()` uses `PaymentsController.getVerifierAndPoolAccruedSubsidies()` for payout calculation.
+
+Subsidies are paid to the verifier’s `assetAddress`, which must call `VotingController.claimSubsidies`.
+
+
+
+
 
 > **VotingController.claimSubsidies()` will handle the precision differential when calculating verifier weighted subsidies**
-
-> Subsidies are calculated on the gross amount; before protocol and voting fee are deducted
+> Subsidies are calculated on the gross amount; before protocol and voting fee are deducted.
 
 ## Handling Voter Rewards [Voting Fee]
 

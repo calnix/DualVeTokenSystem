@@ -568,7 +568,7 @@ contract VotingController is Pausable {
 //-------------------------------verifiers: claiming subsidies-----------------------------------------
 
     //TODO: subsidies claimable based off their expenditure accrued for a pool-epoch
-    // called by verifiers: subsidies received as esMoca
+    //REVIEW: Subsidies are paid out to the `assetAddress` of the verifier, so it is required that, `assetAddress` calls `VotingController.claimSubsidies`
     function claimSubsidies(uint128 epoch, bytes32 verifierId, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, Errors.InvalidArray());
         
@@ -591,7 +591,7 @@ contract VotingController is Pausable {
 
             // get verifier's accrued subsidies for {pool, epoch} & pool's total accrued subsidies for the epoch
             (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) 
-                // reverts if msg.sender is not the verifier's asset address
+                // reverts if msg.sender is not the verifierId's asset address
                 = IPaymentsController(IAddressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifierId, msg.sender);
             
             // calculate subsidy receivable 
