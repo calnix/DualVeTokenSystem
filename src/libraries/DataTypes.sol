@@ -63,20 +63,21 @@ library DataTypes {
 
     struct Epoch {
         uint128 totalVotes;
-        uint128 totalRewardsAllocated;           // Total esMoca rewards: set in depositRewards()
-        uint128 totalSubsidiesAllocated;         // deposited subsidies; set in depositEpochSubsidies(); not distributable subsidies    
-        uint128 totalSubsidiesDistributable;     // subsidies distributable [due to flooring to 0 of poolSubsidies] | set in finalizeEpochRewardsSubsidies()
+
+        // rewards + subsidies
+        uint128 totalRewardsAllocated;           // set in depositRewards()
+        uint128 totalSubsidiesAllocated;         // deposited subsidies; set in depositEpochSubsidies()
+        uint128 totalSubsidiesDistributable;     // distributable subsidies set in finalizeEpochRewardsSubsidies()
 
         // claimed: esMOCA 
         uint128 totalRewardsClaimed;   
         uint128 totalSubsidiesClaimed;      
-        
-        uint128 poolsFinalized;         // number of pools that have been finalized for this epoch
-        
+
         // epochEnd: flags
-        bool isSubsidiesSet;            // flag set in depositEpochSubsidies()
-        bool isFullyFinalized;          // flag set in finalizeEpochRewardsSubsidies()
-        bool residualsWithdrawn;        // flag set in withdrawResidualSubsidies()
+        uint128 poolsFinalized;         // incremented in finalizeEpochRewardsSubsidies()
+        bool isSubsidiesSet;            // set in depositEpochSubsidies()
+        bool isFullyFinalized;          // set in finalizeEpochRewardsSubsidies()
+        bool residualsWithdrawn;        // set in withdrawResidualSubsidies()
     }
     
     // Pool data [global]
