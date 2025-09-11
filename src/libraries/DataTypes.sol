@@ -63,21 +63,20 @@ library DataTypes {
 
     struct Epoch {
         uint128 totalVotes;
+        uint128 totalRewardsAllocated;           // Total esMoca rewards: set in depositRewards()
+        uint128 totalSubsidiesAllocated;         // deposited subsidies; set in depositEpochSubsidies(); not distributable subsidies    
+        uint128 totalSubsidiesDistributable;     // subsidies distributable [due to flooring to 0 of poolSubsidies] | set in finalizeEpochRewardsSubsidies()
+
+        // claimed: esMOCA 
+        uint128 totalRewardsClaimed;   
+        uint128 totalSubsidiesClaimed;      
         
-        // verifier subsidies
-        uint128 totalSubsidies;               // Total esMOCA subsidies: set in depositSubsidies()
-        //uint128 subsidyPerVote;               // set in depositSubsidies()
-        uint128 totalSubsidiesClaimed;        // Total esMOCA subsidies claimed
-
-        // voting rewards
-        uint128 totalRewards;           // Total esMoca rewards: set in depositRewards()
-        uint128 totalRewardsClaimed;    // Total esMoca rewards claimed
-
-        // epochEnd: flags
-        bool isSubsidyPerVoteSet;       // flag set in depositSubsidies()
-        bool isRewardsPerVoteSet;       // flag set in depositRewards()
         uint128 poolsFinalized;         // number of pools that have been finalized for this epoch
+        
+        // epochEnd: flags
+        bool isSubsidiesSet;            // flag set in depositEpochSubsidies()
         bool isFullyFinalized;          // flag set in finalizeEpochRewardsSubsidies()
+        bool residualsWithdrawn;        // flag set in withdrawResidualSubsidies()
     }
     
     // Pool data [global]
@@ -87,8 +86,10 @@ library DataTypes {
 
         // global metrics TODO: review
         uint128 totalVotes;             // total votes pool accrued throughout all epochs
-        uint128 totalSubsidies;         // allocated esMOCA subsidies: based on EpochData.subsidyPerVote
-        uint128 totalRewards;           // set in finalizeEpochRewardsSubsidies()
+        uint128 totalRewardsAllocated;           // set in finalizeEpochRewardsSubsidies()
+        uint128 totalSubsidiesAllocated;         // set in finalizeEpochRewardsSubsidies()
+
+        // claimed: esMOCA 
         uint128 totalSubsidiesClaimed;  
         uint128 totalRewardsClaimed;    
     }
@@ -96,23 +97,24 @@ library DataTypes {
     // pool data [epoch]
     struct PoolEpoch {
         uint128 totalVotes;
-        
-        uint128 totalRewards;           // set in finalizeEpochRewardsSubsidies()
-        uint128 totalRewardsClaimed;    // total gross rewards claimed 
-    
-        // verifier data
-        uint128 totalSubsidies;         // allocated esMoca subsidies: based on EpochData.subsidyPerVote
+        uint128 totalRewardsAllocated;           // set in finalizeEpochRewardsSubsidies()
+        uint128 totalSubsidiesAllocated;         // set in finalizeEpochRewardsSubsidies()
+
+        // claimed: esMOCA 
+        uint128 totalRewardsClaimed;    
         uint128 totalSubsidiesClaimed;  
+        
+        // flag for finalization
+        bool isProcessed;
     }
 
-    // delegate data
+    // global delegate data
     struct Delegate {
         bool isRegistered;             
-        uint128 currentFeePct;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
         
-        // fee change
-        uint128 nextFeePct;       // to be in effect for next epoch
-        uint128 nextFeePctEpoch;  // epoch of next fee change
+        uint128 currentFeePct;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+        uint128 nextFeePct;         
+        uint256 nextFeePctEpoch;            
 
         uint128 totalRewardsCaptured;      // total gross voting rewards accrued by delegate [from delegated votes]
         uint128 totalFees;                 // total fees accrued by delegate
@@ -124,12 +126,12 @@ library DataTypes {
     // delegate data | perEpoch | perPoolPerEpoch
     struct Account {
         uint128 totalVotesSpent;
-        uint128 totalRewards;       // total accrued rewards
+        uint128 totalRewards;         // user: total net rewards claimed / delegate: total gross rewards accrued
     }
 
     struct UserDelegateAccount {
         uint128 totalNetClaimed;
-        mapping(bytes32 poolId => uint128 grossRewards) poolGrossRewards;
+        mapping(bytes32 poolId => uint128 grossRewards) userPoolGrossRewards; // flag: 0 = not claimed, non-zero = claimed
     }
 
 // --------- VotingEscrowMoca.sol -------
@@ -159,16 +161,7 @@ library DataTypes {
         // permanentLockBalance
     }
 
-// ---------- consider removing this -------
 
 
-
-    // global view of user's principal
-    struct User {
-        uint128 moca;
-        uint128 esMoca;
-    }
-
-    
 
 }

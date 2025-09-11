@@ -16,6 +16,12 @@ library Events {
     event EmergencyExit(bytes32[] lockIds);
 
 // --------- VotingController.sol ---------
+    // createPool(), removePool()
+    event PoolCreated(bytes32 indexed poolId, bool isActive);
+    event PoolRemoved(bytes32 indexed poolId);
+    event PoolStatusSet(bytes32 indexed poolId, bool isActive);
+
+    // vote(), migrateVotes()
     event Voted(uint256 indexed epoch, address indexed caller, bytes32[] poolIds, uint256[] votes, bool isDelegated);
     event VotesMigrated(uint256 indexed epoch, address indexed caller, bytes32[] srcPoolIds, bytes32[] dstPoolIds, uint256[] votes, bool isDelegated);
     // delegate
@@ -26,19 +32,26 @@ library Events {
     // claimRewards
     event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
     event RewardsClaimedFromDelegate(uint256 indexed epoch, address indexed caller, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
-
     // claimSubsidies
     event SubsidiesClaimed(address indexed verifier, uint256 epoch, bytes32[] poolIds, uint256 totalSubsidiesClaimed);
+
     // depositSubsidies
-    event SubsidiesDeposited(address indexed depositor, uint256 epoch, uint256 depositSubsidies, uint256 totalSubsidies);
-    // withdrawSubsidies
-    event SubsidiesWithdrawn(address indexed depositor, uint256 epoch, uint256 withdrawSubsidies, uint256 totalSubsidies);
+    event SubsidiesDeposited(address indexed depositor, uint256 epoch, uint256 totalSubsidies);
+    event SubsidiesSet(uint256 indexed epoch, uint256 totalSubsidies);
+
     // withdrawUnclaimedSubsidies
-    event UnclaimedSubsidiesWithdrawn(address indexed depositor, uint256 epoch, uint256 unclaimedSubsidies);
+    event UnclaimedRewardsWithdrawn(address indexed receiver, uint256 epoch, uint256 unclaimedSubsidies);
+    // withdrawResidualSubsidies
+    event ResidualSubsidiesWithdrawn(address indexed receiver, uint256 epoch, uint256 residuals);
+   
     // setUnclaimedSubsidiesDelay
     event UnclaimedSubsidiesDelayUpdated(uint256 delayPeriod);
     // setMaxDelegateFeePct
     event MaxDelegateFeePctUpdated(uint256 maxDelegateFeePct);
+    // setFeeIncreaseDelayEpochs
+    event FeeIncreaseDelayEpochsUpdated(uint256 delayEpochs);
+    // setUnclaimedDelay
+    event UnclaimedDelayUpdated(uint256 delayEpochs);
     // finalizeEpoch
     event EpochSubsidyPerVoteSet(uint256 indexed epoch, uint256 subsidyPerVote);
     event EpochPartiallyFinalized(uint256 indexed epoch, bytes32[] poolIds);

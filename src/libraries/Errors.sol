@@ -58,11 +58,14 @@ library Errors {
     error SubsidyAlreadyClaimed();
     // depositSubsidies
     error CannotSetSubsidiesForFutureEpochs();
-    error SubsidyPerVoteAlreadySet();
+    error SubsidiesAlreadySet();
     error InsufficientSubsidies();
+    //depositRewards
+    error RewardsAlreadySet();
     // finalizeEpochRewardsSubsidies
     error SubsidyPerVoteZero();
-    error SubsidyPerVoteNotSet();
+    error SubsidiesNotSet();
+    error PoolAlreadyProcessed();
     
     // withdrawUnclaimedSubsidies
     error CanOnlyWithdrawUnclaimedSubsidiesAfterDelay();
