@@ -26,9 +26,15 @@ write about it in docs, explaining clearly. how account works/reflects in a pers
 
 how uint128 totalRewards in account struct would mean different things, in those 2 different contexts.
 
+## roles in VotingController
+
+## risk fns
+
+## view fns
+
 -----
 
-## on optimal datas structs
+## on optimal dataType structs
 
 1. Epoch Struct - Final Optimal Layout
 Key User Function Analysis:

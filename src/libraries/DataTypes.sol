@@ -65,7 +65,7 @@ library DataTypes {
         uint128 totalVotes;
 
         // rewards + subsidies
-        uint128 totalRewardsAllocated;           // set in depositRewards()
+        uint128 totalRewardsAllocated;           // set+deposited in finalizeEpochRewardsSubsidies()
         uint128 totalSubsidiesAllocated;         // deposited subsidies; set in depositEpochSubsidies()
         uint128 totalSubsidiesDistributable;     // distributable subsidies set in finalizeEpochRewardsSubsidies()
 

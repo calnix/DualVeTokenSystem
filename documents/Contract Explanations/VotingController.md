@@ -1,5 +1,29 @@
 # VotingControllers
 
+
+Btw, this ve system we've got going is pretty sick, engineering wise.
+Dual-token ve locking with an inbuilt delegate system with a  multi-sub account structure supporting it
+It's one of a kind
+
+I can tell you for a fact that most protocols just lifted curve's ve implementation without really understanding it
+And it's not even designed properly to begin with nor optimized
+
+justify the above #1:
+- curve uses block interpolation; 
+- meaning they track decay and rewards based on block interpolation, to represent the passage of time,
+- which means on fast chains, it wouldn't work well, as it would heavily round down the values.
+- often flooring to 0 unnecessarily
+
+The people who wrote it didn't think it through. 
+Curve was wrong. they should have used time instead of block.numbers.
+
+Block number is not reliable for fast chains like most L2, bsc, sonic.
+the interpolation rounds down very quickly
+
+justify the above #2:
+- delegate system onchain + fees implemented
+- typically protocols handle it offchain through some relayer service; or they point you to them
+
 # Mappings
 
 ## **Generics**

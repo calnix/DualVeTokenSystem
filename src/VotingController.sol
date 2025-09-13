@@ -627,7 +627,7 @@ contract VotingController is Pausable {
     }
 
 
-//-------------------------------admin: finalize, deposit, withdraw subsidies-----------------------------------------
+//-------------------------------admin: depositEpochSubsidies, finalizeEpochRewardsSubsidies -----------------------------------------
 
     // REVIEW: instead onlyVotingControllerAdmin, DEPOSITOR role?
     /**
@@ -672,6 +672,7 @@ contract VotingController is Pausable {
 
     //Note: only callable once for each pool | rewards are referenced from PaymentsController | subsidies are referenced from PaymentsController
     //Review: str vs mem | uint128 vs uint256
+    //note: only deposits rewards that can be claimed[poolRewards > 0 & poolVotes > 0]. therefore, sum of input rewards could be lesser than totalRewardsAllocated
     function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint256[] calldata rewards) external onlyVotingControllerAdmin {
         require(poolIds.length > 0, Errors.InvalidArray());
         require(poolIds.length == rewards.length, Errors.MismatchedArrayLengths());
@@ -734,6 +735,9 @@ contract VotingController is Pausable {
         // STORAGE: increment count of pools finalized
         epochs[epoch].poolsFinalized += uint128(poolIds.length);
 
+        // deposit rewards
+        _esMoca().transferFrom(msg.sender, address(this), totalRewards);
+
         // check if epoch is fully finalized
         if(epochPtr.poolsFinalized == TOTAL_NUMBER_OF_POOLS) {
             epochPtr.isFullyFinalized = true;
@@ -742,7 +746,9 @@ contract VotingController is Pausable {
     }
 
 
-    //REVIEW: ROLE 
+//-------------------------------admin: withdrawUnclaimedRewards, withdrawUnclaimedSubsidies, withdrawResidualSubsidies -----------------------------------------
+    
+    //REVIEW: ROLE and recipient
     /**
      * @notice Sweep all unclaimed voting rewards for specified pools in a given epoch to the treasury.
      * @dev Requires the epoch to be fully finalized and a 6-epoch delay.
@@ -769,7 +775,7 @@ contract VotingController is Pausable {
         emit Events.UnclaimedRewardsWithdrawn(treasury, epoch, unclaimed);
     }
 
-    //REVIEW: ROLE and recipient
+    //REVIEW: ROLE and recipient, add + totalSubsidiesDistributable
     // withdraw unclaimed subsidies + residuals | after 6 epochs[~3months]
     function withdrawUnclaimedSubsidies(uint256 epoch) external onlyVotingControllerAdmin {
         // sanity check: epoch must be finalized
