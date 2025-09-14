@@ -698,7 +698,6 @@ contract VotingController is Pausable {
 
         if (userTotalGrossRewards == 0) return (0, 0);  // Early return if nothing to claim
 
-
         // calc. delegate fee + net rewards on total gross rewards, so as to not lose precision
         uint256 delegateFeePct = delegateHistoricalFees[delegate][epoch];           
         uint256 delegateFee = userTotalGrossRewards * delegateFeePct / Constants.PRECISION_BASE;
@@ -780,7 +779,7 @@ contract VotingController is Pausable {
 
         // update epoch & pool total claimed
         TOTAL_SUBSIDIES_CLAIMED += totalSubsidiesClaimed;
-        epochs[epoch].totalClaimed += totalSubsidiesClaimed;
+        epochs[epoch].totalSubsidiesClaimed += totalSubsidiesClaimed;
 
         // event
         emit Events.SubsidiesClaimed(msg.sender, epoch, poolIds, totalSubsidiesClaimed);
@@ -823,7 +822,7 @@ contract VotingController is Pausable {
             _esMoca().transferFrom(msg.sender, address(this), subsidies);
 
             // STORAGE: update total subsidies deposited for epoch + global
-            epochPtr.totalSubsidiesAllocated = subsidies;
+            epochPtr.totalSubsidiesDeposited = subsidies;
             TOTAL_SUBSIDIES_DEPOSITED += subsidies;
 
             emit Events.SubsidiesDeposited(msg.sender, epoch, subsidies);
@@ -892,7 +891,6 @@ contract VotingController is Pausable {
 
         //STORAGE update epoch global | do not overwrite subsidies; was set in depositEpochSubsidies()
         epochPtr.totalRewardsAllocated += totalRewards;
-        epochPtr.totalSubsidiesDistributable += totalSubsidies;
 
         emit Events.EpochPartiallyFinalized(epoch, poolIds);
 
@@ -910,8 +908,9 @@ contract VotingController is Pausable {
     }
 
 
-//-------------------------------admin: withdrawUnclaimedRewards, withdrawUnclaimedSubsidies, withdrawResidualSubsidies -----------------------------------------
+//-------------------------------admin: withdrawUnclaimedRewards, withdrawUnclaimedSubsidies -----------------------------------------
     
+    // Note: sweeps both unclaimed and residuals rewards (residuals are unclaimable flooring losses)
     //REVIEW: ROLE and recipient
     /**
      * @notice Sweep all unclaimed voting rewards for specified pools in a given epoch to the treasury.
@@ -939,7 +938,8 @@ contract VotingController is Pausable {
         emit Events.UnclaimedRewardsWithdrawn(treasury, epoch, unclaimed);
     }
 
-    //REVIEW: ROLE and recipient, add + totalSubsidiesDistributable
+    // Note: sweeps both unclaimed and residuals subsidies (residuals are unclaimable flooring losses)
+    //REVIEW: ROLE and recipient
     // withdraw unclaimed subsidies + residuals | after 6 epochs[~3months]
     function withdrawUnclaimedSubsidies(uint256 epoch) external onlyVotingControllerAdmin {
         // sanity check: epoch must be finalized
@@ -949,7 +949,7 @@ contract VotingController is Pausable {
         require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedSubsidiesAfterDelay());
         
         // sanity check: there must be unclaimed subsidies
-        uint256 unclaimedSubsidies = epochs[epoch].totalSubsidiesDistributable - epochs[epoch].totalClaimed;
+        uint256 unclaimedSubsidies = epochs[epoch].totalSubsidiesDeposited - epochs[epoch].totalSubsidiesClaimed;
         require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
 
         // transfer esMoca to admin/deposit(?)
@@ -958,32 +958,6 @@ contract VotingController is Pausable {
         // event
         emit Events.UnclaimedSubsidiesWithdrawn(msg.sender, epoch, unclaimedSubsidies);
     }
-
-
-    /**
-     * @notice Immediately sweeps residual subsidies (allocated - distributable) for an epoch to the admin/treasury.
-     * @dev Admin-only, post-finalization, no delay. Residuals are unclaimable flooring losses.
-     * @param epoch The epoch to sweep residuals for.
-     */
-    function withdrawResidualSubsidies(uint256 epoch) external onlyVotingControllerAdmin {
-        Epoch storage epochPtr = epochs[epoch];
-        // sanity check: epoch must be finalized
-        require(epochPtr.isFullyFinalized, Errors.EpochNotFinalized());
-        require(!epochPtr.residualsWithdrawn, Errors.ResidualsAlreadyWithdrawn());
-
-        uint256 residuals = epochPtr.totalSubsidiesAllocated - epochPtr.totalSubsidiesDistributable;
-        require(residuals > 0, Errors.NoResidualsToSweep());
-
-        // Flag to prevent double-sweep
-        epochPtr.residualsWithdrawn = true;  
-
-        address treasury = IAddressBook.getTreasury();  // Or msg.sender if to admin
-        require(treasury != address(0), Errors.InvalidAddress());
-        _esMoca().safeTransfer(treasury, residuals);
-
-        emit Events.ResidualSubsidiesWithdrawn(treasury, epoch, residuals);
-    }
-
     
 //-------------------------------admin: setters ---------------------------------------------------------
 
