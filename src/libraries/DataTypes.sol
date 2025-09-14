@@ -117,21 +117,21 @@ library DataTypes {
         uint128 nextFeePct;         
         uint256 nextFeePctEpoch;            
 
-        uint128 totalRewardsCaptured;      // total gross voting rewards accrued by delegate [from delegated votes]
-        uint128 totalFees;                 // total fees accrued by delegate
-        uint128 totalFeesClaimed;          // total fees claimed by delegate
+        uint128 totalRewardsCaptured;      // total gross rewards accrued by delegate [from delegated votes]
+        uint128 totalFees;               // total fees accrued by delegate
+        uint128 totalFeesClaimed;        // total fees claimed by delegate
     }
 
 
-    // user data     | perEpoch | perPoolPerEpoch
-    // delegate data | perEpoch | perPoolPerEpoch
+    // user/delegate data     | perEpoch | perPoolPerEpoch
     struct Account {
-        uint128 totalVotesSpent;
-        uint128 totalRewards;         // user: total net rewards claimed / delegate: total gross rewards accrued
+        uint128 totalVotesSpent;      // total votes spent by user [personal] || total votes spent by delegatee [delegated]
+        uint128 totalRewards;         // user: total rewards || delegate: total gross rewards accrued [from delegated votes]
+        // the delegate cannot claim totalRewards; they can only claim by applying their fee
     }
 
-    struct UserDelegateAccount {
-        uint128 totalNetClaimed;
+    struct OmnibusDelegateAccount {
+        uint128 totalNetRewards;    // claimed by user
         mapping(bytes32 poolId => uint128 grossRewards) userPoolGrossRewards; // flag: 0 = not claimed, non-zero = claimed
     }
 

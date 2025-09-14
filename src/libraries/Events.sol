@@ -32,6 +32,13 @@ library Events {
     // claimRewards
     event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
     event RewardsClaimedFromDelegate(uint256 indexed epoch, address indexed caller, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
+    
+    // delegatorsClaimRewardsFromDelegates/claimRewardsFromDelegate
+    event RewardsClaimedFromDelegateBatch(uint256 indexed epoch, address indexed caller, address[] delegateList, bytes32[][] poolIdsPerDelegate, uint256[] totalUserNetRewards);
+    event DelegateFeesClaimed(address indexed delegate, uint256 feesClaimed);
+    // delegateClaimFeesFromDelegators
+    event RewardsForceClaimedByDelegate(uint256 indexed epoch, address indexed delegator, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
+
     // claimSubsidies
     event SubsidiesClaimed(address indexed verifier, uint256 epoch, bytes32[] poolIds, uint256 totalSubsidiesClaimed);
 

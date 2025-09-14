@@ -1,68 +1,244 @@
-# VotingControllers
+# VotingController
+
+VotingController.sol is a dual-token voting escrow (ve) contract for ecosystem subsidy governance and rewards. 
+It supports dual accounting for each address, allowing users to act as both personal voters and delegates, enabling on-chain delegations with fee charging.
+Optimized for fast chains using timestamps, it tracks both personal and delegated activity, ensuring efficient, fair, and real-time voting and reward/subsidy distribution.
+
+- Voters potentially receive rewards per epoch, and claimable on a epoch-pool basis.
+- Verifiers potentially receive subsidies per epoch, which is also claimable per epoch.
+
+Potentially, due to issuers of flooring and integer division leading to rounding down and often to 0.
+We have taken great care to address and mitigate this, with particular focus on voters with small balances.
+
+## Key Components of Design
+
+The system is unique in several ways, setting it apart from traditional ve implementations like Curve Finance's veCRV and other forks:
+
+1. **Custom balanceOf Function in veToken**
+
+- The veToken contract overrides the standard ERC20 balanceOf to return the current, decayed voting power at the query time. 
+- This allows wallets to display accurate, real-time values without off-chain computation, enabling users to observe decay directly in their wallet interfaces.
+- Most ve systems require external tools or dApps to calculate decayed balances, making this a user-friendly innovation.
+
+2. **Decay Frozen Within an Epoch**
+
+- Voting power decay is paused during an epoch, preventing continuous decay that would force users to rush votes before value drops.
+- It promotes deliberate participation without time pressure. 
+- However, this does not mean that user' voting power does not decay btw epochs; it simply occurs step-wise. 
+- This is unprecedented in ve systems, where decay is kept continuous for simplicity. 
+
+3. **Dual-Accounting System for Addresses**
+ 
+- Every address maintains two logical accounts: a "user account" for personal locks and votes, and a "delegate account" for aggregated delegated power. 
+- This allows seamless switching between roles without separate contracts or addresses.
+- Unique because most systems use single-account models or require explicit delegate contracts, limiting flexibility. This enables advanced strategies like partial delegation.
+
+4. **Time-Based ve.Bias Calculation via Lock.Expiry** 
+
+- Voting power (bias) is calculated using absolute timestamps from lock.expiry, ensuring all interconnected contracts (e.g., reward distributors, gauges) align with a universal time reference. 
+- This avoids discrepancies in multi-contract ecosystems.
+
+5. **Redesign Over Curve's Block Interpolation for Decay** 
+
+Curve's veCRV uses block-based interpolation for decay calculations, approximating time via block numbers assuming consistent block times. 
+This is inherently flawed and especially made worse on fast chains.
+
+- For fast L1s and L2s with <1s blocks, (BSC with 3s, Sonic with variable rates), interpolation rounds down aggressively, often flooring balances to 0 prematurely due to granularity issues. 
+- Most protocols blindly copy Curve's design without adapting for chain specifics, leading to inaccurate voting power and unfair reward distribution. 
+- This contract redesigns from the ground up using pure timestamps for precise, chain-agnostic decay, optimized for high-throughput environments. 
+
+6. **On-Chain Delegations with Fee Charging** 
+
+Most protocols, like Aerodrome, outsource delegation to external and off-chain relayers to handle complex fee calculations and avoid gas overhead.
+Essentially, the relay provider uses a combination of on-chain contracts and off-chain scripts to handle these matters. 
+Especially since they need to cater to delegates changing their fees and voting allocation.
+
+We process delegations completely on-chain. Delegation fees are charged on-chain and split accurately btw the delegator and delegatee.
+
+7. **The Problem with Delegate Fees in ve Systems**
+
+- rewards are distributed on an epoch basis
+- delegate fees were applied at the prevailing currentFee—the delegate's fee parameters at the time of a user's query or reward claim. 
+- leads to inaccuracies because fees could have been updated any time - a user claiming for some arbitrary past epoch would be subject to the current fee
+- If a delegate increased its fee mid-cycle (e.g., after your veTokens were snapshotted but before rewards were emitted), the current fee would overcharge you retroactively during claims.
+
+TLDR: the dumb approach is to simply charge the user the prevailing delegate fee at the time of claiming; whatever that may be.
+
+How We Solved It: Historical Fee Snapshots and Epoch-Specific Queries
+- we need fee decreases to be applied instantly and logged
+- we need fee increases to be applied with delay, meaning it comes into effect in some future epoch.
+
+To ensure fees are accurately applied per epoch, we introduced a system leveraging the dual-account system. 
+- supporting that introduce `delegateHistoricalFees` mapping: 
+
+```solidity
+// 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFees;  
+```
+There were other approaches that were tested out, see below section 'Design choices'.
 
 
-Btw, this ve system we've got going is pretty sick, engineering wise.
-Dual-token ve locking with an inbuilt delegate system with a  multi-sub account structure supporting it
-It's one of a kind
+## Verifiers and Subsidies
 
-I can tell you for a fact that most protocols just lifted curve's ve implementation without really understanding it
-And it's not even designed properly to begin with nor optimized
+`PaymentsController` tracks subsidies for each epoch:
+- `epoch => poolId => totalSubsidies`
+- `epoch => poolId => verifierId => verifierTotalSubsidies`
 
-justify the above #1:
-- curve uses block interpolation; 
-- meaning they track decay and rewards based on block interpolation, to represent the passage of time,
-- which means on fast chains, it wouldn't work well, as it would heavily round down the values.
-- often flooring to 0 unnecessarily
+Subsidies are calculated as: `fee × _verifiersSubsidyPercentage`
 
-The people who wrote it didn't think it through. 
-Curve was wrong. they should have used time instead of block.numbers.
+At epoch end, `VotingController`:
+- Allocates pool subsidies proportionally to verifiers by their total weight in the pool.
+- Verifier claim: `(verifierWeight / totalPoolWeight) × poolSubsidy`
 
-Block number is not reliable for fast chains like most L2, bsc, sonic.
-the interpolation rounds down very quickly
+*Subsidies can only be deposited to VotingController after epoch ends.*
 
-justify the above #2:
-- delegate system onchain + fees implemented
-- typically protocols handle it offchain through some relayer service; or they point you to them
+```bash
+Note:
+⦁   if we add a schema mid-epoch to a voting pool, its prior txns in the same epoch will not count for subsidies.
+⦁   if we remove a schema mid-epoch from a voting pool, its weight can be removed from the pool and subsidy calculations. its prior txns in the same epoch will not receive any subsidies.
+```
+*Question: if we remove scheme mid-epoch how does that impact subsidies when distributed?*
 
-# Mappings
+## Voting Rewards
 
-## **Generics**
-- `epochs`      -> epoch overview
-- `pools`       -> global pool overview
-- `epochPools`  -> pool overview for a specific epoch
+Voting rewards are financed based on verification fees accrued for a pool
+- i.e. rewards are strictly per-pool (unique to each pool's accrued verification fees, including possible 0 for some pools)
 
+We have to reference PaymentsController to know how much rewards each pool accrued, and deposit accordingly into VotingController.
+We opted to not have the VotingController and PaymentsController call each other for relevant updates, to for secure modularity, which will aid in updating contracts piecemeal.
 
-## **User/Delegate data**
+Additionally, this gives us the freedom to deposit rewards discretionally; can increase or decrease rewards as we see fit.
+
+----
+
+____
+
+# Contract Overview
+
+## Mappings
+
+**Generics**
+- `epochs`      -> epoch data
+- `pools`       -> aggregated pool data across all epochs
+- `epochPools`  -> pool data, for a specific epoch
+
+```solidity
+    // epoch data
+    mapping(uint256 epoch => DataTypes.Epoch epoch) public epochs;    
+    
+    // pool data
+    mapping(bytes32 poolId => DataTypes.Pool pool) public pools;
+    mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.PoolEpoch poolEpoch)) public epochPools;
+```
+
+**User/Delegate data**
 - `usersEpochData` / `delegateEpochData`: Track per-epoch data for each address, separately for user and delegate roles (`Account` struct).
 - `usersEpochPoolData` / `delegatesEpochPoolData`: Track per-epoch, per-pool data for each address, again split by user and delegate roles (`Account` struct).
 
-These paired mappings implement a dual-accounting model:
+```solidity
+    // address as personal: perEpoch | perPoolPerEpoch
+    mapping(uint256 epoch => mapping(address user => DataTypes.Account user)) public usersEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => DataTypes.Account userAccount))) public usersEpochPoolData;
 
-- Every address has two logical accounts: a user account and a delegate account (`struct Account { uint128 totalVotesSpent, uint128 rewards, ... }`).
-- When an address votes with its own voting power, its votes and rewards are recorded in `usersEpochData` and `usersEpochPoolData`.
-- When an address votes using voting power delegated to it by others, its activity is recorded in `delegateEpochData` and `delegatesEpochPoolData`.
+    // address as delegate: perEpoch | perPoolPerEpoch [mirror of userEpochData & userEpochPoolData]
+    mapping(uint256 epoch => mapping(address delegate => DataTypes.Account delegate)) public delegateEpochData;
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => DataTypes.Account delegateAccount))) public delegatesEpochPoolData;
 
-In the `vote()` function, these are abstracted as `accountEpochData` and `accountEpochPoolData`.
-All voting activity—whether personal or delegated—is tracked for each address at both the {epoch, address} and {epoch, pool, address} levels.
+        // user/delegate data     | perEpoch | perPoolPerEpoch
+        struct Account {
+            uint128 totalVotesSpent;
+            uint128 totalRewards;         // user: total net rewards claimed / delegate: total gross rewards accrued
+        }
 
-> Additionally, votes are tracked at a global epoch, global pool, and {epoch-pool} level.
-> `epochs`, `pools`, `epochPools`
 
-### rewards
+    // User-Delegate tracking [for this user-delegate pair, what was the user's {rewards,claimed}]
+    mapping(uint256 epoch => mapping(address user => mapping(address delegate => DataTypes.UserDelegateAccount userDelegateAccount))) public userDelegateAccounting;
+    
+        struct OmnibusDelegateAccount {
+            uint128 totalNetRewardsClaimed;
+            mapping(bytes32 poolId => uint128 grossRewards) userPoolGrossRewards; // flag: 0 = not claimed, non-zero = claimed
+        }
+```
 
-`userDelegateAccounting` -> epoch->user->delegate: [Account]
-- for this {user-delegate} pair, what was the user's {rewards,claimed}
-- *used where?*
+These paired mappings implement a dual-accounting model.
+
+### Voting
+
+- Every address has two logical accounts: a user account and a delegate account (`struct Account`).
+- When an address votes with its own voting power, its votes are recorded in `usersEpochData` and `usersEpochPoolData`, as `totalVotesSpent`
+- When an address votes with delegated voting power from others, the portion from its aggregated total votes spent is recorded in `delegateEpochData` and `delegatesEpochPoolData`.
+
+### Claiming rewards
+
+**User personal rewards claim:**
+- When a user claims rewards accrued from his personal voting activity, it is logged to `totalRewards`, `usersEpochPoolData` & incremented in `usersEpochData`
+
+When a user claims rewards accrued from the votes that he delegated to a specific delegatee, it is logged under `userDelegateAccounting.totalNetClaimed`
+    - we do not book these rewards to `usersEpochPoolData`, as we want to reflect a distinction btw rewards from personal actions vs delegated actions.
+    - hence the need for the separate mapping `userDelegateAccounting`, for supporting metrics so support analysis such as:
+        1. which delegator is more profitable,
+        2. should a user delegate or continue personally managing voting activity -> which is most profitable, etc
+
+- additionally, the delegated receivable rewards are also booked to: `delegateEpochPoolData[epoch][poolId][delegate].totalRewards` & `delegateEpochData[epoch][delegate].totalRewards += delegatePoolRewards`
+        - this tracks the total gross rewards a delegate has earned for their delegators, for a given epoch and pool.
+        - it serves as a performance metric for the delegate.
+        - **this does not represent rewards claimable by the delegate**
+
+Delegate fees are calculated on users' total gross rewards across multiple pools. This approach ensures that even small voters receive non-zero rewards after fees, avoiding situations where rounding or fee deductions would otherwise reduce their rewards to zero.
+- which is why in `OmnibusDelegateAccount`, the mapping reflects gross rewards per pool; and not net which would be more direct and convenient. 
+- `totalNetRewards` in `OmnibusDelegateAccount`, reflects the total net rewards towards a user, for a specific delegate.
+
+**How do delegate claim their fees? Where is it logged?**
+
+```solidity
+    // Delegate registration data + fee data
+    mapping(address delegate => DataTypes.Delegate delegate) public delegates;  
+
+        // global delegate data
+    struct Delegate {
+        bool isRegistered;             
+        
+        uint128 currentFeePct;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+        uint128 nextFeePct;         
+        uint256 nextFeePctEpoch;            
+
+        uint128 totalRewardsCaptured;      // total gross voting rewards accrued by delegate [from delegated votes]
+        uint128 totalFees;                 // total fees accrued by delegate
+        uint128 totalFeesClaimed;          // total fees claimed by delegate
+    }
+```
+
+- Delegate fees are booked under `totalFees` in the global `delegates` mapping
+- This allows delegates to claim fees in totality without epoch constraints
+- Global approach preferred as it allows delegates to claim when their fees add up to a significant figure; as opposed to claiming small amounts on an epoch basis.
+
+
+*Why can't we do a global approach for users' claiming rewards as well?*
+- users need to specify the pools they are claiming from
+- where the rewards calculation is `userRewards = (userPoolVotes * totalRewards) / poolTotalVotes`
+- It would be inefficient and poor design to have users call a function to calc rewards for a list of pools, and then aggregate that globally for claiming
+
+---
 
 
 ---
 
-**Delegate registration + feePct**
-- `delegates`               ->  `struct Delegate{isRegistered, currentFeePct, nextFeePct, etc}`
-- `delegateHistoricalFees`  -> for historical fee updates, so that users can claim against correct fee, and not prevailing.
+# Contract Functions Walkthrough
+
+## Constructor
+
+```solidity
+    constructor(address addressBook) {
+        ADDRESS_BOOK = IAddressBook(addressBook);
+
+        // initial unclaimed delay set to 6 epochs [review: make immutable?]
+        UNCLAIMED_DELAY_EPOCHS = EpochMath.EPOCH_DURATION() * 6;
+    }
+```
 
 
-## Voting
+
+## Voting Functions: `vote()`, `migrateVotes()`
 
 ### 1. `vote()`
 
@@ -75,6 +251,12 @@ function vote(address caller, bytes32[] calldata poolIds, uint128[] calldata poo
 - `isDelegated` flag indicates that the caller is allocating votes from his delegations; instead of personal votes.
 - voting power is determined based on forward-decay: `_veMoca().balanceAtEpochEnd`
 
+In the `vote()` function, these are abstracted as `accountEpochData` and `accountEpochPoolData`.
+All voting activity—whether personal or delegated—is tracked for each address at both the {epoch, address} and {epoch, pool, address} levels.
+
+> Additionally, votes are tracked at a global epoch, global pool, and {epoch-pool} level.
+> `epochs`, `pools`, `epochPools`
+
 
 ### 2. `migrateVotes`
 
@@ -83,7 +265,10 @@ function vote(address caller, bytes32[] calldata poolIds, uint128[] calldata poo
 - srcPools do not have to be active
 - partial and full migration of votes supported
 
+
 ----
+
+
 
 
 ## Delegate Leader Unregisters Mid-Epoch With Active Votes
@@ -111,40 +296,9 @@ how would _delegateHistoricalFees be populated
 but what about the epochs where no fee change occurred? 
 - how do we get the fee, since the mapping would return 0 for those epochs?
 
-**FOR NOW: users are charged prevailing fee, currentFee at time of claim. simple.**
-
 > https://www.notion.so/animocabrands/Delegate-Leader-Lifecycle-20d3f5ceb8fe80e8a9e5f9584dc1683a?d=2593f5ceb8fe804aabab001c562d3679#22a3f5ceb8fe8064b5f9eda6221acd02
 
-## Verifiers and Subsidies
 
-`PaymentsController.deductBalance()` books weights accrued per {verifier,schema} -> poolId
-⦁	mapping on Payments: epoch => poolId => totalWeight | totalWeightPerPoolPerEpoch (++ weight=fee*tier)
-⦁	mapping on Payments: epoch => poolId => verifierId => verifierTotalWeight (++ weight=fee*tier)
-⦁	mapping on Payments: epoch => poolId => schemaId => schemaTotalWeight (++ weight=fee*tier)
-
-On VotingController, when an epoch ends:
-⦁	verifiers can claim based on `verifierTotalSubsidyForPool`/`totalSubsidyPerPoolPerEpoch` * `poolSubsidy`
-⦁   the subsidies allocated to a pool is split amongst the verifiers, based on their total expenditure
-
-**Will require the epoch to end before we can deposit subsidies.**
-
-*Note*:
-⦁	if we add a schema mid-epoch to a voting pool, its prior txns in the same epoch will not count for subsidies.
-⦁	if we remove a schema mid-epoch from a voting pool, its weight can be removed from the pool and subsidy calculations. its prior txns in the same epoch will not receive any subsidies.
-
-**Process**
-1. setEpochSubsidies() -> total to be distributed across all pools. can be set at the start 
-2. depositSubsidies() -> at the end of epoch
-3. finalizeEpoch() -> to get each pool's `totalSubsidies`
-4. claimSubsidies() -> verifiers claim subsidies via: `verifierTotalSubsidyAccruedForPool`/`totalSubsidyAccruedForPool` * `pool.totalSubsidies`
-4i. `[verifier's portion of subsidy]` / `[total subsidies accrued by all verifiers in pool]` * `[pool's allocated subsidies; based on votes]`
-
-
-`finalizeEpoch(uint128 epoch, bytes32[] calldata poolIds)`
-- gets totalVotes + totalSubsidies for epoch -> calcs. `epochData.subsidyPerVote`
-- for each pool, in poolId[], calc. `totalSubsidies`
-
-> https://www.notion.so/animocabrands/Tiers-Stake-MOCA-optionally-to-be-eligible-for-subsidy-2373f5ceb8fe80ab8e9ae00f2283590e#25a3f5ceb8fe80e2baaedb42498381ec
 
 ## Voters and Rewards
 
@@ -185,9 +339,15 @@ Voters vote on credential pools in Epoch N:
 
 # Execution flow
 
-At the end of epoch:
+## At the end of epoch
 
-## 1. Admin calls: `depositEpochSubsidies`
+**Process:**
+0. (Epoch must have ended)
+1. depositEpochSubsidies() — Allows authorized accounts to deposit subsidies for a specific epoch. If no votes, deposit is skipped.
+2. finalizeEpochRewardsSubsidies() — computes each pool’s `totalSubsidiesAllocated` + `totalRewardsAllocated`
+3. claimSubsidies() — verifiers claim: (verifierWeight / totalPoolWeight) × pool.totalSubsidies
+
+1. Admin calls: `depositEpochSubsidies`
 
 Why call at the end of epoch?
 - `epoch.totalVotes` is finalized
@@ -206,7 +366,7 @@ We have a `previewDepositSubsidies` function to get `subsidyPerVote` calc. befor
 
 **Sets `isSubsidiesSet=true` and `subsidyPerVote` in Epoch struct.**
 
-## 2. Admin calls: `finalizeEpochRewardsSubsidies`
+2. Admin calls: `finalizeEpochRewardsSubsidies`
 
 Called multiple times, to iterate through full list of pools
 
@@ -227,7 +387,7 @@ After finalizeEpochRewardsSubsidies is completed, and the flag `isFinalized` is 
 - verifiers can claim subsidies
 
 
-## 3. Voters call: `claimRewards and/or `
+3. Voters call: `claimRewards and/or `
 
 
 
@@ -669,6 +829,7 @@ Result: Fee history: Epoch 1=10%, 2+=5% (correct: decrease overrides fully).
 
 
 
+
 # Other reference code
 
 ## Claim Streamlining for Subsidies [multi-epoch batching]
@@ -781,3 +942,4 @@ library SubsidyMath {
 ```
 
 **Ignoring cos i rather just build the router for batching.**
+

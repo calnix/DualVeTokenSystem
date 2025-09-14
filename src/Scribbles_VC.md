@@ -13,24 +13,24 @@
 //   Therefore, after sweeping, leftover rewards remain on the contract.
 ```
 
-
-## on Account and delegateEpochData [!]
-
-claimRewards:        delegateEpochData[epoch][delegate].totalRewards += userTotalRewards;
-
-instead should be:         delegateEpochData[epoch][delegate].totalRewards += delegateFee;
-
-think about this, and confirm.
-
-write about it in docs, explaining clearly. how account works/reflects in a personal user context, vs when the user is acting as delegate. 
-
-how uint128 totalRewards in account struct would mean different things, in those 2 different contexts.
-
 ## roles in VotingController
 
 ## risk fns
 
 ## view fns
+
+-----
+
+# Questions to ponder
+
+1. do i need both usersEpochData & usersEpochPoolData
+- usersEpochPoolData is sufficient for epoch level claiming, [it uses the votes from the same mapping in calc.] 
+- usersEpochData is just a helpful epoch aggregation, across all pools
+
+can the `totalRewards` in usersEpochData be diff. from sum of usersEpochPoolData? 
+i.e. inconsistency in calculation
+
+
 
 -----
 
