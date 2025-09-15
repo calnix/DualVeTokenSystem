@@ -46,19 +46,16 @@ library Events {
     event SubsidiesDeposited(address indexed depositor, uint256 epoch, uint256 totalSubsidies);
     event SubsidiesSet(uint256 indexed epoch, uint256 totalSubsidies);
 
-    // withdrawUnclaimedSubsidies
-    event UnclaimedRewardsWithdrawn(address indexed receiver, uint256 epoch, uint256 unclaimedSubsidies);
-    // withdrawResidualSubsidies
-    event ResidualSubsidiesWithdrawn(address indexed receiver, uint256 epoch, uint256 residuals);
+    // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards
+    event UnclaimedRewardsWithdrawn(address indexed treasury, uint256 indexed epoch, uint256 unclaimedRewards);
+    event UnclaimedSubsidiesWithdrawn(address indexed treasury, uint256 indexed epoch, uint256 unclaimedSubsidies);
    
-    // setUnclaimedSubsidiesDelay
-    event UnclaimedSubsidiesDelayUpdated(uint256 delayPeriod);
     // setMaxDelegateFeePct
     event MaxDelegateFeePctUpdated(uint256 maxDelegateFeePct);
     // setFeeIncreaseDelayEpochs
     event FeeIncreaseDelayEpochsUpdated(uint256 delayEpochs);
     // setUnclaimedDelay
-    event UnclaimedDelayUpdated(uint256 delayEpochs);
+    event UnclaimedDelayUpdated(uint256 indexed oldDelay, uint256 indexed newDelay);
     // finalizeEpoch
     event EpochSubsidyPerVoteSet(uint256 indexed epoch, uint256 subsidyPerVote);
     event EpochPartiallyFinalized(uint256 indexed epoch, bytes32[] poolIds);

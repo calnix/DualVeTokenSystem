@@ -67,8 +67,8 @@ library Errors {
     error SubsidiesNotSet();
     error PoolAlreadyProcessed();
     
-    // withdrawUnclaimedSubsidies
-    error CanOnlyWithdrawUnclaimedSubsidiesAfterDelay();
+    // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards
+    error CanOnlyWithdrawUnclaimedAfterDelay();
     // depositRewards
     error NoRewardsAccrued();
     //sweepUnclaimedRewards

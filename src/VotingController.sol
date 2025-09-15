@@ -925,12 +925,13 @@ contract VotingController is Pausable {
      * @param epoch The epoch number for which to sweep unclaimed rewards.
      */
     function withdrawUnclaimedRewards(uint128 epoch) external onlyVotingControllerAdmin {
-        require(EpochMath.getCurrentEpochNumber() >= epoch + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlySweepUnclaimedRewardsAfterDelay());
+        // sanity check: withdraw delay must have passed
+        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
         
         // sanity check: epoch must be finalized [pool exists implicitly]
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
 
-
+        // sanity check: there must be unclaimed rewards
         uint256 unclaimed = epochs[epoch].totalRewardsAllocated - epochs[epoch].totalRewardsClaimed;
         require(unclaimed > 0, Errors.NoUnclaimedRewardsToSweep());
 
@@ -946,21 +947,24 @@ contract VotingController is Pausable {
     //REVIEW: ROLE and recipient
     // withdraw unclaimed subsidies + residuals | after 6 epochs[~3months]
     function withdrawUnclaimedSubsidies(uint256 epoch) external onlyVotingControllerAdmin {
+        // sanity check: withdraw delay must have passed
+        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
+
         // sanity check: epoch must be finalized
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
-
-        // sanity check: withdraw delay must have passed
-        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedSubsidiesAfterDelay());
         
         // sanity check: there must be unclaimed subsidies
         uint256 unclaimedSubsidies = epochs[epoch].totalSubsidiesDeposited - epochs[epoch].totalSubsidiesClaimed;
         require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
 
+        address treasury = IAddressBook.getTreasury();
+        require(treasury != address(0), Errors.InvalidAddress());
+
         // transfer esMoca to admin/deposit(?)
-        _esMoca().transfer(msg.sender, unclaimedSubsidies);
+        _esMoca().transfer(treasury, unclaimedSubsidies);
 
         // event
-        emit Events.UnclaimedSubsidiesWithdrawn(msg.sender, epoch, unclaimedSubsidies);
+        emit Events.UnclaimedSubsidiesWithdrawn(treasury, epoch, unclaimedSubsidies);
     }
     
 //-------------------------------admin: setters ---------------------------------------------------------
@@ -998,13 +1002,13 @@ contract VotingController is Pausable {
      * @dev Only callable by VotingController admin. Value must be greater than 0 and a multiple of EpochMath.EPOCH_DURATION.
      * @param delayEpochs The new unclaimed delay epochs.
      */
-    function setUnclaimedDelay(uint256 delayEpochs) external onlyVotingControllerAdmin {
-        require(delayEpochs > 0, Errors.InvalidDelay());
-        require(delayEpochs % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelay());
+    function setUnclaimedDelay(uint256 newDelayEpoc) external onlyVotingControllerAdmin {
+        require(newDelayEpochs > 0, Errors.InvalidDelay());
+        require(newDelayEpochs % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelay());
 
-        UNCLAIMED_DELAY_EPOCHS = delayEpochs;
+        emit Events.UnclaimedDelayUpdated(UNCLAIMED_DELAY_EPOCHS, newDelayEpochs);
 
-        emit Events.UnclaimedDelayUpdated(delayEpochs);
+        UNCLAIMED_DELAY_EPOCHS = newDelayEpochs;
     }
 
 //-------------------------------admin: pool functions----------------------------------------------------
