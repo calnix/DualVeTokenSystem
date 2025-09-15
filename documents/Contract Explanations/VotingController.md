@@ -290,7 +290,7 @@ Voters vote on credential pools in Epoch N:
 
 
 
-# **3. Design choices**
+# **2. Design choices**
 
 ## Rewards & Subsidies: Optimal Distribution
 
@@ -367,26 +367,7 @@ By moving all calculations to claim time, tracking every distributed amount, and
 
 >Illustration of residual origination: https://app.excalidraw.com/s/ZeH3y0tOi6/4nyJOQSlGn3?element=aO2TZqM4AcQ0tqw7fV8XF
 
-## On nested mapping in `OmnibusDelegateAccount`
 
-for claimRewardsFromDelegate, user is expected to call this function repeatedly: 
-- for the same delegate, different pools
-- for a different delegate, different pools
-
-User could have delegated to multiple delegates; and those delegates could have voted for different pools; in some cases different delegates might have allocated to the same pool.
-- that means, in `claimRewardsForDelegate`, we cannot set: `require(userDelegateAccounting[epoch][msg.sender][delegate].totalRewards == 0, Errors.RewardsAlreadyClaimed());`
-
-Problem:
-- This would only allow calling of the function once, and not repeatedly to cycle through all the pools.
-- we also do not want users to be able to repeatedly claim rewards for the same pool.
-
-Solution:
-
-Since delegations are epoch-level (not per-pool), but claims must prevent per-pool re-claims per delegate (while allowing same pool via different delegates), we need per-pool tracking within each user-delegate-epoch entry. Users can delegate to multiple delegates, and delegates can vote in overlapping pools, so claims are independent per delegate-pool pair.
-
-Introduce a new struct `UserDelegateAccount` for userDelegateAccounting, with:
-- aggregate tracking for net claimed rewards
-- nested mapping for per-pool gross rewards (set when claimed; use == 0 as "not claimed" flag).
 
 ## Accurate Delegate Fee Application: Intentional Historical Tracking
 
@@ -412,9 +393,36 @@ This system relies on two key rules:
 1. delegate fees can never be zero, 
 2. delegates are expected to vote each epoch. 
 
-That way, every epoch has a clear, valid fee reference. If a fee is zero, it simply means the delegate didn’t vote that epoch and won’t receive fees—no ambiguity, no loopholes.
+That way every epoch has a valid fee reference. If a fee is zero, it simply means the delegate didn’t vote that epoch and won’t receive fees.
 
-# **2. Contract Functions Walkthrough**
+## `userDelegateAccounting` mapping & nested mapping in `OmnibusDelegateAccount`
+
+### Why per-pool tracking is essential for delegated claims
+
+When users claim rewards via `claimRewardsFromDelegate`, they may need to:
+- Claim for the same delegate across different pools (multiple calls)
+- Claim for different delegates, each with their own set of pools
+
+A user can delegate to several delegates, and each delegate can vote in various pools. Sometimes, multiple delegates may even vote in the same pool. This means that in `claimRewardsForDelegate`, we **cannot** simply check:
+`require(userDelegateAccounting[epoch][msg.sender][delegate].totalRewards == 0, Errors.RewardsAlreadyClaimed());`
+Doing so would block further claims for other pools or delegates, restricting users to a single claim per delegate per epoch—which is not what we want.
+
+**The challenge:**  
+- We must allow users to claim rewards for each pool, for each delegate, as needed.
+- But we must also prevent double-claiming for the same pool/delegate/epoch combination.
+
+**The solution:**  
+Delegations are tracked at the epoch level, but claims must be tracked at the per-pool level within each user-delegate-epoch entry. This ensures:
+- Users can claim for each pool, for each delegate, independently.
+- Double-claims for the same pool/delegate/epoch are blocked, but claims for the same pool via different delegates are allowed.
+
+To achieve this, we introduce a new struct `OmnibusDelegateAccount` for `userDelegateAccounting`:
+- Tracks the total net rewards claimed (aggregate)
+- Includes a nested mapping for per-pool gross rewards (set when claimed; `== 0` means "not yet claimed")
+
+This design enables flexible, granular claiming while maintaining strict double-claim prevention.
+
+# **3. Contract Functions Walkthrough**
 
 ## Constructor
 
@@ -464,7 +472,7 @@ All voting activity—whether personal or delegated—is tracked for each addres
 
 
 
-# **Execution flow**
+# **4. Execution flow**
 
 ## At the end of epoch
 
