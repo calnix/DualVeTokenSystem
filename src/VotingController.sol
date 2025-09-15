@@ -354,21 +354,6 @@ contract VotingController is Pausable {
         emit Events.DelegateUnregistered(msg.sender);
     }
 
-    function claimDelegateFees() external {
-        DataTypes.Delegate storage delegate = delegates[msg.sender];
-        require(delegate.isRegistered, Errors.DelegateNotRegistered());
-
-        uint128 feesToClaim = delegate.totalFees - delegate.totalFeesClaimed;
-        require(feesToClaim > 0, Errors.NoFeesToClaim());
-
-        delegate.totalFeesClaimed += feesToClaim;
-
-        // Transfer esMoca to delegate
-        _esMoca().safeTransfer(msg.sender, feesToClaim);
-
-        emit Events.DelegateFeesClaimed(msg.sender, feesToClaim);
-    }
-
 //-------------------------------claim rewards & fees functions----------------------------------------------
 
 
