@@ -850,6 +850,9 @@ contract VotingController is Pausable {
         require(epochPtr.isSubsidiesSet, Errors.SubsidiesNotSet());
         require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
 
+        // cache to local so for loop does not load from storage for each iteration
+        uint256 epochTotalSubsidiesDeposited = epochPtr.totalSubsidiesDeposited;
+
         // iterate through pools
         uint256 totalSubsidies;
         uint256 totalRewards;
@@ -864,7 +867,7 @@ contract VotingController is Pausable {
             uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
             
             // Calc. subsidies for each pool | if there are subsidies for epoch + pool has votes
-            if(epochPtr.totalSubsidiesAllocated > 0 && poolVotes > 0) {
+            if(epochTotalSubsidiesDeposited > 0 && poolVotes > 0) {
                 
                 uint256 poolSubsidies = (poolVotes * epochPtr.totalSubsidies) / epochPtr.totalVotes;
                 

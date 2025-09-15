@@ -580,7 +580,27 @@ In other words, any rounding down in `delegateFee` directly increases `userTotal
 
 **Subsidy Flow: sources of residuals**
 
+1. `finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint256[] calldata rewards)`
 
+- fn expects `epoch.totalSubsidies` to be set from the prior calling of `depositSubsidies`. Note that `epoch.totalSubsidies` can be 0.
+- if `epochTotalSubsidiesDeposited > 0` and `poolVotes >0`, subsidies for that pool are calculated: `poolSubsidies = (poolVotes * epochPtr.totalSubsidies) / epochPtr.totalVotes`
+- the division there will lead to a rounded down value of poolSubsidies and therefore, residuals.
+- Due to flooring in integer division, the sum of allocated subsidies can be less than `totalSubsidiesDeposited`. This creates residuals (unallocated subsidies).
+
+We will see this effect further compounded in the next function.
+
+2. `claimSubsidies()`
+
+- for a verifier, subsidy receivable: `subsidyReceivable = verifierSubsidies / PoolSubsidies * poolAllocatedSubsidies`
+- `subsidyReceivable` will be subject to rounding down and flooring issues; there will be subsidy residuals. 
+- however, `epoch.totalSubsidiesClaimed` is incremented by the local var `totalSubsidiesClaimed`, which is the sum `subsidyReceivable` [which is floored frm division]
+- Therefore, epoch.totalSubsidiesClaimed  correctly reflects the amt transferred out. 
+
+To extract these residuals: `epoch.totalDeposited - epoch.totalSubsidiesClaimed`, which is handled in `withdrawSubsidies`. 
+
+**Both withdrawSubsidies & withdrawRewards, sweep residuals as well as unclaimed rewards respectively. They do not make a distinction btw residuals and unclaimed.**
+**This approach is taken to reduce further complexity by not having to track residuals accrued independent of unclaimed values.**
+**In short, residuals are subject to the same withdraw unclaimed delay.**
 
 ## Delegate fee tracking for proper claiming
 
