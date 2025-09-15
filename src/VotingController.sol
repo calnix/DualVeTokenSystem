@@ -265,22 +265,25 @@ contract VotingController is Pausable {
      */
     function registerAsDelegate(uint128 feePct) external {
         require(feePct > 0, Errors.InvalidFeePct());
-        require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());    // 0 allowed
+        require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());
 
         Delegate storage delegate = delegates[msg.sender];
         require(!delegate.isRegistered, Errors.DelegateAlreadyRegistered());
 
+        // collect registration fee & increment global counter
+        uint256 registrationFee = REGISTRATION_FEE;
+        if(registrationFee > 0) {
+            _moca().safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
+            TOTAL_REGISTRATION_FEES += registrationFee;
+        }
+
         // register on VotingEscrowMoca | if delegate is already registered on VotingEscrowMoca -> reverts
         _veMoca().registerAsDelegate(msg.sender);
-
-        // collect registration fee & increment global counter
-        _moca().safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
-        TOTAL_REGISTRATION_FEES += REGISTRATION_FEE;
 
         // storage: register delegate + set fee percentage
         delegate.isRegistered = true;
         delegate.currentFeePct = feePct;
-        delegateHistoricalFees[msg.sender][currentEpoch] = feePct;
+        delegateHistoricalFees[msg.sender][EpochMath.getCurrentEpochNumber()] = feePct;
 
         emit Events.DelegateRegistered(msg.sender, feePct);
     }
@@ -428,6 +431,13 @@ contract VotingController is Pausable {
         emit Events.RewardsClaimed(msg.sender, epoch, poolIds, userTotalRewards);
     }
 
+
+/**
+    few delegates, many pools
+    so iterate over delegates, then pools
+ */
+
+
     //Note: claimRewardsFromDelegateV2()
     /**
      * @notice Allows a user (delegator) to claim all rewards accrued from votes delegated to multiple delegates in a single transaction.
@@ -526,13 +536,6 @@ contract VotingController is Pausable {
             emit Events.DelegateFeesClaimed(delegate, totalDelegateFees);
         }
     }
-
-/**
-    few delegates, many pools
-    so iterate over delegates, then pools
- */
-
-
 
 
     /**
@@ -922,6 +925,16 @@ contract VotingController is Pausable {
 
         UNCLAIMED_DELAY_EPOCHS = newDelayEpochs;
     }
+
+    // TODO
+    function setDelegateRegistrationFee(uint256 newRegistrationFee) external onlyVotingControllerAdmin {
+        //require(newRegistrationFee > 0, Errors.InvalidRegistrationFee());  0 is acceptable
+
+        emit Events.DelegateRegistrationFeeUpdated(REGISTRATION_FEE, newRegistrationFee);
+
+        REGISTRATION_FEE = newRegistrationFee;
+    }
+
 
 //-------------------------------admin: pool functions----------------------------------------------------
 

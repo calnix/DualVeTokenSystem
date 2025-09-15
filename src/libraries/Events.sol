@@ -56,6 +56,9 @@ library Events {
     event FeeIncreaseDelayEpochsUpdated(uint256 delayEpochs);
     // setUnclaimedDelay
     event UnclaimedDelayUpdated(uint256 indexed oldDelay, uint256 indexed newDelay);
+    // setDelegateRegistrationFee
+    event DelegateRegistrationFeeUpdated(uint256 oldRegistrationFee, uint256 newRegistrationFee);
+
     // finalizeEpoch
     event EpochSubsidyPerVoteSet(uint256 indexed epoch, uint256 subsidyPerVote);
     event EpochPartiallyFinalized(uint256 indexed epoch, bytes32[] poolIds);

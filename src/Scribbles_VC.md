@@ -1,18 +1,6 @@
 
 # ---- Problems to fix:
 
-## residual rewards - how to track + extract w/o delay
-
-```solidity
-// When sweeping unclaimed rewards:
-//   unclaimed = epochPools[epoch][poolId].totalRewards - epochPools[epoch][poolId].totalClaimedRewards
-//   This calculation uses gross user rewards.
-//   However, after applying delegate fees, users may receive zero net rewards. 
-//   As a result, totalClaimedRewards is overstated (since only netUserRewards are actually paid out).
-//   Sweeping then uses this inflated totalClaimedRewards, leaving residual rewards in the contract.
-//   Therefore, after sweeping, leftover rewards remain on the contract.
-```
-
 ## roles in VotingController
 
 ## risk fns
@@ -29,8 +17,6 @@
 
 can the `totalRewards` in usersEpochData be diff. from sum of usersEpochPoolData? 
 i.e. inconsistency in calculation
-
-
 
 -----
 

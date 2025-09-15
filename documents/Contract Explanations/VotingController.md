@@ -115,7 +115,7 @@ ____
 
 # **1. Contract Overview**
 
-## Mappings
+## Dual-accounting model [mappings]
 
 **Generics**
 - `epochs`      -> epoch data
@@ -224,6 +224,196 @@ Delegate fees are calculated on users' total gross rewards across multiple pools
 ---
 
 
+
+## Delegate Leader Unregisters Mid-Epoch With Active Votes
+
+1. Alice unregisters as delegate
+2. Alice cannot accept new delegations
+3. Alice cannot vote with delegated votes - effective immediately.
+4. Users who delegated will not regain their voting power - they must manually call undelegate() function on VotingEscrowedMoca.sol
+
+### delegate fees
+
+problem on delegate fees:
+- delegate changes fees in epoch N
+- user claims rewards from his delegated votes, for epoch N-2
+- user would be paying fees as per the latest fee update
+- essentially, fees are a static reference. they aren't indexed on an epoch basis.
+
+when claiming,
+- get epoch:fee, by referencing _delegateHistoricalFees
+
+how would _delegateHistoricalFees be populated
+- register() -> _delegateHistoricalFees[currentEpoch][fee]
+- updateFee() -> _delegateHistoricalFees[currentEpoch][newFee]
+
+but what about the epochs where no fee change occurred? 
+- how do we get the fee, since the mapping would return 0 for those epochs?
+
+
+
+
+## Voters and Rewards
+
+    /** deposit rewards for a pool
+        - rewards are deposited in esMoca; 
+        - so cannot reference PaymentsController to get each pool's rewards
+        - since PaymentsController tracks feesAccruedToVoters in USD8 terms
+        
+        Process:
+        1. manually reference PaymentsController.getPoolVotingFeesAccrued(uint256 epoch, bytes32 poolId)
+        2. withdraw that amount, convert to esMoca [off-chain]
+        3. deposit the total esMoca to the 
+    */
+
+
+- voters receive rewards, as esMoca
+- rewards financed by the `VOTING_FEE_PERCENTAGE` cut from PaymentsController.sol
+- voters can only claim rewards on an epoch that has been finalized [admin must have called `finalizeEpoch`]
+ 
+Voters vote on credential pools in Epoch N: 
+- Voting rewards would be a portion of verification fees in the next epoch, **Epoch N+1**
+- Voting is taking a bet on the future
+- *Verification fees in Epoch N+1 will be rewarded to them at the **end of Epoch N+1; once the epoch is finalized***
+- userPoolVotes / totalPoolVotes * poolRewards
+
+***Note:***
+- *Voters can claim fees proportion to their votes [in Epoch N], at the end of Epoch N+1.*
+
+**PROCESS:**
+0. withdraw USD8 from `PaymentsController._epochFeesAccrued[currentEpoch]`; convert to esMoca 
+1. depositRewardsForEpoch() -> sets `rewardsPerVote` for each pool
+2. users can call `claimRewards()`
+
+
+---
+
+
+
+# **3. Design choices**
+
+## Rewards & Subsidies: Optimal Distribution
+
+### The Core Challenge
+
+Distributing rewards and subsidies in a way that is fair, precise, and robust is non-trivial. The naive approach—pre-calculating per-vote rates and distributing based on those—leads to stuck funds, unfairness for small participants, and operational headaches. We designed our system to avoid these pitfalls and ensure every token is either claimable or recoverable, with no silent losses or deadweight.
+
+---
+
+### The Problem with Pre-Calculation
+
+**Rewards:**  
+Traditionally, protocols pre-calculate a `rewardsPerVote` value for each pool: `rewardsPerVote = (poolRewards * 1e18) / totalVotes`
+This value is then used to determine each user’s claim: `userRewards = userVotes * rewardsPerVote / 1e18`
+
+But this approach is fundamentally flawed:
+- If `poolRewards` is small relative to `totalVotes`, `rewardsPerVote` for that pool can floor to zero, blocking epoch finalization and leaving rewards stuck.
+- Small voters are often zeroed out; while large voters can claim, it would be rounded down values.
+- Increasing pool rewards to avoid zeroing out is not an option, as pool rewards are financed by the PaymentsController[accrued verification fees].
+
+**Subsidies:**  
+A similar issue arises with subsidies. 
+Pre-calculating `subsidyPerVote` at the epoch level: `subsidyPerVote = subsidies / totalVotes`, means that small subsidies in high-vote epochs are floored to zero, making them undistributable.
+
+*Example:*
+
+```bash
+- Assume: totalRewards=5, totalVotes=10:
+    - User A with 3 votes: (3*5)/10 = 15/10 = 1 (floored from 1.5).
+    - User B with 1 vote: (1*5)/10 = 5/10 = 0 (floored from 0.5).
+
+UserB has no rewards to claim.
+``` 
+
+### Our Solution: Proportional, On-Claim Calculation
+
+We intentionally reject pre-calculation in favor of a proportional, on-claim approach:
+
+- **No Pre-Calculation:** We do not store or use `rewardsPerVote` or `subsidyPerVote` in storage.
+- **Direct Allocation:** On deposit, we simply set `totalRewards` or `totalSubsidies` for the epoch if the value is non-zero and there are votes.
+- **On-Claim Math:** All calculations are performed at claim time, maximizing precision and fairness:
+    - Rewards: `userRewards = (userVotes * totalRewards) / totalVotes`
+    - Subsidies: `poolSubsidies = (poolVotes * totalSubsidies) / totalVotes` [then verifiers claim their share proportionally]
+
+**Why This Wins:**
+- **No Stuck Funds:** Even if totals are small, partial distribution is always possible. Any leftovers (residuals) can be swept later.
+- **Per-Pool Isolation:** Each pool is handled independently. Zero-reward pools never block others. [blocking would prevent finalization of epoch via `finalizeEpoch()`]
+- **No Reverts for Small Amounts:** Tiny rewards or subsidies are handled gracefully, preventing blocking of pools from being processed [`isProcessed` flag].
+- **Simplicity & Gas Efficiency:** Fewer storage writes, less risk of revert, and cheaper execution.
+
+> This also allows for epochs to have 0 subsidies, without any issues.
+---
+
+## Residuals: Accounting and Recovery
+
+**What are residuals?**  
+Residuals are small amounts left behind due to flooring in integer division. They can arise in both rewards and subsidies flows.
+
+### Residuals Management: Rewards & Subsidies
+
+Residuals—small amounts left behind due to integer division—are an unavoidable reality in both rewards and subsidies flows. Our design tackles this head-on, ensuring every token is either claimable or recoverable, never lost.
+
+- **During Finalization:** If a pool has zero votes but a nonzero reward or subsidy, we don’t deposit it. For subsidies, proportional allocation across pools can also leave tiny amounts undistributed. This prevents stuck funds and ensures only distributable amounts enter the system.
+- **During Claims:** Whether users or verifiers claim, all calculations use integer division, so each claim is rounded down. Multiple layers of division (e.g., delegate → user) can amplify rounding losses. Every distributed amount is meticulously tracked—`epoch.totalRewardsClaimed` and `epoch.totalSubsidiesClaimed` are always incremented by the actual value sent out.
+
+The result: `epoch.totalRewardsAllocated - epoch.totalRewardsClaimed` and `epoch.totalSubsidiesAllocated - epoch.totalSubsidiesClaimed` always reflect the true sum of all residuals and unclaimed funds.
+
+- **Unified Sweeping:** We make no distinction between “residuals” and “unclaimed” funds. Both are swept together, after a set delay, using `withdrawUnclaimedRewards()` and `withdrawUnclaimedSubsidies()`. This unified, intentional approach keeps the system robust, simple, and guarantees that no value is ever lost to rounding or operational edge cases.
+
+**Bottom line:**
+By moving all calculations to claim time, tracking every distributed amount, and sweeping all leftovers, we guarantee optimal, fair, and recoverable distribution—no matter how small the pool, the voter, or the subsidy. This is intentional design for optimality, not an accident of implementation.
+
+*For an illustrated guide, highlighting sources of residuals and rounding down due to division, please see the later section titled: Residuals Illustrated*
+
+>Illustration of residual origination: https://app.excalidraw.com/s/ZeH3y0tOi6/4nyJOQSlGn3?element=aO2TZqM4AcQ0tqw7fV8XF
+
+## On nested mapping in `OmnibusDelegateAccount`
+
+for claimRewardsFromDelegate, user is expected to call this function repeatedly: 
+- for the same delegate, different pools
+- for a different delegate, different pools
+
+User could have delegated to multiple delegates; and those delegates could have voted for different pools; in some cases different delegates might have allocated to the same pool.
+- that means, in `claimRewardsForDelegate`, we cannot set: `require(userDelegateAccounting[epoch][msg.sender][delegate].totalRewards == 0, Errors.RewardsAlreadyClaimed());`
+
+Problem:
+- This would only allow calling of the function once, and not repeatedly to cycle through all the pools.
+- we also do not want users to be able to repeatedly claim rewards for the same pool.
+
+Solution:
+
+Since delegations are epoch-level (not per-pool), but claims must prevent per-pool re-claims per delegate (while allowing same pool via different delegates), we need per-pool tracking within each user-delegate-epoch entry. Users can delegate to multiple delegates, and delegates can vote in overlapping pools, so claims are independent per delegate-pool pair.
+
+Introduce a new struct `UserDelegateAccount` for userDelegateAccounting, with:
+- aggregate tracking for net claimed rewards
+- nested mapping for per-pool gross rewards (set when claimed; use == 0 as "not claimed" flag).
+
+## Accurate Delegate Fee Application: Intentional Historical Tracking
+
+Most protocols avoid on-chain delegation due to the complexity of tracking fees and state transitions. Even major players like Aerodrome rely on off-chain relayers and bots to handle delegation, fee calculations, and asset movement. Here, we take a different approach: all delegation, fee logic, and historical tracking are handled fully on-chain, with precision and intent.
+
+**The Challenge**
+
+Delegate fees are dynamic—delegates can change their fee at any epoch. 
+
+If a delegate increases their fee in epoch N, but a user claims rewards for delegated votes from epoch N-2, what fee should apply? 
+
+Naively, most systems just use the latest fee, which is unfair and breaks the link between voting and fee accrual. Fees must be indexed by epoch, not just stored as a single value. This is why most protocols push this feature off-chain to relayers. 
+
+**The Solution: Epoch-Indexed Fee History**
+
+Rather than simply storing the latest fee, we implement an elegant epoch-indexed fee snapshotting mechanism. 
+
+Every delegate fee update is logged in a mapping keyed by both delegate and epoch, ensuring that for any claim, the contract can reference the exact fee that was in effect when the relevant votes were cast and rewards accrued. 
+
+This is not a passive log: fee increases are only activated after a mandatory delay, preventing last-minute fee hikes, while fee decreases are applied instantly for user benefit. 
+
+This system relies on two key rules: 
+1. delegate fees can never be zero, 
+2. delegates are expected to vote each epoch. 
+
+That way, every epoch has a clear, valid fee reference. If a fee is zero, it simply means the delegate didn’t vote that epoch and won’t receive fees—no ambiguity, no loopholes.
+
 # **2. Contract Functions Walkthrough**
 
 ## Constructor
@@ -272,72 +462,9 @@ All voting activity—whether personal or delegated—is tracked for each addres
 
 
 
-## Delegate Leader Unregisters Mid-Epoch With Active Votes
-
-1. Alice unregisters as delegate
-2. Alice cannot accept new delegations
-3. Alice cannot vote with delegated votes - effective immediately.
-4. Users who delegated will not regain their voting power - they must manually call undelegate() function on VotingEscrowedMoca.sol
-
-### delegate fees
-
-problem on delegate fees:
-- delegate changes fees in epoch N
-- user claims rewards from his delegated votes, for epoch N-2
-- user would be paying fees as per the latest fee update
-- essentially, fees are a static reference. they aren't indexed on an epoch basis.
-
-when claiming,
-- get epoch:fee, by referencing _delegateHistoricalFees
-
-how would _delegateHistoricalFees be populated
-- register() -> _delegateHistoricalFees[currentEpoch][fee]
-- updateFee() -> _delegateHistoricalFees[currentEpoch][newFee]
-
-but what about the epochs where no fee change occurred? 
-- how do we get the fee, since the mapping would return 0 for those epochs?
-
-> https://www.notion.so/animocabrands/Delegate-Leader-Lifecycle-20d3f5ceb8fe80e8a9e5f9584dc1683a?d=2593f5ceb8fe804aabab001c562d3679#22a3f5ceb8fe8064b5f9eda6221acd02
 
 
-
-## Voters and Rewards
-
-    /** deposit rewards for a pool
-        - rewards are deposited in esMoca; 
-        - so cannot reference PaymentsController to get each pool's rewards
-        - since PaymentsController tracks feesAccruedToVoters in USD8 terms
-        
-        Process:
-        1. manually reference PaymentsController.getPoolVotingFeesAccrued(uint256 epoch, bytes32 poolId)
-        2. withdraw that amount, convert to esMoca [off-chain]
-        3. deposit the total esMoca to the 
-    */
-
-
-- voters receive rewards, as esMoca
-- rewards financed by the `VOTING_FEE_PERCENTAGE` cut from PaymentsController.sol
-- voters can only claim rewards on an epoch that has been finalized [admin must have called `finalizeEpoch`]
- 
-Voters vote on credential pools in Epoch N: 
-- Voting rewards would be a portion of verification fees in the next epoch, **Epoch N+1**
-- Voting is taking a bet on the future
-- *Verification fees in Epoch N+1 will be rewarded to them at the **end of Epoch N+1; once the epoch is finalized***
-- userPoolVotes / totalPoolVotes * poolRewards
-
-***Note:***
-- *Voters can claim fees proportion to their votes [in Epoch N], at the end of Epoch N+1.*
-
-**PROCESS:**
-0. withdraw USD8 from `PaymentsController._epochFeesAccrued[currentEpoch]`; convert to esMoca 
-1. depositRewardsForEpoch() -> sets `rewardsPerVote` for each pool
-2. users can call `claimRewards()`
-
-
----
-
-
-# Execution flow
+# **Execution flow**
 
 ## At the end of epoch
 
@@ -392,145 +519,13 @@ After finalizeEpochRewardsSubsidies is completed, and the flag `isFinalized` is 
 
 
 
------ 
 
 
 
 
-# **3. Design choices**
+# *Appendix*
 
-## Problem: Rewards distribution + calculation
-
-- Rewards are pool-specific and fixed based on verification fees accrued per pool (some pools may have 0 rewards if no fees).
-- Original design pre-calculated rewardsPerVote = (poolRewards * 1e18) / totalVotes per pool in finalizeEpochRewardsSubsidies, requiring it >0 to avoid "invalid" values.
-- If poolRewards was small relative to `totalVotes`, this floored to 0, causing a revert and blocking epoch finalization—leaving rewards undistributable and "stuck" in the contract.
-- Claims multiplied `userVotes` by `rewardsPerVote` (potentially inflated or 0), risking incorrect distributions or no claims at all.
-- Constraint: Could not increase rewards per pool to force non-zero `rewardsPerVote`, as this would violate pool-specific fee-based financing.
-
-**Considerations**
-
-- Stuck Funds: Undistributable rewards remained in the contract indefinitely, with no recovery mechanism.
-- Per-Pool Isolation: Rewards must remain unique per pool (no global pooling); 0-reward pools should be handled gracefully without affecting others.
-- Claim Inefficiencies: Pre-calc didn't handle flooring well; small voters might get nothing, but large ones should still claim proportionally.
-
-**Solution**
-
-- Remove Pre-Calculations: Eliminate `rewardsPerVote` from `depositRewards()` and finalize logic; instead, set totalRewards (or totalSubsidies) directly if >0 and totalVotes >0.
-- Zero Handling: Skip calcs/transfers for 0 amounts; gracefully continue in claims (e.g., skip pools if totalRewards=0 or userVotes=0).
-- Direct Proportional Calculation in Claims: Shift math to claim time:
-    - For rewards: userRewards = (userVotes * totalRewards) / totalVotes per pool (integer division floors small shares to 0).
-    - For subsidies: In finalize, calc poolSubsidies = (poolVotes * totalSubsidies) / totalVotes per pool; claims use existing proportional share of poolSubsidies.
-
-**Rationale for Chosen Approach**
-- Prevents Stuck Funds Without Altering Rewards: Direct calc allows partial distribution (large voters claim >0 even for small totals), with sweeps ensuring no permanent loss—addresses core issue without increasing pool rewards or mixing across pools.
-- Maintains Per-Pool Uniqueness: All operations (finalize, claims) loop per pool using isolated totals; no global redistribution, preserving fee-based specificity (e.g., 0-reward pools yield 0 claims without blocking others).
-- Handles Truncation Gracefully: Flooring happens at the user/pool level (not globally), enabling distribution where possible (e.g., totalRewards=5e18, totalVotes=10e18: user with 3e18 votes gets 1.5e18 floored to 1e18; remainder sweepable).
-- Flexibility for Small/Zero Amounts: Avoids reverts for tiny rewards/subsidies, supporting scenarios like low-fee epochs or minimal rewards allocation better.
-- Gas and Simplicity Benefits: Removes storage fields/writes (e.g., no subsidyPerVote), reduces revert risks, and parallels subsidies/rewards for consistent code.
-- Consistency with Subsidies: Applied similar logic to global subsidies for uniformity, shifting flooring to per-pool level to avoid deposit blocks.
-
-## On nested mapping in `OmnibusDelegateAccount`
-
-for claimRewardsFromDelegate, user is expected to call this function repeatedly: 
-- for the same delegate, different pools
-- for a different delegate, different pools
-
-User could have delegated to multiple delegates; and those delegates could have voted for different pools; in some cases different delegates might have allocated to the same pool.
-- that means, in `claimRewardsForDelegate`, we cannot set: `require(userDelegateAccounting[epoch][msg.sender][delegate].totalRewards == 0, Errors.RewardsAlreadyClaimed());`
-
-Problem:
-- This would only allow calling of the function once, and not repeatedly to cycle through all the pools.
-- we also do not want users to be able to repeatedly claim rewards for the same pool.
-
-Solution:
-
-Since delegations are epoch-level (not per-pool), but claims must prevent per-pool re-claims per delegate (while allowing same pool via different delegates), we need per-pool tracking within each user-delegate-epoch entry. Users can delegate to multiple delegates, and delegates can vote in overlapping pools, so claims are independent per delegate-pool pair.
-
-Introduce a new struct `UserDelegateAccount` for userDelegateAccounting, with:
-- aggregate tracking for net claimed rewards
-- nested mapping for per-pool gross rewards (set when claimed; use == 0 as "not claimed" flag).
-
-## On Rewards calculations
-
-Voting rewards are financed based on verification fees accrued for a pool
-- i.e. rewards are strictly per-pool (unique to each pool's accrued verification fees, including possible 0 for some pools)
-
-**Problem:**
-- Calculating rewards for users can lead to precision loss due to integer arithmetic, 
-- Especially for users with fewer votes, potentially resulting in zero rewards due to rounding.
-
-**There are 2 approaches:**
-
-*1) Precompute `rewardsPerVote` for each pool, when depositing rewards.* [suboptimal]
-
-- `rewardsPerVote` would be multiplied by a user's votes in `claimRewards()`. 
-- This can cause early truncation, rounding small rewards to zero for users with fewer votes.
-
-
-*2) Calculate rewards directly in `claimRewards()` using (`userPoolVotes` * `totalRewards`) / `poolTotalVotes`*
-
-- This performs multiplication before division, preserving precision and reducing the chance of rewards rounding to zero.
-
-
-**Why Approach 2 Wins:**
-- Multiplying before dividing minimizes truncation, so users with small vote shares are less likely to get zeroed out—fairer for everyone, especially smaller voters.
-
-Bottom line: Approach 2 maximizes fairness and precision for all users.
-
-### Handling Solidity Rounding Residuals
-
-Approach 2 improves precision by multiplying before dividing, so small vote holders are less likely to get zeroed out. Still, integer division in Solidity means some small rewards can round down to zero—can't avoid this entirely.
-
-> finalizeEpochRewardsSubsidies() sets: epochPools[epoch][poolId].totalRewardsAllocated = poolRewards
-
-*Example:*
-
-```bash
-- Assume: totalRewards=5, totalVotes=10:
-    - User A with 3 votes: (3*5)/10 = 15/10 = 1 (floored from 1.5).
-    - User B with 1 vote: (1*5)/10 = 5/10 = 0 (floored from 0.5).
-
-UserB has no rewards to claim.
-``` 
-
-This will result in residual rewards on the contract, that are claimable by no one.
-With `withdrawUnclaimedRewards()`, we can extract both unclaimed rewards as well as residual amounts (from rounding) after a 1-year period.
-
-> there is an inconsistency in that subsidies that can't get distributed have a specific extract fn: withdrawResidualSubsidies
-
-## Subsidy calculation [?]
-
-Subsidies are deposited as a single amount per epoch (not per pool).
-
-- Pools get a share based on votes: `poolSubsidies = (poolVotes * subsidyPerVote) / 1e18` (in finalize()).
-- Verifiers then claim their share: `verifierShare = (verifierAccrued / poolAccrued) * poolSubsidies` (in claimSubsidies()).
-
-**Problem:**  
-Precomputing `subsidyPerVote` in finalize() causes precision loss—small subsidies can get floored to zero if totalVotes is large.  
-Example: `subsidies=5e18, totalVotes=10e18+1` → `subsidyPerVote=0`.  
-This makes small subsidies undistributable in high-vote or low-subsidy epochs.
-
-**Why this fails:**  
-- Global pre-calc with integer division wastes small amounts.
-- Low-subsidy scenarios get blocked entirely.
-
-**Better approach:**  
-- Skip pre-calculating `subsidyPerVote`.
-- On deposit, set `epochPtr.totalSubsidies = subsidies` if `subsidies > 0 && totalVotes > 0` (transfer esMoca), no need to check `subsidyPerVote > 0`. Always set the flag.
-
-**Residual management**
-
-For example, `5e18` is deposited but only `4e18` is distributable (due to pool calc flooring), the rest is residual.
-
-Per epoch:
-- `totalSubsidiesAllocated`: deposited amount
-- `totalSubsidiesDistributable`: claimable (floored) amounts
-
-`withdrawUnclaimedSubsidies()` will sweep only unclaimed subsidies for an epoch; subject to delay.  
-`withdrawResidualSubsidies()` will sweep only residuals; no delay requirement as this is deadweight loss.
-
-
-## Ensure there are no residuals stuck on the contract
+## Residuals Illustrated
 
 Illustration of residual origination: https://app.excalidraw.com/s/ZeH3y0tOi6/4nyJOQSlGn3?element=aO2TZqM4AcQ0tqw7fV8XF
 
@@ -902,11 +897,7 @@ Result: Fee history: Epoch 1=10%, 2=5%, 3+=20% (bug: pending lingered)
 
 Result: Fee history: Epoch 1=10%, 2+=5% (correct: decrease overrides fully).
 
-
-
-
-
-# Other reference code
+# *Other reference code*
 
 ## Claim Streamlining for Subsidies [multi-epoch batching]
 
