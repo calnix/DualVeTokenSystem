@@ -914,17 +914,16 @@ contract VotingController is Pausable {
 
 //-------------------------------admin: withdrawUnclaimedRewards, withdrawUnclaimedSubsidies -----------------------------------------
     
-    // Note: sweeps both unclaimed and residuals rewards (residuals are unclaimable flooring losses)
     //REVIEW: ROLE and recipient
     /**
-     * @notice Sweep all unclaimed voting rewards for specified pools in a given epoch to the treasury.
-     * @dev Requires the epoch to be fully finalized and a 6-epoch delay.
-     *      Sums and transfers all unclaimed esMoca rewards for the provided poolIds in the specified epoch to the treasury.
-     *      Emits an {UnclaimedRewardsSwept} event on success.
+     * @notice Sweep all unclaimed and residual voting rewards for a given epoch to the treasury.
+     * @dev Can only be called by a VotingController admin after a delay defined by UNCLAIMED_DELAY_EPOCHS epochs.
+     *      Transfers both unclaimed and residual (unclaimable flooring losses) esMoca rewards to the treasury.
+     *      Emits an {UnclaimedRewardsWithdrawn} event on success.
      *      Reverts if the epoch is not finalized, the treasury address is unset, or there are no unclaimed rewards to sweep.
-     * @param epoch The epoch number for which to sweep unclaimed rewards.
+     * @param epoch The epoch number for which to sweep unclaimed and residual rewards.
      */
-    function withdrawUnclaimedRewards(uint128 epoch) external onlyVotingControllerAdmin {
+    function withdrawUnclaimedRewards(uint256 epoch) external onlyVotingControllerAdmin {
         // sanity check: withdraw delay must have passed
         require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
         
@@ -943,9 +942,15 @@ contract VotingController is Pausable {
         emit Events.UnclaimedRewardsWithdrawn(treasury, epoch, unclaimed);
     }
 
-    // Note: sweeps both unclaimed and residuals subsidies (residuals are unclaimable flooring losses)
     //REVIEW: ROLE and recipient
-    // withdraw unclaimed subsidies + residuals | after 6 epochs[~3months]
+    /**
+     * @notice Sweep all unclaimed and residual subsidies for a specified epoch to the treasury.
+     * @dev Can only be called by a VotingController admin after a delay defined by UNCLAIMED_DELAY_EPOCHS epochs.
+     *      Transfers both unclaimed and residual (unclaimable flooring losses) esMoca subsidies to the treasury.
+     *      Emits an {UnclaimedSubsidiesWithdrawn} event on success.
+     *      Reverts if the epoch is not finalized, the delay has not passed, the treasury address is unset, or there are no unclaimed subsidies to sweep.
+     * @param epoch The epoch number for which to sweep unclaimed and residual subsidies.
+     */
     function withdrawUnclaimedSubsidies(uint256 epoch) external onlyVotingControllerAdmin {
         // sanity check: withdraw delay must have passed
         require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
@@ -1001,6 +1006,7 @@ contract VotingController is Pausable {
      * @notice Sets the unclaimed delay epochs.
      * @dev Only callable by VotingController admin. Value must be greater than 0 and a multiple of EpochMath.EPOCH_DURATION.
      * @param delayEpochs The new unclaimed delay epochs.
+     * This delay applied to both withdrawUnclaimedRewards and withdrawUnclaimedSubsidies
      */
     function setUnclaimedDelay(uint256 newDelayEpoc) external onlyVotingControllerAdmin {
         require(newDelayEpochs > 0, Errors.InvalidDelay());
