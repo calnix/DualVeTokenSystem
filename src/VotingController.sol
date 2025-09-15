@@ -78,11 +78,14 @@ contract VotingController is Pausable {
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address addressBook) {
+    constructor(address addressBook, uint256 registrationFee) {
         ADDRESS_BOOK = IAddressBook(addressBook);
 
-        // initial unclaimed delay set to 6 epochs [review: make immutable?]
+        // initial unclaimed delay set to 6 epochs
         UNCLAIMED_DELAY_EPOCHS = EpochMath.EPOCH_DURATION() * 6;
+
+        // set registration fee
+        REGISTRATION_FEE = registrationFee;
     }
 
 
@@ -172,7 +175,6 @@ contract VotingController is Pausable {
         emit Events.Voted(currentEpoch, msg.sender, poolIds, poolVotes, isDelegated);
     }
 
-    //TODO: router friendly
     /**
      * @notice Migrate votes from one or more source pools to destination pools within the current epoch.
      * @dev Allows users to move their votes between pools before the epoch is finalized.
@@ -329,37 +331,6 @@ contract VotingController is Pausable {
         }
     }
 
-
-    /**
-     * @dev Internal function to apply pending fee increase if the epoch has arrived.
-     * Updates currentFeePct and clears next* fields.
-     * Also sets historical for the current epoch if not set.
-     * @return bool True if pending was applied and historical set, false otherwise.
-     */
-    function _applyPendingFeeIfNeeded(address delegateAddr, uint256 currentEpoch) internal returns (bool) {
-        Delegate storage delegatePtr = delegates[delegateAddr];
-
-        // if pending fee increase, apply it
-        if (delegatePtr.nextFeePctEpoch > 0) {
-            if(currentEpoch >= delegatePtr.nextFeePctEpoch) {
-                
-                // update currentFeePct
-                delegatePtr.currentFeePct = delegatePtr.nextFeePct;
-                delegateHistoricalFees[delegateAddr][currentEpoch] = delegatePtr.currentFeePct;  // Ensure set for claims
-                
-                // reset
-                delete delegatePtr.nextFeePct;
-                delete delegatePtr.nextFeePctEpoch;
-            
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-
-
     /**
      * @notice Unregister the caller as a delegate.
      * @dev Removes the delegate's registration status.
@@ -402,13 +373,22 @@ contract VotingController is Pausable {
 
 
     /**
-     * @notice Claim esMoca rewards for specified pools in a given epoch.
-     * @dev For veHolders who voted, allows claiming esMoca rewards derived from the verification fee split.
-     *      Users who voted in epoch N can claim the pool verification fees for epoch N+1.
-     *      Pools with zero rewards can be repeatedly claimed, but will be skipped gracefully.
-     *      No explicit "claimed" flag is used to avoid added complexity and maintain Account struct compatibility across mappings.
+     * @notice Claims esMoca rewards for the caller for specified pools in a given epoch.
+     * @dev For veHolders who voted directly, allows claiming esMoca rewards for each pool in the specified epoch.
+     *      Users who voted in epoch N, can claim the pool verification fees accrued in epoch N+1. [bet on the future]
+     *      Pools with zero rewards or zero user votes are skipped without reverting.
+     *      Reverts if the user has already claimed for a pool, or if the pool does not exist.
+     *      No explicit "claimed" flag is used; claim status is tracked via the Account struct: usersEpochPoolData[epoch][poolId][msg.sender].totalRewards
      * @param epoch The epoch number for which to claim rewards.
-     * @param poolIds Array of pool identifiers for which to claim rewards.
+     * @param poolIds Array of pool identifiers to claim rewards from.
+     *
+     * Requirements:
+     * - The epoch must be fully finalized.
+     * - At least one poolId must be provided and exist.
+     * - The caller must not have already claimed for each pool.
+     * - At least one reward must be claimable.
+     *
+     * Emits a {RewardsClaimed} event on success.
      */
     function voterClaimRewards(uint256 epoch, bytes32[] calldata poolIds) external {
         require(poolIds.length > 0, Errors.InvalidArray());
@@ -420,48 +400,154 @@ contract VotingController is Pausable {
         for(uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
             
-            //sanity check: pool exists + user has not claimed rewards yet
+            // Check pool exists and user has not claimed rewards yet
             require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
             require(usersEpochPoolData[epoch][poolId][msg.sender].totalRewards == 0, Errors.RewardsAlreadyClaimed());    
 
-            //require(pools[poolId].isActive, "Pool inactive");  ---> pool could be currently inactive but have unclaimed prior rewards 
+            // Pool may be inactive but still have unclaimed prior rewards
 
-            // get user's pool votes + pool totals
+            // Get user's pool votes and pool totals
             uint256 userPoolVotes = usersEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent;
             uint256 poolTotalVotes = epochPools[epoch][poolId].totalVotes;
             uint256 totalRewards = epochPools[epoch][poolId].totalRewards;
             
-            // poolTotalVotes == 0 is implicitly checked via userPoolVotes
-            if(totalRewards == 0 || userPoolVotes == 0) continue;  // skip 0-reward pools gracefully
+            // Skip pools with zero rewards or zero user votes
+            if(totalRewards == 0 || userPoolVotes == 0) continue;
 
-            // calc. user's rewards for the pool (direct proportion, per-pool)
-            uint256 userRewards = (userPoolVotes * totalRewards) / poolTotalVotes;    // all expressed in 1e18 precision
-            if(userRewards == 0) continue;  // skip if floored to 0
+            // Calculate user's rewards for the pool (pro-rata)
+            uint256 userRewards = (userPoolVotes * totalRewards) / poolTotalVotes;
+            if(userRewards == 0) continue;
             
-            // set user's totalRewards for this pool
+            // Set user's totalRewards for this pool
             usersEpochPoolData[epoch][poolId][msg.sender].totalRewards = userRewards;
 
-            // increment pool's total claimed rewards
+            // Increment pool's total claimed rewards
             epochPools[epoch][poolId].totalRewardsClaimed += userRewards;
             pools[poolId].totalRewardsClaimed += userRewards;
 
-            // update counter
+            // Update counter
             userTotalRewards += userRewards;
         }
 
         if(userTotalRewards == 0) revert Errors.NoRewardsToClaim();
 
-        // increment user's total rewards, for this epoch
+        // Increment user's total rewards for this epoch
         usersEpochData[epoch][msg.sender].totalRewards += userTotalRewards;
 
-        // increment global: epoch + pool
+        // Increment global: epoch total claimed
         epochs[epoch].totalRewardsClaimed += userTotalRewards;
 
-        // transfer esMoca to user
+        // Transfer esMoca to user
         _esMoca().safeTransfer(msg.sender, userTotalRewards);
 
         emit Events.RewardsClaimed(msg.sender, epoch, poolIds, userTotalRewards);
     }
+
+    //Note: claimRewardsFromDelegateV2()
+    /**
+     * @notice Allows a user (delegator) to claim all rewards accrued from votes delegated to multiple delegates in a single transaction.
+     * @dev Processes rewards in batches by delegates and their respective pools. 
+     *      Net rewards are aggregated and transferred to the user at the end, while delegate fees are paid per delegate within the loop.
+     *      The function should be called with poolIds selected to maximize net rewards per claim.
+     * @param epoch The epoch for which rewards are being claimed.
+     * @param delegateList Array of delegate addresses from whom the user is claiming rewards.
+     * @param poolIdsPerDelegate Array of poolId arrays, each corresponding to the pools voted by a specific delegate.
+     * 
+     * Requirements:
+     * - The epoch must be fully finalized.
+     * - delegateList and poolIdsPerDelegate must have the same nonzero length.
+     * - msg.sender must be the delegator (user).
+     * - At least one net reward must be claimable.
+     * 
+     * Emits a {RewardsClaimedFromDelegate} event and {DelegateFeesClaimed} events for each delegate with a nonzero fee.
+     */
+    function delegatorsClaimRewardsFromDelegates(uint256 epoch, address[] calldata delegateList, bytes32[][] calldata poolIdsPerDelegate) external {
+        // sanity check: epoch must be finalized + delegateList & poolIdsPerDelegate must be of the same length
+        require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
+        require(delegateList.length > 0 && delegateList.length == poolIdsPerDelegate.length, Errors.MismatchedArrayLengths());
+
+        uint256 userTotalNetRewards;  // sum user's nets across all delegates
+
+        for (uint256 i; i < delegateList.length; ++i) {
+
+            address delegate = delegateList[i];
+            bytes32[] calldata poolIds = poolIdsPerDelegate[i];
+
+            if (poolIds.length == 0) continue;  // skip if no pools
+
+            // calculate user's total rewards earned via this delegate across all specified pools
+            (uint256 userTotalNetRewardsForDelegate, uint256 delegateFee) = _claimDelegateRewards(epoch, msg.sender, delegate, poolIds);
+
+            // Transfer fee to delegate (per-delegate, as in original)
+            if (delegateFee > 0) {
+                _esMoca().safeTransfer(delegate, delegateFee);
+                emit Events.DelegateFeesClaimed(delegate, delegateFee);
+            }
+
+            // increment counter
+            userTotalNetRewards += userTotalNetRewardsForDelegate;
+
+        }
+
+        require(totalUserNetRewards > 0, Errors.NoRewardsToClaim());  // Check aggregate net >0
+
+        // Single transfer of total net to user (caller)
+        _esMoca().safeTransfer(msg.sender, userTotalNetRewards);
+        emit Events.RewardsClaimedFromDelegate(epoch, msg.sender, delegateList, poolIdsPerDelegate, userTotalNetRewards);
+    }
+
+    //Note: claimDelegateFeesFromDelegators()
+    /**
+     * @notice Called by delegates to claim accumulated fees from multiple delegators. [delegator==user tt delegated votes]
+     * @dev Processes batches by delegators; each delegator's pools are specified for fee calculation and distribution.
+     * @param epoch The epoch for which delegate fees are being claimed.
+     * @param delegators Array of delegator addresses from whom fees are being claimed.
+     * @param poolIdsPerDelegator Array of poolId arrays, each corresponding to the pools voted by a specific delegator.
+     */
+    function delegateClaimFeesFromDelegators(uint256 epoch, address[] calldata delegators, bytes32[][] calldata poolIdsPerDelegator) external {
+        require(delegators.length > 0 && delegators.length == poolIdsPerDelegator.length, Errors.MismatchedArrayLengths());
+
+        // caller must be a registered delegate + epoch must be finalized
+        require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());
+        require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
+
+        address delegate = msg.sender;  // caller is delegate
+        uint256 totalDelegateFees;      // total fees accrued by the delegate [across all delegators]
+
+        // for each delegator [delegator==user tt delegated votes]
+        for (uint256 i; i < delegators.length; ++i) {
+            address delegator = delegators[i];
+            bytes32[] calldata poolIds = poolIdsPerDelegator[i];
+
+            if (poolIds.length == 0) continue;  // skip if no pools
+
+            (uint256 userTotalNetRewards, uint256 delegateFee) = _claimDelegateRewards(epoch, delegator, delegate, poolIds);
+
+            // No require(userTotalNetRewards>0): delegates can claim fees even if user rewards are zero. Delegates fulfilled their service. 
+
+            // transfer net rewards to each delegator 
+            if (userTotalNetRewards > 0) {
+                _esMoca().safeTransfer(delegator, userTotalNetRewards);
+                emit Events.RewardsClaimedFromDelegate(epoch, delegator, delegate, poolIds, userTotalNetRewards);
+            }
+
+            // increment counter
+            totalDelegateFees += delegateFee;
+        }
+
+        // batch transfer all accrued fees to delegate
+        if (totalDelegateFees > 0) {
+            _esMoca().safeTransfer(delegate, totalDelegateFees);
+            emit Events.DelegateFeesClaimed(delegate, totalDelegateFees);
+        }
+    }
+
+/**
+    few delegates, many pools
+    so iterate over delegates, then pools
+ */
+
+
 
 
     /**
@@ -562,171 +648,6 @@ contract VotingController is Pausable {
         // transfer esMoca to user | note: must whitelist this contract for transfers
         _esMoca().safeTransfer(msg.sender, userTotalNetRewards);
     } */       
-
-    // Note: Batch by delegates (user specifies delegates and their pools). Nets batched to user at end, fees per-delegate inside loop (preserves original pattern).
-    // poolIds should be passed strategically | to maximize net rewards per claim
-    // User calls this fn to claim rewards accrued from the votes they delegated to a delegate 
-    // msg.sender is user aka delegator
-    // claimRewardsFromDelegate()
-    function delegatorsClaimRewardsFromDelegates(uint256 epoch, address[] calldata delegateList, bytes32[][] calldata poolIdsPerDelegate) external {
-        // sanity check: epoch must be finalized + delegateList & poolIdsPerDelegate must be of the same length
-        require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
-        require(delegateList.length > 0 && delegateList.length == poolIdsPerDelegate.length, Errors.MismatchedArrayLengths());
-
-        uint256 userTotalNetRewards;  // sum user's nets across all delegates
-
-        for (uint256 i; i < delegateList.length; ++i) {
-
-            address delegate = delegateList[i];
-            bytes32[] calldata poolIds = poolIdsPerDelegate[i];
-
-            if (poolIds.length == 0) continue;  // skip if no pools
-
-            // calculate user's total rewards earned via this delegate across all specified pools
-            (uint256 userTotalNetRewardsForDelegate, uint256 delegateFee) = _claimDelegateRewards(epoch, msg.sender, delegate, poolIds);
-
-            // Transfer fee to delegate (per-delegate, as in original)
-            if (delegateFee > 0) {
-                _esMoca().safeTransfer(delegate, delegateFee);
-                emit Events.DelegateFeesClaimed(delegate, delegateFee);
-            }
-
-            // increment counter
-            userTotalNetRewards += userTotalNetRewardsForDelegate;
-
-        }
-
-        require(totalUserNetRewards > 0, Errors.NoRewardsToClaim());  // Check aggregate net >0
-
-        // Single transfer of total net to user (caller)
-        _esMoca().safeTransfer(msg.sender, userTotalNetRewards);
-        emit Events.RewardsClaimedFromDelegate(epoch, msg.sender, delegateList, poolIdsPerDelegate, userTotalNetRewards);
-    }
-
-    /**
-     * @notice Called by delegates to claim accumulated fees from multiple delegators. [delegator==user tt delegated votes]
-     * @dev Processes batches by delegators; each delegator's pools are specified for fee calculation and distribution.
-     * @param epoch The epoch for which delegate fees are being claimed.
-     * @param delegators Array of delegator addresses from whom fees are being claimed.
-     * @param poolIdsPerDelegator Array of poolId arrays, each corresponding to the pools voted by a specific delegator.
-     */
-    function delegateClaimFeesFromDelegators(uint256 epoch, address[] calldata delegators, bytes32[][] calldata poolIdsPerDelegator) external {
-        require(delegators.length > 0 && delegators.length == poolIdsPerDelegator.length, Errors.MismatchedArrayLengths());
-
-        // caller must be a registered delegate + epoch must be finalized
-        require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());
-        require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
-
-        address delegate = msg.sender;  // caller is delegate
-        uint256 totalDelegateFees;      // total fees accrued by the delegate [across all delegators]
-
-        // for each delegator [delegator==user tt delegated votes]
-        for (uint256 i; i < delegators.length; ++i) {
-            address delegator = delegators[i];
-            bytes32[] calldata poolIds = poolIdsPerDelegator[i];
-
-            if (poolIds.length == 0) continue;  // skip if no pools
-
-            (uint256 userTotalNetRewards, uint256 delegateFee) = _claimDelegateRewards(epoch, delegator, delegate, poolIds);
-
-            // No require(userTotalNetRewards>0): delegates can claim fees even if user rewards are zero. Delegates fulfilled their service. 
-
-            // transfer net rewards to each delegator 
-            if (userTotalNetRewards > 0) {
-                _esMoca().safeTransfer(delegator, userTotalNetRewards);
-                emit Events.RewardsClaimedFromDelegate(epoch, delegator, delegate, poolIds, userTotalNetRewards);
-            }
-
-            // increment counter
-            totalDelegateFees += delegateFee;
-        }
-
-        // batch transfer all accrued fees to delegate
-        if (totalDelegateFees > 0) {
-            _esMoca().safeTransfer(delegate, totalDelegateFees);
-            emit Events.DelegateFeesClaimed(delegate, totalDelegateFees);
-        }
-    }
-
-/**
-    few delegates, many pools
-    so iterate over delegates, then pools
- */
-
-    // Internal function for shared claim logic (handles one delegator) | delegator==user
-    function _claimDelegateRewards(uint256 epoch, address delegator, address delegate, bytes32[] calldata poolIds) internal returns (uint256, uint256) {
-        uint256 userTotalGrossRewards;
-        uint256 delegateTotalPoolRewards;
-        for (uint256 i; i < poolIds.length; ++i) {
-            bytes32 poolId = poolIds[i];
-
-            // sanity checks: pool exists + user has not claimed rewards from this delegate-pool pair yet
-            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            require(userDelegateAccounting[epoch][delegator][delegate].poolGrossRewards[poolId] == 0, Errors.RewardsAlreadyClaimed());
-
-            // calculations: delegate's votes for this pool + pool totals
-            uint256 delegatePoolVotes = delegatesEpochPoolData[epoch][poolId][delegate].totalVotesSpent;
-            uint256 totalPoolVotes = epochPools[epoch][poolId].totalVotes;
-            uint256 totalPoolRewards = epochPools[epoch][poolId].totalRewards;
-
-            if (totalPoolRewards == 0 || totalPoolVotes == 0) continue;  // skip if pool has no rewards or votes
-
-            uint256 delegatePoolRewards = (delegatePoolVotes * totalPoolRewards) / totalPoolVotes;
-            if (delegatePoolRewards == 0) continue;  // skip if floored to 0
-
-            // book delegate's rewards for this pool & epoch
-            delegatesEpochPoolData[epoch][poolId][delegate].totalRewards = delegatePoolRewards;
-
-            // fetch: number of votes user delegated, to this delegate & the total votes managed by the delegate
-            uint256 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(IAddressBook.getVotingEscrowMoca()).getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
-            uint256 delegateTotalVotesForEpoch = delegateEpochData[epoch][delegate].totalVotesSpent;
-
-            // calc. user's gross rewards for the pool
-            uint256 userGrossRewards = (userVotesAllocatedToDelegateForEpoch * delegatePoolRewards) / delegateTotalVotesForEpoch;
-            if (userGrossRewards == 0) continue;  // skip if floored to 0
-
-            // book user's gross rewards for this pool & epoch
-            userDelegateAccounting[epoch][delegator][delegate].poolGrossRewards[poolId] = userGrossRewards;
-
-            // update pool & epoch: total claimed rewards
-            epochPools[epoch][poolId].totalRewardsClaimed += userGrossRewards;
-            pools[poolId].totalRewardsClaimed += userGrossRewards;
-
-            // update counters
-            userTotalGrossRewards += userGrossRewards;
-            delegateTotalPoolRewards += delegatePoolRewards;
-        }
-
-        if (userTotalGrossRewards == 0) return (0, 0);  // Early return if nothing to claim
-
-        // calc. delegate fee + net rewards on total gross rewards, so as to not lose precision
-        uint256 delegateFeePct = delegateHistoricalFees[delegate][epoch];           
-        uint256 delegateFee = userTotalGrossRewards * delegateFeePct / Constants.PRECISION_BASE;
-        uint256 userTotalNetRewards = userTotalGrossRewards - delegateFee;
-
-        // ---- Accounting updates ----
-        
-        // increment user's net rewards earned via delegated votes
-        userDelegateAccounting[epoch][delegator][delegate].totalNetRewards += uint128(userTotalNetRewards);
-
-        // update delegate's captured (non-claimable) rewards for this epoch
-        delegateEpochData[epoch][delegate].totalRewards = delegateTotalPoolRewards;         
-        delegates[delegate].totalRewardsCaptured += userTotalGrossRewards;
-
-        // update delegate's fees for this epoch
-        if (delegateFee > 0) {
-            delegates[delegate].totalFees += delegateFee;
-            delegates[delegate].totalFeesClaimed += delegateFee;
-        }
-
-        // since we payout to both user and delegate, we increment by gross rewards
-        epochs[epoch].totalRewardsClaimed += userTotalGrossRewards;
-
-        return (userTotalNetRewards, delegateFee);
-    }
-
-
-
 
 
 //-------------------------------claim subsidies functions----------------------------------------------
@@ -1059,6 +980,112 @@ contract VotingController is Pausable {
     }
 
 //-------------------------------internal functions------------------------------------------------------
+
+
+    /**
+     * @notice Applies the pending delegate fee increase if the scheduled epoch has started.
+     * @dev If the current epoch is greater than or equal to the delegate's nextFeePctEpoch,
+     *      updates currentFeePct, sets the historical fee for the current epoch, and clears pending fields.
+     * @param delegateAddr The address of the delegate whose fee may be updated.
+     * @param currentEpoch The current epoch number.
+     * @return True if a pending fee was applied and historical fee set, false otherwise.
+     */
+    function _applyPendingFeeIfNeeded(address delegateAddr, uint256 currentEpoch) internal returns (bool) {
+        Delegate storage delegatePtr = delegates[delegateAddr];
+
+        // if there is a pending fee increase, apply it
+        if(delegatePtr.nextFeePctEpoch > 0) {
+            if(currentEpoch >= delegatePtr.nextFeePctEpoch) {
+                
+                // update currentFeePct and set the historical fee for the current epoch
+                delegatePtr.currentFeePct = delegatePtr.nextFeePct;
+                delegateHistoricalFees[delegateAddr][currentEpoch] = delegatePtr.currentFeePct;  // Ensure set for claims
+                
+                // reset the pending fields
+                delete delegatePtr.nextFeePct;
+                delete delegatePtr.nextFeePctEpoch;
+
+                // return true if a pending fee was applied and historical fee set
+                return true;
+            }
+        }
+
+        // return false if there is no pending fee
+        return false;
+    }
+
+
+    // Internal function for shared claim logic (handles one delegator) | delegator==user
+    function _claimDelegateRewards(uint256 epoch, address delegator, address delegate, bytes32[] calldata poolIds) internal returns (uint256, uint256) {
+        uint256 userTotalGrossRewards;
+        uint256 delegateTotalPoolRewards;
+        for (uint256 i; i < poolIds.length; ++i) {
+            bytes32 poolId = poolIds[i];
+
+            // sanity checks: pool exists + user has not claimed rewards from this delegate-pool pair yet
+            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(userDelegateAccounting[epoch][delegator][delegate].poolGrossRewards[poolId] == 0, Errors.RewardsAlreadyClaimed());
+
+            // calculations: delegate's votes for this pool + pool totals
+            uint256 delegatePoolVotes = delegatesEpochPoolData[epoch][poolId][delegate].totalVotesSpent;
+            uint256 totalPoolVotes = epochPools[epoch][poolId].totalVotes;
+            uint256 totalPoolRewards = epochPools[epoch][poolId].totalRewards;
+
+            if (totalPoolRewards == 0 || totalPoolVotes == 0) continue;  // skip if pool has no rewards or votes
+
+            uint256 delegatePoolRewards = (delegatePoolVotes * totalPoolRewards) / totalPoolVotes;
+            if (delegatePoolRewards == 0) continue;  // skip if floored to 0
+
+            // book delegate's rewards for this pool & epoch
+            delegatesEpochPoolData[epoch][poolId][delegate].totalRewards = delegatePoolRewards;
+
+            // fetch: number of votes user delegated, to this delegate & the total votes managed by the delegate
+            uint256 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(IAddressBook.getVotingEscrowMoca()).getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
+            uint256 delegateTotalVotesForEpoch = delegateEpochData[epoch][delegate].totalVotesSpent;
+
+            // calc. user's gross rewards for the pool
+            uint256 userGrossRewards = (userVotesAllocatedToDelegateForEpoch * delegatePoolRewards) / delegateTotalVotesForEpoch;
+            if (userGrossRewards == 0) continue;  // skip if floored to 0
+
+            // book user's gross rewards for this pool & epoch
+            userDelegateAccounting[epoch][delegator][delegate].poolGrossRewards[poolId] = userGrossRewards;
+
+            // update pool & epoch: total claimed rewards
+            epochPools[epoch][poolId].totalRewardsClaimed += userGrossRewards;
+            pools[poolId].totalRewardsClaimed += userGrossRewards;
+
+            // update counters
+            userTotalGrossRewards += userGrossRewards;
+            delegateTotalPoolRewards += delegatePoolRewards;
+        }
+
+        if (userTotalGrossRewards == 0) return (0, 0);  // Early return if nothing to claim
+
+        // calc. delegate fee + net rewards on total gross rewards, so as to not lose precision
+        uint256 delegateFeePct = delegateHistoricalFees[delegate][epoch];           
+        uint256 delegateFee = userTotalGrossRewards * delegateFeePct / Constants.PRECISION_BASE;
+        uint256 userTotalNetRewards = userTotalGrossRewards - delegateFee;
+
+        // ---- Accounting updates ----
+        
+        // increment user's net rewards earned via delegated votes
+        userDelegateAccounting[epoch][delegator][delegate].totalNetRewards += uint128(userTotalNetRewards);
+
+        // update delegate's captured (non-claimable) rewards for this epoch
+        delegateEpochData[epoch][delegate].totalRewards = delegateTotalPoolRewards;         
+        delegates[delegate].totalRewardsCaptured += userTotalGrossRewards;
+
+        // update delegate's fees for this epoch
+        if (delegateFee > 0) {
+            delegates[delegate].totalFees += delegateFee;
+            delegates[delegate].totalFeesClaimed += delegateFee;
+        }
+
+        // since we payout to both user and delegate, we increment by gross rewards
+        epochs[epoch].totalRewardsClaimed += userTotalGrossRewards;
+
+        return (userTotalNetRewards, delegateFee);
+    }
 
 
     function _veMoca() internal view returns (IVotingEscrowMoca){
