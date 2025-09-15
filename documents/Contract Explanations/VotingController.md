@@ -113,7 +113,7 @@ Additionally, this gives us the freedom to deposit rewards discretionally; can i
 
 ____
 
-# Contract Overview
+# **1. Contract Overview**
 
 ## Mappings
 
@@ -144,20 +144,20 @@ ____
     mapping(uint256 epoch => mapping(address delegate => DataTypes.Account delegate)) public delegateEpochData;
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address delegate => DataTypes.Account delegateAccount))) public delegatesEpochPoolData;
 
-        // user/delegate data     | perEpoch | perPoolPerEpoch
-        struct Account {
-            uint128 totalVotesSpent;
-            uint128 totalRewards;         // user: total net rewards claimed / delegate: total gross rewards accrued
-        }
+    // user/delegate data     | perEpoch | perPoolPerEpoch
+    struct Account {
+        uint128 totalVotesSpent;
+        uint128 totalRewards;         // user: total net rewards claimed / delegate: total gross rewards accrued
+    }
 
 
     // User-Delegate tracking [for this user-delegate pair, what was the user's {rewards,claimed}]
     mapping(uint256 epoch => mapping(address user => mapping(address delegate => DataTypes.UserDelegateAccount userDelegateAccount))) public userDelegateAccounting;
     
-        struct OmnibusDelegateAccount {
-            uint128 totalNetRewardsClaimed;
-            mapping(bytes32 poolId => uint128 grossRewards) userPoolGrossRewards; // flag: 0 = not claimed, non-zero = claimed
-        }
+    struct OmnibusDelegateAccount {
+        uint128 totalNetRewardsClaimed;
+        mapping(bytes32 poolId => uint128 grossRewards) userPoolGrossRewards; // flag: 0 = not claimed, non-zero = claimed
+    }
 ```
 
 These paired mappings implement a dual-accounting model.
@@ -223,7 +223,8 @@ Delegate fees are calculated on users' total gross rewards across multiple pools
 
 ---
 
-# Contract Functions Walkthrough
+
+# **2. Contract Functions Walkthrough**
 
 ## Constructor
 
@@ -301,7 +302,6 @@ but what about the epochs where no fee change occurred?
 
 
 ## Voters and Rewards
-
 
     /** deposit rewards for a pool
         - rewards are deposited in esMoca; 
@@ -391,7 +391,13 @@ After finalizeEpochRewardsSubsidies is completed, and the flag `isFinalized` is 
 
 
 
-# Design choices
+
+----- 
+
+
+
+
+# **3. Design choices**
 
 ## Problem: Rewards distribution + calculation
 
@@ -423,7 +429,7 @@ After finalizeEpochRewardsSubsidies is completed, and the flag `isFinalized` is 
 - Gas and Simplicity Benefits: Removes storage fields/writes (e.g., no subsidyPerVote), reduces revert risks, and parallels subsidies/rewards for consistent code.
 - Consistency with Subsidies: Applied similar logic to global subsidies for uniformity, shifting flooring to per-pool level to avoid deposit blocks.
 
-## On nested mapping in `UserDelegateAccount`
+## On nested mapping in `OmnibusDelegateAccount`
 
 for claimRewardsFromDelegate, user is expected to call this function repeatedly: 
 - for the same delegate, different pools
@@ -524,7 +530,57 @@ Per epoch:
 `withdrawResidualSubsidies()` will sweep only residuals; no delay requirement as this is deadweight loss.
 
 
-## other math rounding stuff 
+## Ensure there are no residuals stuck on the contract
+
+Illustration of residual origination: https://app.excalidraw.com/s/ZeH3y0tOi6/4nyJOQSlGn3?element=aO2TZqM4AcQ0tqw7fV8XF
+
+There are two kind of residuals that could be stuck on the contract:
+
+1. rewards
+2. subsidies
+
+**Rewards Flow: sources of residuals**
+
+1. `finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint256[] calldata rewards)`
+
+- The function deposits rewards for each pool, matching each pool in the pool array to its corresponding reward in the rewards array (element-wise).
+- If a pool has zero votes but a non-zero reward, those rewards are not deposited. This prevents unclaimable rewards from being stuck and needing to be swept later.
+
+2. `voterClaimRewards()`
+
+- Rewards for a user are calculated as: `uint256 userRewards = (userPoolVotes * totalRewards) / poolTotalVotes;`.
+- Integer division here causes rounding down, so some small reward amounts (residuals) can remain unclaimed in the pool.
+- To prevent these from being lost, the function always increments `epoch.totalRewardsClaimed` by the actual amount distributed (after flooring).
+
+This means: `residuals = epoch.totalRewardsAllocated - epoch.totalRewardsClaimed`, and these are reclaimed via `withdrawUnclaimedRewards(epoch)`.
+
+Because reward residuals are swept at the epoch level, it’s critical to always update the epoch struct in every claim function. This ensures all distributed and undistributed rewards are fully accounted for, so nothing gets stuck on the contract.
+
+3. `_claimDelegateRewards()`
+
+This function introduces multiple layers of integer division, each amplifying rounding losses:
+
+- First, `delegatePoolRewards = (delegatePoolVotes * totalPoolRewards) / totalPoolVotes;`  
+  - This calculation floors the result, so any remainder is lost.
+- Next, `userGrossRewards = (userVotesAllocatedToDelegateForEpoch * delegatePoolRewards) / delegateTotalVotesForEpoch;`  
+  - This step applies integer division again, compounding the rounding from the previous calculation.
+
+To ensure no rewards are left stranded, we sum all `userGrossRewards` and record that total in `epoch.totalRewardsClaimed`.  
+This guarantees that `epoch.totalRewardsClaimed` always matches the actual amount distributed, fully accounting for all rounding effects.
+
+*Note:*
+
+At first glance, it may look like a third source of residuals could arise in this function from the calculation: `uint256 delegateFee = userTotalGrossRewards * delegateFeePct / Constants.PRECISION_BASE;`
+
+- Since `delegateFee` uses integer division, it is always rounded down.
+- However, `userTotalNetRewards` is simply `userTotalGrossRewards` minus this floored `delegateFee`.
+- Any fractional remainder lost in the fee calculation is not lost to the contract—it is effectively added back to the user's net rewards.
+
+In other words, any rounding down in `delegateFee` directly increases `userTotalNetRewards` by the same amount, since: `userTotalNetRewards = userTotalGrossRewards - delegateFee`.
+
+**Subsidy Flow: sources of residuals**
+
+
 
 ## Delegate fee tracking for proper claiming
 

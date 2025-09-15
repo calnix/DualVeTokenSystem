@@ -573,38 +573,43 @@ contract VotingController is Pausable {
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
         require(delegateList.length > 0 && delegateList.length == poolIdsPerDelegate.length, Errors.MismatchedArrayLengths());
 
-        uint256 totalUserNetRewards;  // sum user's nets across all delegates
+        uint256 userTotalNetRewards;  // sum user's nets across all delegates
 
         for (uint256 i; i < delegateList.length; ++i) {
 
             address delegate = delegateList[i];
-            bytes32[] memory poolIds = poolIdsPerDelegate[i];
+            bytes32[] calldata poolIds = poolIdsPerDelegate[i];
 
             if (poolIds.length == 0) continue;  // skip if no pools
 
             // calculate user's total rewards earned via this delegate across all specified pools
             (uint256 userTotalNetRewardsForDelegate, uint256 delegateFee) = _claimDelegateRewards(epoch, msg.sender, delegate, poolIds);
 
-            // No per-delegate require (allow zero-net); aggregate total net
-            totalUserNetRewards += userTotalNetRewardsForDelegate;
-
             // Transfer fee to delegate (per-delegate, as in original)
             if (delegateFee > 0) {
                 _esMoca().safeTransfer(delegate, delegateFee);
-
                 emit Events.DelegateFeesClaimed(delegate, delegateFee);
             }
+
+            // increment counter
+            userTotalNetRewards += userTotalNetRewardsForDelegate;
 
         }
 
         require(totalUserNetRewards > 0, Errors.NoRewardsToClaim());  // Check aggregate net >0
 
         // Single transfer of total net to user (caller)
-        _esMoca().safeTransfer(msg.sender, totalUserNetRewards);
-        emit Events.RewardsClaimedFromDelegate(epoch, msg.sender, delegateList, poolIdsPerDelegate, totalUserNetRewards);
+        _esMoca().safeTransfer(msg.sender, userTotalNetRewards);
+        emit Events.RewardsClaimedFromDelegate(epoch, msg.sender, delegateList, poolIdsPerDelegate, userTotalNetRewards);
     }
 
-    //Note: called by delegates to claim fees from multiple delegators | batch by delegators
+    /**
+     * @notice Called by delegates to claim accumulated fees from multiple delegators. [delegator==user tt delegated votes]
+     * @dev Processes batches by delegators; each delegator's pools are specified for fee calculation and distribution.
+     * @param epoch The epoch for which delegate fees are being claimed.
+     * @param delegators Array of delegator addresses from whom fees are being claimed.
+     * @param poolIdsPerDelegator Array of poolId arrays, each corresponding to the pools voted by a specific delegator.
+     */
     function delegateClaimFeesFromDelegators(uint256 epoch, address[] calldata delegators, bytes32[][] calldata poolIdsPerDelegator) external {
         require(delegators.length > 0 && delegators.length == poolIdsPerDelegator.length, Errors.MismatchedArrayLengths());
 
@@ -615,7 +620,7 @@ contract VotingController is Pausable {
         address delegate = msg.sender;  // caller is delegate
         uint256 totalDelegateFees;      // total fees accrued by the delegate [across all delegators]
 
-        // for each delegator[user tt has delegated to this delegate/caller]
+        // for each delegator [delegator==user tt delegated votes]
         for (uint256 i; i < delegators.length; ++i) {
             address delegator = delegators[i];
             bytes32[] calldata poolIds = poolIdsPerDelegator[i];
@@ -624,20 +629,16 @@ contract VotingController is Pausable {
 
             (uint256 userTotalNetRewards, uint256 delegateFee) = _claimDelegateRewards(epoch, delegator, delegate, poolIds);
 
-            //note: No require on net>0 (allows delegates to claim fees, in the event of user having no rewards to claim)
-            //require(userTotalNetRewards > 0, Errors.NoRewardsToClaim());  
-            // @follow-up : review if we keep the require, how will residuals be reflected, and can they be swept
-
-            totalDelegateFees += delegateFee;
-
-            emit Events.RewardsForceClaimedByDelegate(epoch, delegator, delegate, poolIds, userTotalNetRewards);
+            // No require(userTotalNetRewards>0): delegates can claim fees even if user rewards are zero. Delegates fulfilled their service. 
 
             // transfer net rewards to each delegator 
             if (userTotalNetRewards > 0) {
-
                 _esMoca().safeTransfer(delegator, userTotalNetRewards);
                 emit Events.RewardsClaimedFromDelegate(epoch, delegator, delegate, poolIds, userTotalNetRewards);
             }
+
+            // increment counter
+            totalDelegateFees += delegateFee;
         }
 
         // batch transfer all accrued fees to delegate
@@ -854,7 +855,7 @@ contract VotingController is Pausable {
         uint256 totalRewards;
         for (uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
-            uint256 poolRewards = rewards[i];       // can be 0
+            uint256 poolRewards = rewards[i];       // can be 0  @follow-up why can it be 0?  so it can be marked processed
 
             // sanity check: pool exists + not processed
             require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());

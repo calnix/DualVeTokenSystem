@@ -67,7 +67,6 @@ library DataTypes {
         // rewards + subsidies
         uint128 totalRewardsAllocated;           // set+deposited in finalizeEpochRewardsSubsidies()
         uint128 totalSubsidiesDeposited;         // deposited subsidies; set in depositEpochSubsidies()
-        uint128 totalSubsidiesDistributable;     // distributable subsidies set in finalizeEpochRewardsSubsidies()
 
         // claimed: esMOCA 
         uint128 totalRewardsClaimed;   
