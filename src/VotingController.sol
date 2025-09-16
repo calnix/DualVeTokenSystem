@@ -73,7 +73,7 @@ contract VotingController is Pausable {
     // if 0: fee not set for that epoch      
     mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFeePcts;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
 
-
+    //REVIEW these 3 only get logged in claimSubsidies. that's it. for tracking purposes. nothing meaningful
     // verifier | note: optional: drop verifierData | verifierEpochData | if we want to streamline storage. only verifierEpochPoolData is mandatory
     // epoch is epoch number, not timestamp
     mapping(address verifier => uint256 totalSubsidies) public verifierData;                  
@@ -84,10 +84,13 @@ contract VotingController is Pausable {
 //-------------------------------constructor------------------------------------------
 
     constructor(address addressBook, uint256 registrationFee) {
-        ADDRESS_BOOK = IAddressBook(addressBook);
+        require(addressBook != address(0), Errors.InvalidAddress());
+        require(registrationFee > 0, Errors.InvalidAmount());
+        
+        _addressBook = IAddressBook(addressBook);
 
         // initial unclaimed delay set to 6 epochs
-        UNCLAIMED_DELAY_EPOCHS = EpochMath.EPOCH_DURATION() * 6;
+        UNCLAIMED_DELAY_EPOCHS = FEE_INCREASE_DELAY_EPOCHS = EpochMath.EPOCH_DURATION() * 6;
 
         // set registration fee
         REGISTRATION_FEE = registrationFee;
@@ -337,8 +340,7 @@ contract VotingController is Pausable {
         }
     }
 
-    //Note: when an delegate unregisters, we still need to be able to log his historical fees for users toclaim
-    // do we want to pay him for his historical fees?
+    //Note: when an delegate unregisters, we still need to be able to log his historical fees for users to claim them
     /**
      * @notice Unregister the caller as a delegate.
      * @dev Removes the delegate's registration status.
@@ -444,7 +446,6 @@ contract VotingController is Pausable {
         few delegates, many pools
         so iterate over delegates, then pools
     */
-    //Note: claimRewardsFromDelegateV2()
     /**
      * @notice Allows a user (delegator) to claim all rewards accrued from votes delegated to multiple delegates in a single transaction.
      * @dev Processes rewards in batches by delegates and their respective pools. 
@@ -462,7 +463,7 @@ contract VotingController is Pausable {
      * 
      * Emits a {RewardsClaimedFromDelegate} event and {DelegateFeesClaimed} events for each delegate with a nonzero fee.
      */
-    function delegatorsClaimRewardsFromDelegates(uint256 epoch, address[] calldata delegateList, bytes32[][] calldata poolIdsPerDelegate) external whenNotPaused {
+    function claimRewardsFromDelegate(uint256 epoch, address[] calldata delegateList, bytes32[][] calldata poolIdsPerDelegate) external whenNotPaused {
         // sanity check: epoch must be finalized + delegateList & poolIdsPerDelegate must be of the same length
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
         require(delegateList.length > 0 && delegateList.length == poolIdsPerDelegate.length, Errors.MismatchedArrayLengths());
@@ -662,7 +663,7 @@ contract VotingController is Pausable {
 
             // check if pool exists and has subsidies allocated
             require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            uint256 poolAllocatedSubsidies = epochPools[epoch][poolId].totalSubsidies;
+            uint256 poolAllocatedSubsidies = epochPools[epoch][poolId].totalRewardsAllocated;
             require(poolAllocatedSubsidies > 0, Errors.NoSubsidiesForPool());
 
             // check if already claimed
@@ -784,7 +785,7 @@ contract VotingController is Pausable {
             // Calc. subsidies for each pool | if there are subsidies for epoch + pool has votes
             if(epochTotalSubsidiesDeposited > 0 && poolVotes > 0) {
                 
-                uint256 poolSubsidies = (poolVotes * epochPtr.totalSubsidies) / epochPtr.totalVotes;
+                uint256 poolSubsidies = (poolVotes * epochPtr.totalSubsidiesDeposited) / epochPtr.totalVotes;
                 
                 // sanity check: poolSubsidies > 0; skip if floored to 0
                 if(poolSubsidies > 0) { 
@@ -922,8 +923,8 @@ contract VotingController is Pausable {
      * @param delayEpochs The new fee increase delay epochs.
      */
     function setFeeIncreaseDelayEpochs(uint256 delayEpochs) external onlyVotingControllerAdmin whenNotPaused {
-        require(delayEpochs > 0, Errors.InvalidDelayEpochs());
-        require(delayEpochs % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayEpochs());
+        require(delayEpochs > 0, Errors.InvalidDelayPeriod());
+        require(delayEpochs % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
        
         FEE_INCREASE_DELAY_EPOCHS = delayEpochs;
         emit Events.FeeIncreaseDelayEpochsUpdated(delayEpochs);
@@ -935,12 +936,12 @@ contract VotingController is Pausable {
      * @param delayEpochs The new unclaimed delay epochs.
      * This delay applied to both withdrawUnclaimedRewards and withdrawUnclaimedSubsidies
      */
-    function setUnclaimedDelay(uint256 newDelayEpoc) external onlyVotingControllerAdmin whenNotPaused {
-        require(newDelayEpoc > 0, Errors.InvalidDelay());
-        require(newDelayEpoc % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelay());
+    function setUnclaimedDelay(uint256 newDelayEpoch) external onlyVotingControllerAdmin whenNotPaused {
+        require(newDelayEpoch > 0, Errors.InvalidDelayPeriod());
+        require(newDelayEpoch % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
 
-        emit Events.UnclaimedDelayUpdated(UNCLAIMED_DELAY_EPOCHS, newDelayEpoc);
-        UNCLAIMED_DELAY_EPOCHS = newDelayEpoc;
+        emit Events.UnclaimedDelayUpdated(UNCLAIMED_DELAY_EPOCHS, newDelayEpoch);
+        UNCLAIMED_DELAY_EPOCHS = newDelayEpoch;
     }
 
     // TODO
@@ -986,19 +987,23 @@ contract VotingController is Pausable {
      * @notice Removes a pool from the protocol.
      * @dev Only callable by VotingController admin.
      *
-     * Removal behavior:
-     * 1. If called during an epoch and before `finalize()`, users cannot allocate votes to the pool, but can migrate votes elsewhere.
-     *   - `finalize()` will revert on removed pools (`isRemoved = true`), so these pools will not receive subsidies or rewards.
-     *   - Votes and verifiers cannot claim anything from removed pools.
+     * Pool removal is only permitted before `depositSubsidies()` is called for the current epoch.
+     * 
+     * This restriction prevents race conditions with `TOTAL_NUMBER_OF_POOLS` during end-of-epoch operations.
+     * If a pool is removed while `finalizeEpoch` is running, the check `poolsFinalized == TOTAL_NUMBER_OF_POOLS` could fail,
+     * potentially leaving the epoch in an unfinalizable state.
      *
-     * 2. If called after the pool has been processed in `finalize()`, the pool has already been allocated rewards and subsidies (if it had votes).
-     *   - Claims for past rewards/subsidies remain possible; no `isRemoved` check is enforced in claiming functions.
-     *   - This signals a final payout and permanent deactivation; the pool will not participate in future rewards or subsidies.
-     * @param poolId The identifier of the pool to remove.
+     * To ensure protocol safety, pool removal is blocked once subsidies are deposited, signaling that end-of-epoch
+     * operations are underway and pool set must remain static.
+     *
+     * @param poolId The unique identifier of the pool to remove.
      */
     function removePool(bytes32 poolId) external onlyVotingControllerAdmin whenNotPaused {
         require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
         
+        // pool removal not allowed before finalizeEpochRewardsSubsidies() - else, TOTAL_NUMBER_OF_POOLS will be off and epoch will be never finalized
+        require(!epochs[EpochMath.getCurrentEpochNumber()].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
+
         pools[poolId].isRemoved = true;
 
         --TOTAL_NUMBER_OF_POOLS;    
@@ -1122,15 +1127,15 @@ contract VotingController is Pausable {
 
 
     function _veMoca() internal view returns (IVotingEscrowMoca){
-        return IVotingEscrowMoca(ADDRESS_BOOK.getVotingEscrowMoca());
+        return IVotingEscrowMoca(_addressBook.getVotingEscrowMoca());
     }
 
     function _esMoca() internal view returns (IERC20){
-        return IERC20(ADDRESS_BOOK.getEscrowedMoca());
+        return IERC20(_addressBook.getEscrowedMoca());
     }
 
     function _moca() internal view returns (IERC20){
-        return IERC20(ADDRESS_BOOK.getMoca());
+        return IERC20(_addressBook.getMoca());
     }
 
 //-------------------------------Modifiers---------------------------------------------------------------

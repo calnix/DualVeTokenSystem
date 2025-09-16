@@ -37,6 +37,7 @@ library Errors {
 
 
 // --------- VotingController.sol ---------
+    error EpochNotEnded();
     error EpochFinalized();
     error NoAvailableVotes();
     error InvalidFeePct();
@@ -73,6 +74,9 @@ library Errors {
     error CanOnlyWithdrawUnclaimedAfterDelay();
     // withdrawRegistrationFees
     error NoRegistrationFeesToWithdraw();
+
+    // removePool
+    error EndOfEpochOpsUnderway();
 
 
 }

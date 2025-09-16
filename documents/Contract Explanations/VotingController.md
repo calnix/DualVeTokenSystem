@@ -111,7 +111,7 @@ Additionally, this gives us the freedom to deposit rewards discretionally; can i
 
 ____
 
-# **1. Contract Overview**
+# 1. **Contract Overview**
 
 ## Dual-accounting model [mappings]
 
@@ -263,7 +263,7 @@ Voters vote on credential pools in Epoch N:
 
 
 
-# **2. Design choices**
+# 2. **Design choices**
 
 ## Rewards & Subsidies: Optimal Distribution
 
@@ -395,7 +395,38 @@ To achieve this, we introduce a new struct `OmnibusDelegateAccount` for `userDel
 
 This design enables flexible, granular claiming while maintaining strict double-claim prevention.
 
-# **3. Contract Functions Walkthrough**
+## Overflow concerns
+
+Possible sources of integer overflow:
+
+1. `_claimDelegateRewards()`: 
+    - `uint256 delegatePoolRewards = (delegatePoolVotes * totalPoolRewards) / totalPoolVotes;`
+    - `uint256 userGrossRewards = (userVotesAllocatedToDelegateForEpoch * delegatePoolRewards) / delegateTotalVotesForEpoch;`
+
+However,
+**Token Economics Constraints [Mathematical Analysis]**
+- MOCA Total Supply: 8,888,888,888 tokens
+- With 18 decimals: 8.888 × 10²⁷
+- Maximum delegate fee: 100% = 10,000 (based on PRECISION_BASE)
+- uint256 maximum: 2²⁵⁶ - 1 ≈ 1.16 × 10⁷⁷
+
+**Overflow Calculation [Worst-case theoretical scenario]:**
+
+Using as example: `uint256 delegateFee = userTotalGrossRewards * delegateFeePct / Constants.PRECISION_BASE;`
+
+- Maximum possible multiplication = 8.888 × 10²⁷ × 10,000 = 8.888 × 10³¹
+- Safety margin = (1.16 × 10⁷⁷) / (8.888 × 10³¹) = 1.3 × 10⁴⁶
+
+**Conclusion: Integer Overflow Risk**
+
+Overflow is not a concern in fee/rewards/subsidy calculations:
+- **Token supply is capped:** MOCA’s total supply is fixed and known.
+- **Delegate fees are limited:** Fee percentages have strict upper bounds.
+- **Enormous safety margin:** Even in the most extreme case, calculations are 46 orders of magnitude below the overflow limit for uint256.
+
+Given these constraints, overflow is mathematically impossible in this context. No extra overflow checks are needed for delegate fee math.
+
+# 3. **Contract Functions Walkthrough**
 
 ## Constructor
 
@@ -445,7 +476,7 @@ All voting activity—whether personal or delegated—is tracked for each addres
 
 
 
-# **4. Execution flow**
+# 4. **Execution flow**
 
 ## At the end of epoch
 
@@ -506,19 +537,13 @@ After finalizeEpochRewardsSubsidies is completed, and the flag `isFinalized` is 
 
 ## Removing a pool
 
-**1. when we remove pool during epoch [before `finalize()`]:**
-- users can no longer allocate votes to it. 
-- users can migrate votes from a removed pool to another pool
-- finalize will revert on pools that are removed: `isRemoved = true`.
-    - as a result these pools will not receive subsidies or rewards
-    - votes and verifiers cannot claim anything from these removed pools
+Pool can only be removed before `depositSubsidies()` is called.
 
-**2. when we remove pool after it has been processed in `finalize()`:**
-- it has been allocated both rewards and subsidies [assuming it had votes]
-- if we block claiming via `require(!pools[poolId].isRemoved, Errors.PoolRemoved());`, actors will be unable to claim past rewards/subsidies, before pool was removed.
-- so we will not implement this check in the claiming functions. 
+Pool removal is restricted before `depositSubsidies()` to avoid race conditions with `TOTAL_NUMBER_OF_POOLS`.
 
-If the admin removes a pool after it has already been finalized (i.e., after rewards and subsidies have been allocated via finalize), this signals a deliberate final payout. The pool is intended to receive its last distribution, after which it will be permanently deactivated and no longer participate in future rewards or subsidies.
+Why: If a pool is removed while `finalizeEpoch` is running, the check `poolsFinalized == TOTAL_NUMBER_OF_POOLS` can break—potentially locking the epoch in an unfinalizable state.
+
+Solution: Pool removal is blocked once subsidies are deposited, as this is an indicator that End of Epoch operations are underway.
 
 ## Delegate Unregistering [arbitrarily]
 
@@ -528,7 +553,7 @@ If the admin removes a pool after it has already been finalized (i.e., after rew
 3. Delegate will be allowed to claim fees accrued for prior epochs, before unregistration.
 4. Correspondingly, delegators will pay those fees, for those periods, as the delegate was active and serviced them.
 
-**A delegate cannot unregister when he has allocated votes?**
+**A delegate cannot unregister when he has allocated votes**
 
 In `unregisterAsDelegate`, we implement the check: `require(delegateEpochData[currentEpoch][msg.sender].totalVotesSpent == 0, Errors.CannotUnregisterWithActiveVotes());`.
 - This prevents partial voting scenarios where a delegate allocates some votes, unregisters, resulting in uncertainty for claiming. 

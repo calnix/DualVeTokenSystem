@@ -1,11 +1,6 @@
 
 # ---- Problems to fix:
 
-the delegate problem
-
-1. when a delegate unregisters himself, he can no longer vote/migrateVotes on behalf of delegators
-2. users will have to manually undelegate all of their locks from this delegate [via `VotingEscrowMoca.undelegatelock`] -> this should be facilitated by both the FE and an alert system, notifying users.
-3. 
 
 -----
 
