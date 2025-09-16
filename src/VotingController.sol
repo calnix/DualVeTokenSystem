@@ -1176,23 +1176,42 @@ contract VotingController is Pausable {
 
 //-------------------------------risk functions----------------------------------------------------------
 
+    /**
+     * @notice Pause the contract.
+     * @dev Only callable by the Monitor [bot script].
+     */
     function pause() external whenNotPaused onlyMonitor {
         if(isFrozen == 1) revert Errors.IsFrozen(); 
         _pause();
     }
 
+    /**
+     * @notice Unpause the contract.
+     * @dev Only callable by the Global Admin [multi-sig].
+     */
     function unpause() external whenPaused onlyGlobalAdmin {
         if(isFrozen == 1) revert Errors.IsFrozen(); 
         _unpause();
     }
 
+    /**
+     * @notice Freeze the contract.
+     * @dev Only callable by the Global Admin [multi-sig].
+     *      This is a kill switch function
+     */
     function freeze() external whenPaused onlyGlobalAdmin {
         if(isFrozen == 1) revert Errors.IsFrozen();
         isFrozen = 1;
         emit Events.ContractFrozen();
     }
 
-    // exfil assets on contract: rewards + subsidies | disregard all claims and do not make any updates
+    /**
+     * @notice Exfiltrate all contract-held assets (rewards + subsidies + registration fees) to the treasury.
+     * @dev Disregards all outstanding claims and does not update any contract state.
+     *      Intended for emergency use only when the contract is frozen.
+     *      Only callable by the Emergency Exit Handler [bot script].
+     *      This is a kill switch function
+     */
     function emergencyExit() external onlyEmergencyExitHandler {
         if(isFrozen == 0) revert Errors.NotFrozen();
 
