@@ -531,19 +531,17 @@ If the admin removes a pool after it has already been finalized (i.e., after rew
 **A delegate cannot unregister when he has allocated votes?**
 
 In `unregisterAsDelegate`, we implement the check: `require(delegateEpochData[currentEpoch][msg.sender].totalVotesSpent == 0, Errors.CannotUnregisterWithActiveVotes());`.
-
-This prevents partial voting scenarios where a delegate allocates some votes, unregisters, resulting in uncertainty for claiming. 
-If they have no votes in the current epoch, unregistration is allowed, and they can still claim past fees later.
+- This prevents partial voting scenarios where a delegate allocates some votes, unregisters, resulting in uncertainty for claiming. 
+- If they have no votes in the current epoch, unregistration is allowed; they can still claim fees from prior epochs.
 
 > While can allow for delegates to unregister after placing some votes and modify the system to handle it accurately. The above is simpler and leads to less concerns of edge cases and complexity.
 
-Has allocated some votes; but cannot allocate anymore votes.
-- Votes already allocated remain in place and count toward rewards/subsidies.
-- No further voting or migration is possible for that epoch.
-- Delegator able to claim fees for allocated votes, after epoch finalization, independent of registration status at claim time.
+We intentionally do not check if a delegate is currently registered in `claimDelegateFees()`. Instead, we require that `delegateHistoricalFeePcts[msg.sender][epoch] > 0`.
+If it is non-zero, that means the delegate voted in that epoch (when they vote, their delegate fee is logged), and there are fees to claim.
 
-This is why we do not implement `require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());` in `claimDelegateFees`
-Claiming occurs after epoch finalization and works based on allocated votes, independent of registration status at claim time (with the above change).
+If a delegate didn’t vote in a given epoch, no fee is recorded, so no claim is possible. (Delegates cannot set a zero fee.)
+
+With this approach, fee claims are always based on historical voting activity and finalized epochs, not on whether the delegate is still registered at claim time.
 
 # **5. RISK**
 
