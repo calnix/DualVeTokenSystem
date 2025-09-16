@@ -99,7 +99,7 @@ Note:
 ```
 *Question: if we remove scheme mid-epoch how does that impact subsidies when distributed?*
 
-## Voting Rewards
+## Voters and Rewards
 
 Voting rewards are financed based on verification fees accrued for a pool
 - i.e. rewards are strictly per-pool (unique to each pool's accrued verification fees, including possible 0 for some pools)
@@ -108,8 +108,6 @@ We have to reference PaymentsController to know how much rewards each pool accru
 We opted to not have the VotingController and PaymentsController call each other for relevant updates, to for secure modularity, which will aid in updating contracts piecemeal.
 
 Additionally, this gives us the freedom to deposit rewards discretionally; can increase or decrease rewards as we see fit.
-
-----
 
 ____
 

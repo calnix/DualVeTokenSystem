@@ -1107,20 +1107,6 @@ contract VotingController is Pausable {
 
 //-------------------------------view functions----------------------------------------------------------
 
-    //TODO: update logic
-    function getEligibleSubsidy(address verifier, uint128 epoch, bytes32[] calldata poolIds) external view returns (uint128[] memory) {
-        require(poolIds.length > 0, "No pools specified");
-        require(epoch < getCurrentEpoch(), "Cannot query for current or future epochs");
-        
-        require(epochs[epoch].isFullyFinalized, "Epoch not finalized");
-            
-        eligibleSubsidies = new uint128[](poolIds.length);
-        
-    }
-
-    // function previewRewards??
-
-
     function getAddressBook() external view returns (IAddressBook) {
         return _addressBook;
     }
@@ -1132,13 +1118,23 @@ contract VotingController is Pausable {
      * @param user The address of the user.
      * @param delegate The address of the delegate.
      * @param poolIds The array of pool identifiers to query.
-     * @return grossRewards Array of gross rewards for each poolId.
+     * @return grossRewardsPerPool Array of gross rewards for each poolId.
+     * @return totalGrossRewards Total gross rewards for the user-delegate pair.
      */
-    function getUserDelegatePoolGrossRewards(uint256 epoch, address user, address delegate, bytes32[] calldata poolIds) external view returns (uint128[] memory grossRewards) {
-        grossRewards = new uint128[](poolIds.length);
+    function getUserDelegatePoolGrossRewards(uint256 epoch, address user, address delegate, bytes32[] calldata poolIds) external view returns (uint128[] memory, uint128) {
+        require(poolIds.length > 0, Errors.InvalidArray());
+        require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
+
+        uint128[] memory grossRewardsPerPool = new uint128[](poolIds.length);
+        
+        // fetch gross rewards for each poolId
+        uint256 totalGrossRewards;
         for (uint256 i; i < poolIds.length; ++i) {
-            grossRewards[i] = userDelegateAccounting[epoch][user][delegate].poolGrossRewards[poolIds[i]];
+            grossRewardsPerPool[i] = userDelegateAccounting[epoch][user][delegate].poolGrossRewards[poolIds[i]];
+            totalGrossRewards += grossRewardsPerPool[i];
         }
+    
+        return (grossRewardsPerPool, totalGrossRewards);
     }
 
 }
