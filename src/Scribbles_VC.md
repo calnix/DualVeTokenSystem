@@ -3,26 +3,9 @@
 
 the delegate problem
 
-## roles in VotingController
-
-- role to change contract params: createPool, removePool, setPoolStatus [VOTING_CONTROLLER_ADMIN_ROLE]
-- role for assets: depositSubsidies(), FinalizeEpoch(), withdrawUnclaimedX [subsidies + rewards]
-- pause: MONITOR_ROLE
-- unpause: [isGlobalAdmin] [check_imple]
-- freeze: [isGlobalAdmin]
-- emergencyExit: [EMERGENCY_EXIT_HANDLER_ROLE]
-
-## risk fns
-
-- unpause: isGlobalAdmin
-- freeze: isGlobalAdmin
-- emergencyExit: EMERGENCY_EXIT_HANDLER_ROLE
-
-## Risk hierarchy
-
-1. Global Admin [unpause, freeze]
-2. Contract-level admins which can make changes to contract parameters + configuration
-
+1. when a delegate unregisters himself, he can no longer vote/migrateVotes on behalf of delegators
+2. users will have to manually undelegate all of their locks from this delegate [via `VotingEscrowMoca.undelegatelock`] -> this should be facilitated by both the FE and an alert system, notifying users.
+3. 
 
 -----
 

@@ -49,6 +49,7 @@ library Errors {
     error DelegateAlreadyRegistered();
     error DelegateNotRegistered();
     error NoFeesToClaim();
+    error CannotUnregisterWithActiveVotes();
     //claimRewards
     error NoRewardsToClaim();
     //claimSubsidies

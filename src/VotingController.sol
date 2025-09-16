@@ -71,7 +71,7 @@ contract VotingController is Pausable {
     // Delegate registration data + fee data
     mapping(address delegate => DataTypes.Delegate delegate) public delegates;     
     // if 0: fee not set for that epoch      
-    mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFees;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFeePcts;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
 
 
     // verifier | note: optional: drop verifierData | verifierEpochData | if we want to streamline storage. only verifierEpochPoolData is mandatory
@@ -155,7 +155,7 @@ contract VotingController is Pausable {
             uint128 votes = poolVotes[i];
 
             // sanity check: do not skip on 0 vote, as it indicates incorrect array inputs
-            require(votes > 0, Errors.ZeroVote()); 
+            require(votes > 0, Errors.ZeroVotes()); 
             
             // sanity checks: pool exists, is active
             require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
@@ -189,9 +189,7 @@ contract VotingController is Pausable {
      * @param poolVotes Array of vote amounts to migrate for each pool pair.
      * @param isDelegated Boolean indicating if the migration is for delegated votes.
      * If isDelegated: true, caller must be registered as delegate
-     * Emits a {VotesMigrated} event on success.
-     * Reverts if input array lengths mismatch, pools do not exist, destination pool is not active,
-     * insufficient votes in source pool, or epoch is finalized.
+     * Reverts if input array lengths mismatch, pools do not exist, destination pool is not active, insufficient votes in source pool, or epoch is finalized.
      */
     function migrateVotes(bytes32[] calldata srcPoolIds, bytes32[] calldata dstPoolIds, uint128[] calldata poolVotes, bool isDelegated) external whenNotPaused {
         require(srcPoolIds.length > 0, Errors.InvalidArray());
@@ -352,6 +350,8 @@ contract VotingController is Pausable {
     function unregisterAsDelegate() external whenNotPaused {
         Delegate storage delegate = delegates[msg.sender];
         
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        require(delegateEpochData[currentEpoch][msg.sender].totalVotesSpent == 0, Errors.CannotUnregisterWithActiveVotes());
         require(delegate.isRegistered, Errors.DelegateNotRegistered());
         
         // storage: unregister delegate
@@ -440,12 +440,10 @@ contract VotingController is Pausable {
 
 
 
-/**
-    few delegates, many pools
-    so iterate over delegates, then pools
- */
-
-
+    /**
+        few delegates, many pools
+        so iterate over delegates, then pools
+    */
     //Note: claimRewardsFromDelegateV2()
     /**
      * @notice Allows a user (delegator) to claim all rewards accrued from votes delegated to multiple delegates in a single transaction.
@@ -492,14 +490,13 @@ contract VotingController is Pausable {
 
         }
 
-        require(totalUserNetRewards > 0, Errors.NoRewardsToClaim());  // Check aggregate net >0
+        require(userTotalNetRewards > 0, Errors.NoRewardsToClaim());  // Check aggregate net >0
 
         // Single transfer of total net to user (caller)
         _esMoca().safeTransfer(msg.sender, userTotalNetRewards);
         emit Events.RewardsClaimedFromDelegate(epoch, msg.sender, delegateList, poolIdsPerDelegate, userTotalNetRewards);
     }
 
-    //Note: claimDelegateFeesFromDelegators()
     /**
      * @notice Called by delegates to claim accumulated fees from multiple delegators. [delegator==user tt delegated votes]
      * @dev Processes batches by delegators; each delegator's pools are specified for fee calculation and distribution.
@@ -507,12 +504,13 @@ contract VotingController is Pausable {
      * @param delegators Array of delegator addresses from whom fees are being claimed.
      * @param poolIdsPerDelegator Array of poolId arrays, each corresponding to the pools voted by a specific delegator.
      */
-    function delegateClaimFeesFromDelegators(uint256 epoch, address[] calldata delegators, bytes32[][] calldata poolIdsPerDelegator) external whenNotPaused {
+    function claimDelegateFees(uint256 epoch, address[] calldata delegators, bytes32[][] calldata poolIdsPerDelegator) external whenNotPaused {
         require(delegators.length > 0 && delegators.length == poolIdsPerDelegator.length, Errors.MismatchedArrayLengths());
 
-        // caller must be a registered delegate + epoch must be finalized
-        require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());
+        // epoch must be finalized
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
+        // sanity check: if delegate did not vote in the epoch, fee is not set -> nothing to claim
+        require(delegateHistoricalFeePcts[msg.sender][epoch] > 0, Errors.NoFeesToClaim());
 
         address delegate = msg.sender;  // caller is delegate
         uint256 totalDelegateFees;      // total fees accrued by the delegate [across all delegators]
@@ -841,7 +839,7 @@ contract VotingController is Pausable {
      */
     function withdrawUnclaimedRewards(uint256 epoch) external onlyAssetManager whenNotPaused {
         // sanity check: withdraw delay must have passed
-        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
+        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
         
         // sanity check: epoch must be finalized [pool exists implicitly]
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
@@ -868,7 +866,7 @@ contract VotingController is Pausable {
      */
     function withdrawUnclaimedSubsidies(uint256 epoch) external onlyAssetManager whenNotPaused {
         // sanity check: withdraw delay must have passed
-        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_SUBSIDIES_DELAY, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
+        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
 
         // sanity check: epoch must be finalized
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
@@ -938,11 +936,11 @@ contract VotingController is Pausable {
      * This delay applied to both withdrawUnclaimedRewards and withdrawUnclaimedSubsidies
      */
     function setUnclaimedDelay(uint256 newDelayEpoc) external onlyVotingControllerAdmin whenNotPaused {
-        require(newDelayEpochs > 0, Errors.InvalidDelay());
-        require(newDelayEpochs % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelay());
+        require(newDelayEpoc > 0, Errors.InvalidDelay());
+        require(newDelayEpoc % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelay());
 
-        emit Events.UnclaimedDelayUpdated(UNCLAIMED_DELAY_EPOCHS, newDelayEpochs);
-        UNCLAIMED_DELAY_EPOCHS = newDelayEpochs;
+        emit Events.UnclaimedDelayUpdated(UNCLAIMED_DELAY_EPOCHS, newDelayEpoc);
+        UNCLAIMED_DELAY_EPOCHS = newDelayEpoc;
     }
 
     // TODO

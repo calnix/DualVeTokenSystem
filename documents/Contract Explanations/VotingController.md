@@ -223,31 +223,6 @@ Delegate fees are calculated on users' total gross rewards across multiple pools
 
 
 
-## Delegate Leader Unregisters Mid-Epoch With Active Votes
-
-1. Alice unregisters as delegate
-2. Alice cannot accept new delegations
-3. Alice cannot vote with delegated votes - effective immediately.
-4. Users who delegated will not regain their voting power - they must manually call undelegate() function on VotingEscrowedMoca.sol
-
-### delegate fees
-
-problem on delegate fees:
-- delegate changes fees in epoch N
-- user claims rewards from his delegated votes, for epoch N-2
-- user would be paying fees as per the latest fee update
-- essentially, fees are a static reference. they aren't indexed on an epoch basis.
-
-when claiming,
-- get epoch:fee, by referencing _delegateHistoricalFees
-
-how would _delegateHistoricalFees be populated
-- register() -> _delegateHistoricalFees[currentEpoch][fee]
-- updateFee() -> _delegateHistoricalFees[currentEpoch][newFee]
-
-but what about the epochs where no fee change occurred? 
-- how do we get the fee, since the mapping would return 0 for those epochs?
-
 
 
 
@@ -545,6 +520,52 @@ After finalizeEpochRewardsSubsidies is completed, and the flag `isFinalized` is 
 
 If the admin removes a pool after it has already been finalized (i.e., after rewards and subsidies have been allocated via finalize), this signals a deliberate final payout. The pool is intended to receive its last distribution, after which it will be permanently deactivated and no longer participate in future rewards or subsidies.
 
+## Delegate Unregistering [arbitrarily]
+
+1. After unregistration, delegates cannot vote or migrate votes on behalf of delegators, as the registration check in vote() and migrateVotes() prevents this.
+2. Users must manually undelegate their locks via `VotingEscrowMoca.undelegateLock();` this should be supported by frontend notifications and alerts.
+    - else the previously delegated votes would be a deadweight loss.
+3. Delegate will be allowed to claim fees accrued for prior epochs, before unregistration.
+4. Correspondingly, delegators will pay those fees, for those periods, as the delegate was active and serviced them.
+
+**A delegate cannot unregister when he has allocated votes?**
+
+In `unregisterAsDelegate`, we implement the check: `require(delegateEpochData[currentEpoch][msg.sender].totalVotesSpent == 0, Errors.CannotUnregisterWithActiveVotes());`.
+
+This prevents partial voting scenarios where a delegate allocates some votes, unregisters, resulting in uncertainty for claiming. 
+If they have no votes in the current epoch, unregistration is allowed, and they can still claim past fees later.
+
+> While can allow for delegates to unregister after placing some votes and modify the system to handle it accurately. The above is simpler and leads to less concerns of edge cases and complexity.
+
+Has allocated some votes; but cannot allocate anymore votes.
+- Votes already allocated remain in place and count toward rewards/subsidies.
+- No further voting or migration is possible for that epoch.
+- Delegator able to claim fees for allocated votes, after epoch finalization, independent of registration status at claim time.
+
+This is why we do not implement `require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());` in `claimDelegateFees`
+Claiming occurs after epoch finalization and works based on allocated votes, independent of registration status at claim time (with the above change).
+
+# **5. RISK**
+
+## Risk hierarchy
+
+1. Global Admin [unpause, freeze]
+2. Contract-level admins which can make changes to contract parameters + configuration
+
+## roles in VotingController
+
+- role to change contract params: createPool, removePool, setPoolStatus [VOTING_CONTROLLER_ADMIN_ROLE]
+- role for assets: depositSubsidies(), FinalizeEpoch(), withdrawUnclaimedX [ASSET_MANAGER_ROLE]
+- pause: [MONITOR_ROLE]
+- unpause: [isGlobalAdmin] [check_imple]
+- freeze: [isGlobalAdmin]
+- emergencyExit: [EMERGENCY_EXIT_HANDLER_ROLE]
+
+## risk fns
+
+- unpause: isGlobalAdmin
+- freeze: isGlobalAdmin
+- emergencyExit: EMERGENCY_EXIT_HANDLER_ROLE
 
 # *Appendix*
 

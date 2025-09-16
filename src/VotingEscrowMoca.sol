@@ -277,6 +277,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             This problem does not occur when users' are createLock(isDelegated) 
         */
 
+        //note: use array for locks
         /**
          * @notice Delegates a lock's voting power to a registered delegate
          * @dev Only the lock creator can delegate. The lock must not be expired or already delegated
@@ -342,6 +343,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             //emit LockDelegated(lockId, msg.sender, delegate);
         }
 
+        //note: use array for locks
         /**
          * @notice Undelegates a lock's voting power from a registered delegate
          * @dev Only the lock creator can undelegate. The lock must be currently delegated and not expired.
