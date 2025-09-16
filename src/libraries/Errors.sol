@@ -4,6 +4,7 @@ pragma solidity ^0.8.27;
 library Errors {
 
     // --------- Generic ---------
+    error InvalidId();
     error InvalidUser(); 
     error InvalidAmount();
     error InvalidAddress();
@@ -14,13 +15,12 @@ library Errors {
     error InvalidFeePercentage();
     error InvalidDelayPeriod();
     error IsFrozen();
-
+    
     // Access control
     error CallerNotRiskOrPoolAdmin();
 
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
-    error InvalidId();
     error SignatureExpired();
     error NoClaimableFees();
     error InvalidSchemaFee();
@@ -42,8 +42,9 @@ library Errors {
     error InvalidFeePct();
     error ZeroVotes();
     error PoolDoesNotExist();
-    error PoolNotActive();
+    error PoolRemoved();
     error InsufficientVotes();
+
     // delegation
     error DelegateAlreadyRegistered();
     error DelegateNotRegistered();
@@ -69,10 +70,8 @@ library Errors {
     
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards
     error CanOnlyWithdrawUnclaimedAfterDelay();
-    // depositRewards
-    error NoRewardsAccrued();
-    //sweepUnclaimedRewards
-    error CanOnlySweepUnclaimedRewardsAfterDelay();
-    error NoUnclaimedRewardsToSweep();
+    // withdrawRegistrationFees
+    error NoRegistrationFeesToWithdraw();
+
 
 }

@@ -22,10 +22,9 @@ contract AddressBook is Ownable2Step {
     bytes32 private constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
     
     // Controllers
-    //bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
     bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
     bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
-    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER';   //OmPm.sol
+    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER'; 
     bytes32 private constant ROUTER = 'ROUTER';
     
     // Treasury

@@ -17,9 +17,8 @@ library Events {
 
 // --------- VotingController.sol ---------
     // createPool(), removePool()
-    event PoolCreated(bytes32 indexed poolId, bool isActive);
+    event PoolCreated(bytes32 indexed poolId);
     event PoolRemoved(bytes32 indexed poolId);
-    event PoolStatusSet(bytes32 indexed poolId, bool isActive);
 
     // vote(), migrateVotes()
     event Voted(uint256 indexed epoch, address indexed caller, bytes32[] poolIds, uint256[] votes, bool isDelegated);
@@ -46,10 +45,11 @@ library Events {
     event SubsidiesDeposited(address indexed depositor, uint256 epoch, uint256 totalSubsidies);
     event SubsidiesSet(uint256 indexed epoch, uint256 totalSubsidies);
 
-    // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards
+    // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards & withdrawRegistrationFees
     event UnclaimedRewardsWithdrawn(address indexed treasury, uint256 indexed epoch, uint256 unclaimedRewards);
     event UnclaimedSubsidiesWithdrawn(address indexed treasury, uint256 indexed epoch, uint256 unclaimedSubsidies);
-   
+    event RegistrationFeesWithdrawn(address indexed treasury, uint256 claimableRegistrationFees);
+
     // setMaxDelegateFeePct
     event MaxDelegateFeePctUpdated(uint256 maxDelegateFeePct);
     // setFeeIncreaseDelayEpochs
@@ -64,8 +64,8 @@ library Events {
     event EpochPartiallyFinalized(uint256 indexed epoch, bytes32[] poolIds);
     event EpochFullyFinalized(uint256 indexed epoch);
 
-    // sweepUnclaimedRewards
-    event UnclaimedRewardsSwept(uint256 indexed epoch, bytes32[] poolIds, uint256 unclaimedRewards);
+    // emergencyExit
+    event EmergencyExit(address indexed treasury);
 
 // --------- PaymentsController.sol ---------
     event IssuerCreated(bytes32 indexed issuerId, address adminAddress, address assetAddress);

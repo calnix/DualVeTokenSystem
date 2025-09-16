@@ -34,20 +34,28 @@ contract AccessController is AccessControl {
             );
     */
     
-    // ROLES w/ scripts
-    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");   // only pause | attached to script
-    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE"); // createLockFor | attached to script
-    bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // emergencyExit | attached to script
+    // ROLES: attached to scripts
+    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");    // only pause
+    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");  // createLockFor
+    bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // emergencyExit
     
-    
+    // Roles for making changes to contract parameters + configuration [multi-sig]
     bytes32 private constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256('PAYMENTS_CONTROLLER_ADMIN_ROLE'); 
     bytes32 private constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256('VOTING_CONTROLLER_ADMIN_ROLE');    
-
-    bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params | attached to script
+    
+    // asset management roles [multi-sig]
+    // for depositing/withdrawing assets across various contracts
+    bytes32 private constant ASSET_MANAGER_ROLE = keccak256('ASSET_MANAGER_ROLE');
 
     // ROLES w/o scripts
     bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
 
+    
+    // do we need these:
+    //bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params | attached to script
+
+
+//-------------------------------constructor-----------------------------------------
 
     /**
      * @dev Constructor
@@ -60,12 +68,12 @@ contract AccessController is AccessControl {
 
         // global admin: DEFAULT_ADMIN_ROLE
         address globalAdmin = _addressBook.getGlobalAdmin();
-        require(globalAdmin != address(0), Errors.GlobalAdminCannotBeZero());
+        require(globalAdmin != address(0), Errors.InvalidAddress());
 
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
     }
 
-// ----- external -----
+// ----- external functions -----
 
     /**
      * @notice Sets the admin role for a specific role
@@ -73,7 +81,7 @@ contract AccessController is AccessControl {
      * @param role The role whose administrator is being updated
      * @param adminRole The new administrator role for the specified role
     */
-    function setRoleAdmin(bytes32 role, bytes32 adminRole) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setRoleAdmin(bytes32 role, bytes32 adminRole) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRoleAdmin(role, adminRole);
     }
 
@@ -104,6 +112,7 @@ contract AccessController is AccessControl {
     //      MONITOR_ROLE_ADMIN can be a 2/2 multisig, within just the engineers
 
     function addMonitor(address addr) external {
+        require(addr != address(0), Errors.InvalidAddress());
         grantRole(MONITOR_ROLE, addr);
     }
 
@@ -133,10 +142,12 @@ contract AccessController is AccessControl {
 // ----- EMERGENCY_EXIT ROLE -----
 
     function addEmergencyExitHandler(address addr) external {
+        require(addr != address(0), Errors.InvalidAddress());
         grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
     }
 
     function removeEmergencyExitHandler(address addr) external {
+        require(addr != address(0), Errors.InvalidAddress());
         revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
     }
 
@@ -162,10 +173,12 @@ contract AccessController is AccessControl {
 // ----- VotingController Admin -----
 
     function addVotingControllerAdmin(address addr) external {
+        require(addr != address(0), Errors.InvalidAddress());
         grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
     }
 
     function removeVotingControllerAdmin(address addr) external {
+        require(addr != address(0), Errors.InvalidAddress());
         revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
     }
 
@@ -174,9 +187,26 @@ contract AccessController is AccessControl {
     }
 
 
-// ----- OPERATOR ROLE -----
+// ----- ASSET_MANAGER ROLE -----
 
+    function addAssetManager(address addr) external {
+        require(addr != address(0), Errors.InvalidAddress());
+        grantRole(ASSET_MANAGER_ROLE, addr);
+    }
+    
+    function removeAssetManager(address addr) external {
+        require(addr != address(0), Errors.InvalidAddress());
+        revokeRole(ASSET_MANAGER_ROLE, addr);
+    }
+
+    function isAssetManager(address addr) external view returns (bool) {
+        return hasRole(ASSET_MANAGER_ROLE, addr);
+    }
+
+// ----- OPERATOR ROLE -----
+/*
     function addOperator(address addr) external {
+        require(addr != address(0), Errors.InvalidAddress());
         grantRole(OPERATOR_ROLE, addr);
     }
 
@@ -188,9 +218,10 @@ contract AccessController is AccessControl {
         return hasRole(OPERATOR_ROLE, addr);
     }
 
+*/
 
 
-
+// ----- modifiers -----
 
 }
 

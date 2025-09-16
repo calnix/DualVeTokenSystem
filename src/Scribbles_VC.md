@@ -1,11 +1,28 @@
 
 # ---- Problems to fix:
 
+the delegate problem
+
 ## roles in VotingController
+
+- role to change contract params: createPool, removePool, setPoolStatus [VOTING_CONTROLLER_ADMIN_ROLE]
+- role for assets: depositSubsidies(), FinalizeEpoch(), withdrawUnclaimedX [subsidies + rewards]
+- pause: MONITOR_ROLE
+- unpause: [isGlobalAdmin] [check_imple]
+- freeze: [isGlobalAdmin]
+- emergencyExit: [EMERGENCY_EXIT_HANDLER_ROLE]
 
 ## risk fns
 
-## view fns
+- unpause: isGlobalAdmin
+- freeze: isGlobalAdmin
+- emergencyExit: EMERGENCY_EXIT_HANDLER_ROLE
+
+## Risk hierarchy
+
+1. Global Admin [unpause, freeze]
+2. Contract-level admins which can make changes to contract parameters + configuration
+
 
 -----
 
@@ -17,6 +34,10 @@
 
 can the `totalRewards` in usersEpochData be diff. from sum of usersEpochPoolData? 
 i.e. inconsistency in calculation
+
+
+2. ids can be bytes32(0), via generateId()
+- check if any fns are blocked cos  bytes32(0) is passed as id
 
 -----
 

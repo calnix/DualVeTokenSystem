@@ -114,7 +114,7 @@ contract PaymentsController is EIP712, Pausable {
         {
             uint256 salt = block.number; 
             issuerId = _generateId(salt, msg.sender, assetAddress);
-            // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
+            // generated id must be unique: if used by issuer, verifier or schema, generate new Id
             while (_issuers[issuerId].issuerId != bytes32(0) || _verifiers[issuerId].verifierId != bytes32(0) || _schemas[issuerId].schemaId != bytes32(0)) {
                 issuerId = _generateId(++salt, msg.sender, assetAddress); 
             }

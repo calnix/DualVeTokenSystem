@@ -82,7 +82,7 @@ library DataTypes {
     // Pool data [global]
     struct Pool {
         bytes32 poolId;         // poolId = credentialId  
-        bool isActive;          // active+inactive: pause pool
+        bool isRemoved;         // flag: indicates pool has been removed permanently
 
         // global metrics TODO: review
         uint128 totalVotes;             // total votes pool accrued throughout all epochs

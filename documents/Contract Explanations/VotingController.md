@@ -529,6 +529,23 @@ After finalizeEpochRewardsSubsidies is completed, and the flag `isFinalized` is 
 
 
 
+## Removing a pool
+
+**1. when we remove pool during epoch [before `finalize()`]:**
+- users can no longer allocate votes to it. 
+- users can migrate votes from a removed pool to another pool
+- finalize will revert on pools that are removed: `isRemoved = true`.
+    - as a result these pools will not receive subsidies or rewards
+    - votes and verifiers cannot claim anything from these removed pools
+
+**2. when we remove pool after it has been processed in `finalize()`:**
+- it has been allocated both rewards and subsidies [assuming it had votes]
+- if we block claiming via `require(!pools[poolId].isRemoved, Errors.PoolRemoved());`, actors will be unable to claim past rewards/subsidies, before pool was removed.
+- so we will not implement this check in the claiming functions. 
+
+If the admin removes a pool after it has already been finalized (i.e., after rewards and subsidies have been allocated via finalize), this signals a deliberate final payout. The pool is intended to receive its last distribution, after which it will be permanently deactivated and no longer participate in future rewards or subsidies.
+
+
 # *Appendix*
 
 ## Residuals Illustrated
