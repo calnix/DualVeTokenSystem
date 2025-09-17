@@ -14,6 +14,7 @@ library Errors {
     error MismatchedArrayLengths();
     error InvalidFeePercentage();
     error InvalidDelayPeriod();
+    error NotFrozen();
     error IsFrozen();
     
     // Access control
@@ -57,7 +58,7 @@ library Errors {
     error FutureEpoch();
     error NoVotesInPool();
     error NoSubsidiesToClaim();
-    error NoSubsidiesAccrued();
+    error NoSubsidiesForPool(); 
     error SubsidyAlreadyClaimed();
     // depositSubsidies
     error CannotSetSubsidiesForFutureEpochs();
@@ -71,6 +72,7 @@ library Errors {
     error PoolAlreadyProcessed();
     
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards
+    error NoUnclaimedRewardsToWithdraw();
     error CanOnlyWithdrawUnclaimedAfterDelay();
     // withdrawRegistrationFees
     error NoRegistrationFeesToWithdraw();

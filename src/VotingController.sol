@@ -73,9 +73,8 @@ contract VotingController is Pausable {
     // if 0: fee not set for that epoch      
     mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFeePcts;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
 
-    //REVIEW these 3 only get logged in claimSubsidies. that's it. for tracking purposes. nothing meaningful
-    // verifier | note: optional: drop verifierData | verifierEpochData | if we want to streamline storage. only verifierEpochPoolData is mandatory
-    // epoch is epoch number, not timestamp
+    // REVIEW: only verifierEpochPoolData is mandatory. optional: drop verifierData & verifierEpochData, if we want to streamline storage. 
+    // are there creative ways to have the optional mappings without the extra storage writes?
     mapping(address verifier => uint256 totalSubsidies) public verifierData;                  
     mapping(uint256 epoch => mapping(address verifier => uint256 totalSubsidies)) public verifierEpochData;
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => uint256 totalSubsidies))) public verifierEpochPoolData;
@@ -109,14 +108,16 @@ contract VotingController is Pausable {
 
      */
     function vote(bytes32[] calldata poolIds, uint128[] calldata poolVotes, bool isDelegated) external whenNotPaused {
-
         // sanity check: poolIds & poolVotes must be non-empty and have the same length
         require(poolIds.length > 0, Errors.InvalidArray());
         require(poolIds.length == poolVotes.length, Errors.MismatchedArrayLengths());
 
-        // epoch should not be finalized
+        // Cache epoch pointer
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();          
-        require(!epochs[currentEpoch].isFullyFinalized, Errors.EpochFinalized());
+        DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
+
+        // epoch should not be finalized
+        require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
         mapping(uint256 epoch => mapping(address user => Account accountEpochData)) storage accountEpochData;
@@ -130,10 +131,10 @@ contract VotingController is Pausable {
             accountEpochPoolData = delegatesEpochPoolData;
 
             // fee check: if not set, set to current fee
-            if(delegateHistoricalFees[msg.sender][currentEpoch] == 0) {
+            if(delegateHistoricalFeePcts[msg.sender][currentEpoch] == 0) {
                 bool pendingFeeApplied = _applyPendingFeeIfNeeded(msg.sender, currentEpoch);
                 if(!pendingFeeApplied) {
-                    delegateHistoricalFees[msg.sender][currentEpoch] = delegates[msg.sender].currentFeePct;
+                    delegateHistoricalFeePcts[msg.sender][currentEpoch] = delegates[msg.sender].currentFeePct;
                 }
             }
 
@@ -171,14 +172,17 @@ contract VotingController is Pausable {
             // increment votes at a pool+epoch level | account:{personal,delegate}
             accountEpochPoolData[currentEpoch][poolId][msg.sender].totalVotesSpent += votes;
             epochPools[currentEpoch][poolId].totalVotes += votes;
-            epochs[currentEpoch].totalVotes += votes;
 
             //increment pool votes at a global level
             pools[poolId].totalVotes += votes;       
         }
 
+        // increment epoch totalVotes
+        epochPtr.totalVotes += totalNewVotes;
+
         // update account's epoch totalVotesSpent counter
         accountEpochData[currentEpoch][msg.sender].totalVotesSpent += totalNewVotes;
+        
         
         emit Events.Voted(currentEpoch, msg.sender, poolIds, poolVotes, isDelegated);
     }
@@ -215,10 +219,10 @@ contract VotingController is Pausable {
             accountEpochPoolData = delegatesEpochPoolData;
 
             // fee check: if not set, set to current fee
-            if(delegateHistoricalFees[msg.sender][currentEpoch] == 0) {
+            if(delegateHistoricalFeePcts[msg.sender][currentEpoch] == 0) {
                 bool pendingFeeApplied = _applyPendingFeeIfNeeded(msg.sender, currentEpoch);
                 if(!pendingFeeApplied) {
-                    delegateHistoricalFees[msg.sender][currentEpoch] = delegates[msg.sender].currentFeePct;
+                    delegateHistoricalFeePcts[msg.sender][currentEpoch] = delegates[msg.sender].currentFeePct;
                 }
             }
 
@@ -231,6 +235,7 @@ contract VotingController is Pausable {
         for(uint256 i; i < srcPoolIds.length; ++i) {
             bytes32 srcPoolId = srcPoolIds[i];
             bytes32 dstPoolId = dstPoolIds[i];
+            
             uint128 votesToMigrate = poolVotes[i];
 
             // sanity check: both pools exist + dstPool is active + not removed [src pool can be removed]
@@ -289,7 +294,7 @@ contract VotingController is Pausable {
         // storage: register delegate + set fee percentage
         delegate.isRegistered = true;
         delegate.currentFeePct = feePct;
-        delegateHistoricalFees[msg.sender][EpochMath.getCurrentEpochNumber()] = feePct;
+        delegateHistoricalFeePcts[msg.sender][EpochMath.getCurrentEpochNumber()] = feePct;
 
         emit Events.DelegateRegistered(msg.sender, feePct);
     }
@@ -323,14 +328,14 @@ contract VotingController is Pausable {
             delegate.nextFeePctEpoch = currentEpoch + FEE_INCREASE_DELAY_EPOCHS;
 
             // set for future epoch
-            delegateHistoricalFees[msg.sender][delegate.nextFeePctEpoch] = feePct;  
+            delegateHistoricalFeePcts[msg.sender][delegate.nextFeePctEpoch] = feePct;  
 
             emit Events.DelegateFeeIncreased(msg.sender, currentFeePct, feePct, delegate.nextFeePctEpoch);
 
         } else {
             // fee decreased: apply immediately
             delegate.currentFeePct = feePct;
-            delegateHistoricalFees[msg.sender][currentEpoch] = feePct;
+            delegateHistoricalFeePcts[msg.sender][currentEpoch] = feePct;
 
             // delete pending
             delete delegate.nextFeePct;
@@ -495,7 +500,7 @@ contract VotingController is Pausable {
 
         // Single transfer of total net to user (caller)
         _esMoca().safeTransfer(msg.sender, userTotalNetRewards);
-        emit Events.RewardsClaimedFromDelegate(epoch, msg.sender, delegateList, poolIdsPerDelegate, userTotalNetRewards);
+        emit Events.RewardsClaimedFromDelegateBatch(epoch, msg.sender, delegateList, poolIdsPerDelegate, userTotalNetRewards);
     }
 
     /**
@@ -775,12 +780,16 @@ contract VotingController is Pausable {
             bytes32 poolId = poolIds[i];
             uint256 poolRewards = rewards[i];       // can be 0  @follow-up why can it be 0?  so it can be marked processed
 
-            // sanity check: pool exists + not processed + not removed
-            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            require(!epochPools[epoch][poolId].isProcessed, Errors.PoolAlreadyProcessed());
-            require(!pools[poolId].isRemoved, Errors.PoolRemoved());
+            // cache: Pool storage pointers
+            DataTypes.Pool storage poolPtr = pools[poolId];
+            DataTypes.PoolEpoch storage epochPoolPtr = epochPools[epoch][poolId];
 
-            uint256 poolVotes = epochPools[epoch][poolId].totalVotes;
+            // sanity check: pool exists + not processed + not removed
+            require(poolPtr.poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(!epochPoolPtr.isProcessed, Errors.PoolAlreadyProcessed());
+            require(!poolPtr.isRemoved, Errors.PoolRemoved());
+
+            uint256 poolVotes = epochPoolPtr.totalVotes;
             
             // Calc. subsidies for each pool | if there are subsidies for epoch + pool has votes
             if(epochTotalSubsidiesDeposited > 0 && poolVotes > 0) {
@@ -789,8 +798,8 @@ contract VotingController is Pausable {
                 
                 // sanity check: poolSubsidies > 0; skip if floored to 0
                 if(poolSubsidies > 0) { 
-                    epochPools[epoch][poolId].totalSubsidiesAllocated = uint128(poolSubsidies);
-                    pools[poolId].totalSubsidiesAllocated += poolSubsidies;
+                    epochPoolPtr.totalSubsidiesAllocated = uint128(poolSubsidies);
+                    poolPtr.totalSubsidiesAllocated += poolSubsidies;
 
                     totalSubsidies += poolSubsidies;
                 }
@@ -799,14 +808,14 @@ contract VotingController is Pausable {
             // Set totalRewards for each pool | only if rewards >0 and votes >0 (avoids undistributable)
             if(poolRewards > 0 && poolVotes > 0) {
 
-                epochPools[epoch][poolId].totalRewardsAllocated = poolRewards;
-                pools[poolId].totalRewardsAllocated += poolRewards;
+                epochPoolPtr.totalRewardsAllocated = poolRewards;
+                poolPtr.totalRewardsAllocated += poolRewards;
 
                 totalRewards += poolRewards;
             } // else skip, rewards effectively 0 for this pool
 
             // mark processed
-            epochPools[epoch][poolId].isProcessed = true;
+            epochPoolPtr.isProcessed = true;
         }
 
         //STORAGE update epoch global | do not overwrite subsidies; was set in depositEpochSubsidies()
@@ -815,7 +824,7 @@ contract VotingController is Pausable {
         emit Events.EpochPartiallyFinalized(epoch, poolIds);
 
         // STORAGE: increment count of pools finalized
-        epochs[epoch].poolsFinalized += uint128(poolIds.length);
+        epochPtr.poolsFinalized += uint128(poolIds.length);
 
         // deposit rewards
         _esMoca().transferFrom(msg.sender, address(this), totalRewards);
@@ -847,7 +856,7 @@ contract VotingController is Pausable {
 
         // sanity check: there must be unclaimed rewards
         uint256 unclaimed = epochs[epoch].totalRewardsAllocated - epochs[epoch].totalRewardsClaimed;
-        require(unclaimed > 0, Errors.NoUnclaimedRewardsToSweep());
+        require(unclaimed > 0, Errors.NoUnclaimedRewardsToWithdraw());
 
         address treasury = IAddressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());

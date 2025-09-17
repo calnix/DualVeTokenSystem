@@ -19,4 +19,7 @@ interface IAccessController {
     // Permissions for PaymentsController
     function isPaymentsAdmin(address addr) external view returns (bool);
 
+// Used in VotingController modifiers but NOT in IAccessController interface:
+    function isVotingControllerAdmin(address addr) external view returns (bool);
+    function isAssetManager(address addr) external view returns (bool);
 }

@@ -547,13 +547,12 @@ Solution: Pool removal is blocked once subsidies are deposited, as this is an in
 
 ## Delegate Unregistering [arbitrarily]
 
-1. After unregistration, delegates cannot vote or migrate votes on behalf of delegators, as the registration check in vote() and migrateVotes() prevents this.
-2. Users must manually undelegate their locks via `VotingEscrowMoca.undelegateLock();` this should be supported by frontend notifications and alerts.
-    - else the previously delegated votes would be a deadweight loss.
-3. Delegate will be allowed to claim fees accrued for prior epochs, before unregistration.
-4. Correspondingly, delegators will pay those fees, for those periods, as the delegate was active and serviced them.
-
 **A delegate cannot unregister when he has allocated votes**
+
+Users must manually undelegate their locks via `VotingEscrowMoca.undelegateLock();` this should be supported by frontend notifications and alerts.
+    - else the previously delegated votes would be a deadweight loss.
+3. Delegate will be allowed to claim fees accrued for prior epochs, before his unregistration.
+4. Correspondingly, delegators will pay those fees, for those periods, as the delegate was active and serviced them.
 
 In `unregisterAsDelegate`, we implement the check: `require(delegateEpochData[currentEpoch][msg.sender].totalVotesSpent == 0, Errors.CannotUnregisterWithActiveVotes());`.
 - This prevents partial voting scenarios where a delegate allocates some votes, unregisters, resulting in uncertainty for claiming. 
@@ -564,7 +563,7 @@ In `unregisterAsDelegate`, we implement the check: `require(delegateEpochData[cu
 We intentionally do not check if a delegate is currently registered in `claimDelegateFees()`. Instead, we require that `delegateHistoricalFeePcts[msg.sender][epoch] > 0`.
 If it is non-zero, that means the delegate voted in that epoch (when they vote, their delegate fee is logged), and there are fees to claim.
 
-If a delegate didn’t vote in a given epoch, no fee is recorded, so no claim is possible. (Delegates cannot set a zero fee.)
+If a delegate didn’t vote in a given epoch, no fee is recorded, so no claim is possible. (*Delegates cannot set a zero fee*)
 
 With this approach, fee claims are always based on historical voting activity and finalized epochs, not on whether the delegate is still registered at claim time.
 
@@ -574,6 +573,47 @@ With this approach, fee claims are always based on historical voting activity an
 
 1. Global Admin [unpause, freeze]
 2. Contract-level admins which can make changes to contract parameters + configuration
+
+## Access Control Pattern Analysis
+
+**Functions with Proper Access Control:**
+
+```bash
+✅ Admin functions - properly protected
+setMaxDelegateFeePct()           - onlyVotingControllerAdmin
+setFeeIncreaseDelayEpochs()      - onlyVotingControllerAdmin  
+createPool()                     - onlyVotingControllerAdmin
+removePool()                     - onlyVotingControllerAdmin
+
+✅ Asset management - properly protected  
+depositEpochSubsidies()          - onlyAssetManager
+finalizeEpochRewardsSubsidies()  - onlyAssetManager
+withdrawUnclaimedRewards()       - onlyAssetManager
+withdrawRegistrationFees()       - onlyAssetManager
+
+✅ Risk management - properly protected
+pause()                          - onlyMonitor
+unpause()                        - onlyGlobalAdmin
+freeze()                         - onlyGlobalAdmin
+emergencyExit()                  - onlyEmergencyExitHandler
+```
+
+**Functions with Correct Open Access:**
+```bash
+// ✅ User functions - correctly open to all users
+vote()                           - whenNotPaused only
+migrateVotes()                   - whenNotPaused only
+voterClaimRewards()              - whenNotPaused only
+claimRewardsFromDelegate()       - whenNotPaused only
+claimSubsidies()                 - whenNotPaused only
+
+// ✅ Delegate functions - correctly open to delegates
+registerAsDelegate()             - whenNotPaused only
+updateDelegateFee()              - whenNotPaused only
+unregisterAsDelegate()           - whenNotPaused only
+claimDelegateFees()              - whenNotPaused only
+```
+
 
 ## roles in VotingController
 
