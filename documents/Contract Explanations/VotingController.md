@@ -574,6 +574,12 @@ With this approach, fee claims are always based on historical voting activity an
 1. Global Admin [unpause, freeze]
 2. Contract-level admins which can make changes to contract parameters + configuration
 
+**Current Circuit Breakers:**
+1. **Pausable**             - Monitor can pause, GlobalAdmin can unpause
+2. **Freeze Mechanism**     - Ultimate kill switch (one-way)
+3. **Emergency Exit**       - Asset recovery when frozen
+4. **Role-Based Controls**  - Graduated response levels
+
 ## Access Control Pattern Analysis
 
 **Functions with Proper Access Control:**
@@ -615,7 +621,7 @@ claimDelegateFees()              - whenNotPaused only
 ```
 
 
-## roles in VotingController
+## Roles in VotingController
 
 - role to change contract params: createPool, removePool, setPoolStatus [VOTING_CONTROLLER_ADMIN_ROLE]
 - role for assets: depositSubsidies(), FinalizeEpoch(), withdrawUnclaimedX [ASSET_MANAGER_ROLE]
@@ -624,11 +630,24 @@ claimDelegateFees()              - whenNotPaused only
 - freeze: [isGlobalAdmin]
 - emergencyExit: [EMERGENCY_EXIT_HANDLER_ROLE]
 
-## risk fns
+## Risk fns
 
 - unpause: isGlobalAdmin
 - freeze: isGlobalAdmin
 - emergencyExit: EMERGENCY_EXIT_HANDLER_ROLE
+
+
+# Upgrade Architecture
+
+1. AddressBook Pattern - Contracts reference each other through AddressBook
+2. Modular Architecture - Separated concerns (VotingController, PaymentsController, VotingEscrowMoca)
+3. Emergency Migration - Emergency exit mechanisms for asset recovery
+
+The architecture is upgrade-friendly via the AddressBook.
+
+## Contract upgrading processes [?]
+
+how and what would the process be - detail and write handbook.
 
 # *Appendix*
 
