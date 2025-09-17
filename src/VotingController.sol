@@ -199,9 +199,11 @@ contract VotingController is Pausable {
      * Reverts if input array lengths mismatch, pools do not exist, destination pool is not active, insufficient votes in source pool, or epoch is finalized.
      */
     function migrateVotes(bytes32[] calldata srcPoolIds, bytes32[] calldata dstPoolIds, uint128[] calldata poolVotes, bool isDelegated) external whenNotPaused {
-        require(srcPoolIds.length > 0, Errors.InvalidArray());
-        require(srcPoolIds.length == dstPoolIds.length, Errors.MismatchedArrayLengths());
-        require(srcPoolIds.length == poolVotes.length, Errors.MismatchedArrayLengths());
+        // sanity check: array lengths must be non-empty and match
+        uint256 length = srcPoolIds.length;
+        require(length > 0, Errors.InvalidArray());
+        require(length == dstPoolIds.length, Errors.MismatchedArrayLengths());
+        require(length == poolVotes.length, Errors.MismatchedArrayLengths());
 
         // epoch should not be finalized
         uint256 epoch = EpochMath.getCurrentEpochNumber();          
@@ -232,16 +234,22 @@ contract VotingController is Pausable {
         }
 
         // can migrate votes from inactive pool to active pool; but not vice versa
-        for(uint256 i; i < srcPoolIds.length; ++i) {
+        for(uint256 i; i < length; ++i) {
+            // cache: calldata access per array element
             bytes32 srcPoolId = srcPoolIds[i];
             bytes32 dstPoolId = dstPoolIds[i];
-            
             uint128 votesToMigrate = poolVotes[i];
 
+            // Cache storage pointers
+            DataTypes.Pool storage srcPoolPtr = pools[srcPoolId];
+            DataTypes.Pool storage dstPoolPtr = pools[dstPoolId];
+            DataTypes.PoolEpoch storage srcEpochPoolPtr = epochPools[epoch][srcPoolId];
+            DataTypes.PoolEpoch storage dstEpochPoolPtr = epochPools[epoch][dstPoolId];
+
             // sanity check: both pools exist + dstPool is active + not removed [src pool can be removed]
-            require(pools[srcPoolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            require(pools[dstPoolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            require(!pools[dstPoolId].isRemoved, Errors.PoolRemoved());
+            require(srcPoolPtr.poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(dstPoolPtr.poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(!dstPoolPtr.isRemoved, Errors.PoolRemoved());
 
             // get user's existing votes in srcPool | must be greater than or equal to votesToMigrate
             uint128 votesInSrcPool = accountEpochPoolData[epoch][srcPoolId][msg.sender].totalVotesSpent;
@@ -249,13 +257,13 @@ contract VotingController is Pausable {
 
             // deduct from old pool
             accountEpochPoolData[epoch][srcPoolId][msg.sender].totalVotesSpent -= votesToMigrate;
-            epochPools[epoch][srcPoolId].totalVotes -= votesToMigrate;
-            pools[srcPoolId].totalVotes -= votesToMigrate;
+            srcEpochPoolPtr.totalVotes -= votesToMigrate;
+            srcPoolPtr.totalVotes -= votesToMigrate;
 
             // add to new pool
             accountEpochPoolData[epoch][dstPoolId][msg.sender].totalVotesSpent += votesToMigrate;
-            epochPools[epoch][dstPoolId].totalVotes += votesToMigrate;
-            pools[dstPoolId].totalVotes += votesToMigrate;
+            dstEpochPoolPtr.totalVotes += votesToMigrate;
+            dstPoolPtr.totalVotes += votesToMigrate;
 
             // no need to update mappings: accountEpochData and epochs.totalVotes; as its a migration of votes within the same epoch.
         }
