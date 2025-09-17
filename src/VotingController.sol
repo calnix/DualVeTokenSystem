@@ -82,7 +82,7 @@ contract VotingController is Pausable {
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address addressBook, uint256 registrationFee) {
+    constructor(address addressBook, uint256 registrationFee, uint256 maxDelegateFeePct) {
         require(addressBook != address(0), Errors.InvalidAddress());
         require(registrationFee > 0, Errors.InvalidAmount());
         
@@ -93,6 +93,11 @@ contract VotingController is Pausable {
 
         // set registration fee
         REGISTRATION_FEE = registrationFee;
+
+        // set max delegate fee percentage
+        require(maxDelegateFeePct > 0 && maxDelegateFeePct <= Constants.PRECISION_BASE, Errors.InvalidFeePct());
+        MAX_DELEGATE_FEE_PCT = maxDelegateFeePct;
+
     }
 
 

@@ -1117,3 +1117,10 @@ library SubsidyMath {
 
 **Ignoring cos i rather just build the router for batching.**
 
+## Add array bounds validation for very large arrays
+```
+modifier validateArraySize(uint256 length) {
+    require(length <= 100, Errors.ArrayTooLarge()); 
+    _;
+}
+```
