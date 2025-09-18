@@ -148,7 +148,7 @@ The following struct defines the on-chain attributes of a verifier:
 ```solidity
     struct Verifier {
         bytes32 verifierId;
-        address adminAddress;
+        address adminAddress;   // verifier's ownable address
         address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
         address signerAddress;  
 
