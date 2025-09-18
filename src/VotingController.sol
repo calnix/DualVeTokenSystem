@@ -770,6 +770,7 @@ contract VotingController is Pausable {
         address treasury = IAddressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
         
+        // transfer esMoca to treasury
         _esMoca().safeTransfer(treasury, unclaimed);
 
         emit Events.UnclaimedRewardsWithdrawn(treasury, epoch, unclaimed);
@@ -797,7 +798,7 @@ contract VotingController is Pausable {
         address treasury = IAddressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
 
-        // transfer esMoca to admin/deposit(?)
+        // transfer esMoca to treasury
         _esMoca().transfer(treasury, unclaimedSubsidies);
 
         // event
@@ -813,6 +814,7 @@ contract VotingController is Pausable {
         address treasury = IAddressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
 
+        // transfer registration fees to treasury
         _moca().safeTransfer(treasury, claimable);
 
         emit Events.RegistrationFeesWithdrawn(treasury, claimable);

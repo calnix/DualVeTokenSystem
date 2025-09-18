@@ -28,7 +28,7 @@ contract AccessController is AccessControl {
     // ----- Lowest privilege, automated/operational functions ----- 
     // Operational roles - no admin privileges [attached to scripts]
     bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");    // Pause only
-    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");  // Automated tasks: createLockFor, 
+    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");  // Automated tasks: createLockFor
     bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // Emergency only
     
     // ----- Contract-specific admin roles -----

@@ -643,6 +643,11 @@ contract PaymentsController is EIP712, Pausable {
         uint256 protocolFees = _epochFeesAccrued[epoch].feesAccruedToProtocol;
         require(protocolFees > 0, Errors.ZeroProtocolFee());
 
+        // transfer protocol fees to treasury
+        address treasury = _addressBook.getTreasury();
+        require(treasury != address(0), Errors.InvalidAddress());
+        IERC20(usd8).safeTransfer(treasury, protocolFees);
+
         _epochFeesAccrued[epoch].isProtocolFeeWithdrawn = true;
 
         emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
@@ -655,12 +660,17 @@ contract PaymentsController is EIP712, Pausable {
         uint256 votersFees = _epochFeesAccrued[epoch].feesAccruedToVoters;
         require(votersFees > 0, Errors.ZeroVotersFee());
 
+        // transfer voters fees to treasury
+        address treasury = _addressBook.getTreasury();
+        require(treasury != address(0), Errors.InvalidAddress());
+        IERC20(usd8).safeTransfer(treasury, votersFees);
+
         _epochFeesAccrued[epoch].isVotersFeeWithdrawn = true;
 
         emit Events.VotersFeesWithdrawn(epoch, votersFees);
     }
 
-//------------------------------- risk -------------------------------------------------------
+//------------------------------- risk ----------------------------------------------------------
 
     /**
      * @notice Pause contract. Cannot pause once frozen
