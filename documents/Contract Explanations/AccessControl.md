@@ -45,3 +45,23 @@ Executive Team (via DEFAULT_ADMIN_ROLE):
 - More permissive for testing
 - Single EOAs acceptable for role admins
 - Clear upgrade path to production security
+
+# SUMMARY BY FREQUENCY:
+
+## HIGH FREQUENCY (Daily/Bi-weekly)
+- Monitor bot management (MONITOR_ADMIN_ROLE manages)
+- CronJob address rotation (CRON_JOB_ADMIN_ROLE manages)
+- Epoch operations: create pools, deposit subsidies, finalize rewards (CRON_JOB_ROLE executes)
+
+## MEDIUM FREQUENCY (Monthly)
+-Asset withdrawals (ASSET_MANAGER_ROLE)
+-Pool creation/removal (VOTING_CONTROLLER_ADMIN_ROLE → should be CRON_JOB_ROLE)
+
+## LOW FREQUENCY (Quarterly/Governance)
+-Protocol parameter updates (Contract-specific admin roles)
+-Fee adjustments (Contract-specific admin roles)
+
+## VERY RARE (Emergency/Governance)
+-Role hierarchy changes (DEFAULT_ADMIN_ROLE)
+-Emergency actions (DEFAULT_ADMIN_ROLE, EMERGENCY_EXIT_HANDLER_ROLE)
+-Pause/unpause/freeze operations

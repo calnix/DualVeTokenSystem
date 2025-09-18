@@ -734,7 +734,7 @@ contract VotingController is Pausable {
      * @param epoch The epoch number for which to deposit subsidies.
      * @param subsidies The total amount of esMOCA subsidies to deposit (1e18 precision).
      */
-    function depositEpochSubsidies(uint256 epoch, uint256 subsidies) external onlyAssetManager whenNotPaused {
+    function depositEpochSubsidies(uint256 epoch, uint256 subsidies) external onlyCronJobRole whenNotPaused {
         //require(subsidies > 0, Errors.InvalidAmount()); --> subsidies can be 0
         require(epoch <= EpochMath.getCurrentEpochNumber(), Errors.CannotSetSubsidiesForFutureEpochs());
         
@@ -769,7 +769,7 @@ contract VotingController is Pausable {
     //Note: only callable once for each pool | rewards are referenced from PaymentsController | subsidies are referenced from PaymentsController
     //Review: str vs mem | uint128 vs uint256
     //note: only deposits rewards that can be claimed[poolRewards > 0 & poolVotes > 0]. therefore, sum of input rewards could be lesser than totalRewardsAllocated
-    function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint256[] calldata rewards) external onlyAssetManager whenNotPaused {
+    function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint256[] calldata rewards) external onlyCronJobRole whenNotPaused {
         require(poolIds.length > 0, Errors.InvalidArray());
         require(poolIds.length == rewards.length, Errors.MismatchedArrayLengths());
 
@@ -981,7 +981,7 @@ contract VotingController is Pausable {
      * @dev Only callable by VotingController admin. The poolId is generated to be unique.
      * @return poolId The unique identifier assigned to the new pool.
      */
-    function createPool() external onlyVotingControllerAdmin whenNotPaused returns (bytes32) {
+    function createPool() external onlyCronJobRole whenNotPaused returns (bytes32) {
            
         // generate issuerId
         bytes32 poolId;
@@ -1019,7 +1019,7 @@ contract VotingController is Pausable {
      *
      * @param poolId The unique identifier of the pool to remove.
      */
-    function removePool(bytes32 poolId) external onlyVotingControllerAdmin whenNotPaused {
+    function removePool(bytes32 poolId) external onlyCronJobRole whenNotPaused {
         require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
         
         // pool removal not allowed before finalizeEpochRewardsSubsidies() - else, TOTAL_NUMBER_OF_POOLS will be off and epoch will be never finalized
@@ -1160,8 +1160,15 @@ contract VotingController is Pausable {
     }
 
 //-------------------------------Modifiers---------------------------------------------------------------
+    
+    // creating pools, removing pools
+    modifier onlyCronJob() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isCronJob(msg.sender), "Only callable by CronJob");
+        _;
+    }
 
-    // for creating pools, removing pools, setting contract params
+    // for setting contract params
     modifier onlyVotingControllerAdmin() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
         require(accessController.isVotingControllerAdmin(msg.sender), "Only callable by Voting Controller Admin");

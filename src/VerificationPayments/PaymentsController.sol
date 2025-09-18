@@ -702,7 +702,7 @@ contract PaymentsController is EIP712, Pausable {
 
 
     // exfil verifiers' balance to their stored addresses
-    function emergencyExitVerifiers(bytes32[] calldata verifierIds) external whenPaused {
+    function emergencyExitVerifiers(bytes32[] calldata verifierIds) external onlyEmergencyExitHandler whenPaused {
         //if(isFrozen == 0) revert Errors.NotFrozen();
         //if(verifierIds.length == 0) revert Errors.InvalidInput();
 
@@ -727,7 +727,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     // exfil issuers' unclaimed fees to their stored addresses
-    function emergencyExitIssuers(bytes32[] calldata issuerIds) external whenPaused {
+    function emergencyExitIssuers(bytes32[] calldata issuerIds) external onlyEmergencyExitHandler whenPaused {
         //if(isFrozen == 0) revert Errors.NotFrozen();
         //if(issuerIds.length == 0) revert Errors.InvalidInput();
 
@@ -775,6 +775,12 @@ contract PaymentsController is EIP712, Pausable {
     modifier onlyAssetManager() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
         require(accessController.isAssetManager(msg.sender), "Only callable by Asset Manager");
+        _;
+    }
+
+    modifier onlyEmergencyExitHandler() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isEmergencyExitHandler(msg.sender), "Only callable by Emergency Exit Handler");
         _;
     }
 
