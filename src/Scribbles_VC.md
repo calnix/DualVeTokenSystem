@@ -1,9 +1,4 @@
-
 # ---- Problems to fix:
-
-
------
-
 # Questions to ponder
 
 1. do i need both usersEpochData & usersEpochPoolData

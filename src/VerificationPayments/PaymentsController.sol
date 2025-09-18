@@ -752,7 +752,7 @@ contract PaymentsController is EIP712, Pausable {
 
     modifier onlyPaymentsAdmin() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isPaymentsAdmin(msg.sender), "Only callable by Payments Admin");
+        require(accessController.isPaymentsControllerAdmin(msg.sender), "Only callable by Payments Admin");
         _;
     }
 

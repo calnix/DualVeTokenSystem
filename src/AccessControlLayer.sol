@@ -21,6 +21,8 @@ contract AccessController is AccessControl {
 
     IAddressBook internal immutable _addressBook;
 
+    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
+
     /**
         for privileged calls, other contract would refer to this to check permissioning. 
         
@@ -46,14 +48,6 @@ contract AccessController is AccessControl {
     // asset management roles [multi-sig]
     // for depositing/withdrawing assets across various contracts
     bytes32 private constant ASSET_MANAGER_ROLE = keccak256('ASSET_MANAGER_ROLE');
-
-    // ROLES w/o scripts
-    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
-
-    
-    // do we need these:
-    //bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE"); // admin fns to update params | attached to script
-
 
 //-------------------------------constructor-----------------------------------------
 
@@ -93,12 +87,12 @@ contract AccessController is AccessControl {
      */
 
 
-    function addGlobalAdmin(address addr) external {
-        _grantRole(DEFAULT_ADMIN_ROLE, addr);
+    function addGlobalAdmin(address addr) external noZeroAddress(addr) {
+        grantRole(DEFAULT_ADMIN_ROLE, addr);
     }
 
-    function removeGlobalAdmin(address addr) external {
-        _revokeRole(DEFAULT_ADMIN_ROLE, addr);
+    function removeGlobalAdmin(address addr) external noZeroAddress(addr) {
+        revokeRole(DEFAULT_ADMIN_ROLE, addr);
     }
 
     function isGlobalAdmin(address addr) external view returns (bool) {
@@ -111,12 +105,11 @@ contract AccessController is AccessControl {
     //      so that we can manage the pause bots easily w/o GLOBAL_ADMIN
     //      MONITOR_ROLE_ADMIN can be a 2/2 multisig, within just the engineers
 
-    function addMonitor(address addr) external {
-        require(addr != address(0), Errors.InvalidAddress());
+    function addMonitor(address addr) external noZeroAddress(addr) {
         grantRole(MONITOR_ROLE, addr);
     }
 
-    function removeMonitor(address addr) external {
+    function removeMonitor(address addr) external noZeroAddress(addr) {
         revokeRole(MONITOR_ROLE, addr);
     }
 
@@ -126,11 +119,11 @@ contract AccessController is AccessControl {
 
 // ----- CRON_JOB ROLE -----
 
-    function addCronJob(address addr) external {
+    function addCronJob(address addr) external noZeroAddress(addr) {
         grantRole(CRON_JOB_ROLE, addr);
     }
 
-    function removeCronJob(address addr) external {
+    function removeCronJob(address addr) external noZeroAddress(addr) {
         revokeRole(CRON_JOB_ROLE, addr);
     }
 
@@ -141,13 +134,11 @@ contract AccessController is AccessControl {
 
 // ----- EMERGENCY_EXIT ROLE -----
 
-    function addEmergencyExitHandler(address addr) external {
-        require(addr != address(0), Errors.InvalidAddress());
+    function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
     }
 
-    function removeEmergencyExitHandler(address addr) external {
-        require(addr != address(0), Errors.InvalidAddress());
+    function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
     }
 
@@ -158,11 +149,11 @@ contract AccessController is AccessControl {
 
 // ----- PaymentsController Admin -----
 
-    function addPaymentsControllerAdmin(address addr) external {
+    function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
     }
 
-    function removePaymentsControllerAdmin(address addr) external {
+    function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
     }
 
@@ -172,13 +163,11 @@ contract AccessController is AccessControl {
 
 // ----- VotingController Admin -----
 
-    function addVotingControllerAdmin(address addr) external {
-        require(addr != address(0), Errors.InvalidAddress());
+    function addVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
     }
 
-    function removeVotingControllerAdmin(address addr) external {
-        require(addr != address(0), Errors.InvalidAddress());
+    function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
     }
 
@@ -189,13 +178,11 @@ contract AccessController is AccessControl {
 
 // ----- ASSET_MANAGER ROLE -----
 
-    function addAssetManager(address addr) external {
-        require(addr != address(0), Errors.InvalidAddress());
+    function addAssetManager(address addr) external noZeroAddress(addr) {
         grantRole(ASSET_MANAGER_ROLE, addr);
     }
     
-    function removeAssetManager(address addr) external {
-        require(addr != address(0), Errors.InvalidAddress());
+    function removeAssetManager(address addr) external noZeroAddress(addr) {
         revokeRole(ASSET_MANAGER_ROLE, addr);
     }
 
@@ -203,26 +190,14 @@ contract AccessController is AccessControl {
         return hasRole(ASSET_MANAGER_ROLE, addr);
     }
 
-// ----- OPERATOR ROLE -----
-/*
-    function addOperator(address addr) external {
-        require(addr != address(0), Errors.InvalidAddress());
-        grantRole(OPERATOR_ROLE, addr);
-    }
-
-    function removeOperator(address addr) external {
-        revokeRole(OPERATOR_ROLE, addr);
-    }
-
-    function isOperator(address addr) external view returns (bool) {
-        return hasRole(OPERATOR_ROLE, addr);
-    }
-
-*/
 
 
 // ----- modifiers -----
 
+    modifier noZeroAddress(address addr) {
+        require(addr != address(0), Errors.InvalidAddress());
+        _;
+    }
 }
 
 // https://aave.com/docs/developers/smart-contracts/acl-manager

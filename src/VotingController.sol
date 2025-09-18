@@ -46,7 +46,7 @@ contract VotingController is Pausable {
     // risk management
     uint256 public isFrozen;
 
-//-------------------------------mapping------------------------------------------
+//-------------------------------mapping----------------------------------------------
 
     // epoch data
     mapping(uint256 epoch => DataTypes.Epoch epoch) public epochs;    
@@ -99,7 +99,6 @@ contract VotingController is Pausable {
         MAX_DELEGATE_FEE_PCT = maxDelegateFeePct;
 
     }
-
 
 //-------------------------------voting functions------------------------------------------
 

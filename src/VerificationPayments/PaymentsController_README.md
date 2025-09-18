@@ -160,7 +160,7 @@ The following struct defines the on-chain attributes of a verifier:
         uint128 totalExpenditure;  // count: never decremented
     }
 ```
-
+- `adminAddress`: msg.sender;
 - `signerAddress`: for signature validation during verification payments 
 - `assetAddress`: address to which deposit/withdraw of USD8 balances + staking Moca
 
