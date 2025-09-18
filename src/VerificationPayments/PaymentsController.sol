@@ -762,7 +762,7 @@ contract PaymentsController is EIP712, Pausable {
         _;
     }   
 
-    modifer onlyAssetManager() {
+    modifier onlyAssetManager() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
         require(accessController.isAssetManager(msg.sender), "Only callable by Asset Manager");
         _;
