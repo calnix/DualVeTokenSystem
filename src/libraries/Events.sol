@@ -110,6 +110,11 @@ library Events {
     event EmergencyExitIssuers(bytes32[] issuerIds);
     event EmergencyExitVerifiers(bytes32[] verifierIds);
 
+// --------- AddressBook.sol ---------
+    event AddressSet(bytes32 indexed identifier, address registeredAddress);
+    event GlobalAdminUpdated(address indexed oldGlobalAdmin, address indexed newGlobalAdmin);
+
+
 // --------- AccessController.sol ---------
     //
     event MonitorAdded(address indexed monitor, address indexed addedBy);

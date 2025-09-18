@@ -21,33 +21,24 @@ contract AccessController is AccessControl {
 
     IAddressBook internal immutable _addressBook;
 
-    bytes32 private constant GLOBAL_ADMIN = 'GLOBAL_ADMIN';   // DEFAULT_ADMIN_ROLE
+    // retrieved from AddressBook: DEFAULT_ADMIN_ROLE
+    bytes32 internal GLOBAL_ADMIN = keccak256("GLOBAL_ADMIN"); 
 
-    /**
-        for privileged calls, other contract would refer to this to check permissioning. 
-        
-        I.e. Voting.sol has modifier:
-
-            function _onlyRiskOrPoolAdmins() internal view {
-                IACLManager aclManager = IACLManager(_addressesProvider.getACLManager());
-                require(
-                    aclManager.isRiskAdmin(msg.sender) || aclManager.isPoolAdmin(msg.sender),
-                    Errors.CallerNotRiskOrPoolAdmin()
-            );
-    */
+   
+    // ----- Lowest privilege, automated/operational functions ----- 
+    // Operational roles - no admin privileges [attached to scripts]
+    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");    // Pause only
+    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");  // Automated tasks: createLockFor, 
+    bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // Emergency only
     
-    // ROLES: attached to scripts
-    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");    // only pause
-    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");  // createLockFor
-    bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // emergencyExit
-    
+    // ----- Contract-specific admin roles -----
     // Roles for making changes to contract parameters + configuration [multi-sig]
     bytes32 private constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256('PAYMENTS_CONTROLLER_ADMIN_ROLE'); 
     bytes32 private constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256('VOTING_CONTROLLER_ADMIN_ROLE');    
     
-    // asset management roles [multi-sig]
-    // for depositing/withdrawing assets across various contracts
-    bytes32 private constant ASSET_MANAGER_ROLE = keccak256('ASSET_MANAGER_ROLE');
+    // ----- Asset management roles [for multiple contracts] -----
+    // for depositing/withdrawing/converting assets across contracts: [PaymentsController, VotingController, esMoca]
+    bytes32 private constant ASSET_MANAGER_ROLE = keccak256('ASSET_MANAGER_ROLE'); //withdrawUnclaimedX, finalizeEpoch, depositSubsidies
 
 //-------------------------------constructor-----------------------------------------
 
@@ -55,15 +46,16 @@ contract AccessController is AccessControl {
      * @dev Constructor
      * @param addressBook_ The address of the AddressBook
     */
-    constructor(address addressBook_) {
+    constructor(address addressBook) {
 
         // address book
-        _addressBook = IAddressBook(addressBook_);
+        _addressBook = IAddressBook(addressBook);
 
-        // global admin: DEFAULT_ADMIN_ROLE
-        address globalAdmin = _addressBook.getGlobalAdmin();
+        // get global admin from AddressBook: DEFAULT_ADMIN_ROLE
+        address globalAdmin = _addressBook.addresses(bytes32(0));
         require(globalAdmin != address(0), Errors.InvalidAddress());
 
+        // set DEFAULT_ADMIN_ROLE to global admin address
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
     }
 
@@ -213,3 +205,17 @@ contract AccessController is AccessControl {
 
 // https://aave.com/docs/developers/smart-contracts/acl-manager
 // https://github.com/aave-dao/aave-v3-origin/blob/main/src/contracts/protocol/configuration/ACLManager.sol
+
+
+    /**
+        for privileged calls, other contract would refer to this to check permissioning. 
+        
+        I.e. Voting.sol has modifier:
+
+            function _onlyRiskOrPoolAdmins() internal view {
+                IACLManager aclManager = IACLManager(_addressesProvider.getACLManager());
+                require(
+                    aclManager.isRiskAdmin(msg.sender) || aclManager.isPoolAdmin(msg.sender),
+                    Errors.CallerNotRiskOrPoolAdmin()
+            );
+    */

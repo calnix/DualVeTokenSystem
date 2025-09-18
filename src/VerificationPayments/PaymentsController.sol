@@ -636,7 +636,7 @@ contract PaymentsController is EIP712, Pausable {
 //-------------------------------admin: withdraw functions----------------------------------------
 
     //note: can only withdraw protocol fees after epoch ended
-    function withdrawProtocolFees(uint256 epoch) external onlyPaymentsAdmin whenNotPaused {
+    function withdrawProtocolFees(uint256 epoch) external onlyAssetManager whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
         require(!_epochFeesAccrued[epoch].isProtocolFeeWithdrawn, Errors.ProtocolFeeAlreadyWithdrawn());
 
@@ -648,7 +648,7 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
     }
 
-    function withdrawVotersFees(uint256 epoch) external onlyPaymentsAdmin whenNotPaused {
+    function withdrawVotersFees(uint256 epoch) external onlyAssetManager whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
         require(!_epochFeesAccrued[epoch].isVotersFeeWithdrawn, Errors.VotersFeeAlreadyWithdrawn());
 
@@ -761,6 +761,12 @@ contract PaymentsController is EIP712, Pausable {
         require(accessController.isGlobalAdmin(msg.sender), "Only callable by Global Admin");
         _;
     }   
+
+    modifer onlyAssetManager() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isAssetManager(msg.sender), "Only callable by Asset Manager");
+        _;
+    }
 
 //-------------------------------view functions---------------------------------------------
    
