@@ -6,6 +6,7 @@ import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/Ac
 
 // libraries
 import {Errors} from "./libraries/Errors.sol";
+import {Events} from "./libraries/Events.sol";
 
 // interfaces
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
@@ -86,12 +87,12 @@ contract AccessController is AccessControl {
     // Monitor role functions
     function addMonitor(address addr) external noZeroAddress(addr) {
         grantRole(MONITOR_ROLE, addr);
-        emit MonitorAdded(addr, msg.sender);
+        emit Events.MonitorAdded(addr, msg.sender);
     }
 
     function removeMonitor(address addr) external noZeroAddress(addr) {
         revokeRole(MONITOR_ROLE, addr);
-        emit MonitorRemoved(addr, msg.sender);
+        emit Events.MonitorRemoved(addr, msg.sender);
     }
 
     function isMonitor(address addr) external view returns (bool) {
@@ -101,12 +102,12 @@ contract AccessController is AccessControl {
     // CronJob role functions
     function addCronJob(address addr) external noZeroAddress(addr) {
         grantRole(CRON_JOB_ROLE, addr);
-        emit CronJobAdded(addr, msg.sender);
+        emit Events.CronJobAdded(addr, msg.sender);
     }
 
     function removeCronJob(address addr) external noZeroAddress(addr) {
         revokeRole(CRON_JOB_ROLE, addr);
-        emit CronJobRemoved(addr, msg.sender);
+        emit Events.CronJobRemoved(addr, msg.sender);
     }
 
     function isCronJob(address addr) external view returns (bool) {
@@ -118,11 +119,12 @@ contract AccessController is AccessControl {
     // Monitor admin functions
     function addMonitorAdmin(address addr) external noZeroAddress(addr) {
         grantRole(MONITOR_ADMIN_ROLE, addr);
-        emit MonitorAdminAdded(addr, msg.sender);
+        emit Events.MonitorAdminAdded(addr, msg.sender);
     }
 
     function removeMonitorAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(MONITOR_ADMIN_ROLE, addr);
+        emit Events.MonitorAdminRemoved(addr, msg.sender);
     }
 
     function isMonitorAdmin(address addr) external view returns (bool) {
@@ -132,11 +134,12 @@ contract AccessController is AccessControl {
     // CronJob admin functions
     function addCronJobAdmin(address addr) external noZeroAddress(addr) {
         grantRole(CRON_JOB_ADMIN_ROLE, addr);
-        emit CronJobAdminAdded(addr, msg.sender);
+        emit Events.CronJobAdminAdded(addr, msg.sender);
     }
 
     function removeCronJobAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(CRON_JOB_ADMIN_ROLE, addr);
+        emit Events.CronJobAdminRemoved(addr, msg.sender);
     }
 
     function isCronJobAdmin(address addr) external view returns (bool) {
@@ -148,10 +151,12 @@ contract AccessController is AccessControl {
     // PaymentsControllerAdmin role functions
     function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+        emit Events.PaymentsControllerAdminAdded(addr, msg.sender);
     }
 
     function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+        emit Events.PaymentsControllerAdminRemoved(addr, msg.sender);
     }
 
     function isPaymentsControllerAdmin(address addr) external view returns (bool) {
@@ -162,10 +167,12 @@ contract AccessController is AccessControl {
     // VotingControllerAdmin role functions
     function addVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+        emit Events.VotingControllerAdminAdded(addr, msg.sender);
     }
 
     function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+        emit Events.VotingControllerAdminRemoved(addr, msg.sender);
     }
 
     function isVotingControllerAdmin(address addr) external view returns (bool) {
@@ -176,10 +183,12 @@ contract AccessController is AccessControl {
     // AssetManager role functions
     function addAssetManager(address addr) external noZeroAddress(addr) {
         grantRole(ASSET_MANAGER_ROLE, addr);
+        emit Events.AssetManagerAdded(addr, msg.sender);
     }
 
     function removeAssetManager(address addr) external noZeroAddress(addr) {
         revokeRole(ASSET_MANAGER_ROLE, addr);
+        emit Events.AssetManagerRemoved(addr, msg.sender);
     }
 
     function isAssetManager(address addr) external view returns (bool) {
@@ -190,10 +199,12 @@ contract AccessController is AccessControl {
     // EmergencyExitHandler role functions
     function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+        emit Events.EmergencyExitHandlerAdded(addr, msg.sender);
     }
     
     function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+        emit Events.EmergencyExitHandlerRemoved(addr, msg.sender);
     }
 
     function isEmergencyExitHandler(address addr) external view returns (bool) {
@@ -204,10 +215,12 @@ contract AccessController is AccessControl {
 
     function addGlobalAdmin(address addr) external noZeroAddress(addr) {
         grantRole(DEFAULT_ADMIN_ROLE, addr);
+        emit Events.GlobalAdminAdded(addr, msg.sender);
     }
 
     function removeGlobalAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(DEFAULT_ADMIN_ROLE, addr);
+        emit Events.GlobalAdminRemoved(addr, msg.sender);
     }
 
     function isGlobalAdmin(address addr) external view returns (bool) {
