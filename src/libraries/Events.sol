@@ -110,4 +110,23 @@ library Events {
     event EmergencyExitIssuers(bytes32[] issuerIds);
     event EmergencyExitVerifiers(bytes32[] verifierIds);
 
+// --------- AccessController.sol ---------
+    //
+    event MonitorAdded(address indexed monitor, address indexed addedBy);
+    event MonitorRemoved(address indexed monitor, address indexed removedBy);
+    //
+    event CronJobAdded(address indexed cronJob, address indexed addedBy);
+    event CronJobRemoved(address indexed cronJob, address indexed removedBy);
+    //
+    event EmergencyExitHandlerAdded(address indexed handler, address indexed addedBy);
+    event EmergencyExitHandlerRemoved(address indexed handler, address indexed removedBy);
+    //
+    event PaymentsControllerAdminAdded(address indexed admin, address indexed addedBy);
+    event PaymentsControllerAdminRemoved(address indexed admin, address indexed removedBy);
+    //
+    event VotingControllerAdminAdded(address indexed admin, address indexed addedBy);
+    event VotingControllerAdminRemoved(address indexed admin, address indexed removedBy);
+    //
+    event AssetManagerAdded(address indexed manager, address indexed addedBy);
+    event AssetManagerRemoved(address indexed manager, address indexed removedBy);
 }

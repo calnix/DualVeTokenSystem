@@ -107,10 +107,12 @@ contract AccessController is AccessControl {
 
     function addMonitor(address addr) external noZeroAddress(addr) {
         grantRole(MONITOR_ROLE, addr);
+        emit MonitorAdded(addr, msg.sender);
     }
 
     function removeMonitor(address addr) external noZeroAddress(addr) {
         revokeRole(MONITOR_ROLE, addr);
+        emit MonitorRemoved(addr, msg.sender);
     }
 
     function isMonitor(address addr) external view returns (bool) {
@@ -121,10 +123,12 @@ contract AccessController is AccessControl {
 
     function addCronJob(address addr) external noZeroAddress(addr) {
         grantRole(CRON_JOB_ROLE, addr);
+        emit CronJobAdded(addr, msg.sender);
     }
 
     function removeCronJob(address addr) external noZeroAddress(addr) {
         revokeRole(CRON_JOB_ROLE, addr);
+        emit CronJobRemoved(addr, msg.sender);
     }
 
     function isCronJob(address addr) external view returns (bool) {
@@ -136,10 +140,12 @@ contract AccessController is AccessControl {
 
     function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+        emit EmergencyExitHandlerAdded(addr, msg.sender);
     }
 
     function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+        emit EmergencyExitHandlerRemoved(addr, msg.sender);
     }
 
     function isEmergencyExitHandler(address addr) external view returns (bool) {
@@ -151,10 +157,12 @@ contract AccessController is AccessControl {
 
     function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+        emit PaymentsControllerAdminAdded(addr, msg.sender);
     }
 
     function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+        emit PaymentsControllerAdminRemoved(addr, msg.sender);
     }
 
     function isPaymentsControllerAdmin(address addr) external view returns (bool) {
@@ -165,10 +173,12 @@ contract AccessController is AccessControl {
 
     function addVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+        emit VotingControllerAdminAdded(addr, msg.sender);
     }
 
     function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+        emit VotingControllerAdminRemoved(addr, msg.sender);
     }
 
     function isVotingControllerAdmin(address addr) external view returns (bool) {
@@ -180,16 +190,17 @@ contract AccessController is AccessControl {
 
     function addAssetManager(address addr) external noZeroAddress(addr) {
         grantRole(ASSET_MANAGER_ROLE, addr);
+        emit AssetManagerAdded(addr, msg.sender);
     }
     
     function removeAssetManager(address addr) external noZeroAddress(addr) {
         revokeRole(ASSET_MANAGER_ROLE, addr);
+        emit AssetManagerRemoved(addr, msg.sender);
     }
 
     function isAssetManager(address addr) external view returns (bool) {
         return hasRole(ASSET_MANAGER_ROLE, addr);
     }
-
 
 
 // ----- modifiers -----
