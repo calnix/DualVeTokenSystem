@@ -14,6 +14,112 @@
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE");
 ```
 
+# ROLE HIERARCHY 
+
+DEFAULT_ADMIN_ROLE (Global Admin - CEO/Directors Multi-sig)
+├── MONITOR_ADMIN_ROLE (Dev/Ops Team 2/3 Multi-sig)
+│   └── MONITOR_ROLE (High frequency - pause bots across all contracts)
+├── CRON_JOB_ADMIN_ROLE (Dev/Ops Team 2/3 Multi-sig)
+│   └── CRON_JOB_ROLE (High frequency - epoch operations & pool management)
+├── PAYMENTS_CONTROLLER_ADMIN_ROLE (Direct to Global Admin - Executive Multi-sig)
+├── VOTING_CONTROLLER_ADMIN_ROLE (Direct to Global Admin - Executive Multi-sig)
+├── ASSET_MANAGER_ROLE (Direct to Global Admin - Executive Multi-sig)
+└── EMERGENCY_EXIT_HANDLER_ROLE (Direct to Global Admin - Executive Multi-sig)
+
+## DETAILED ROLE BREAKDOWN:
+
+**TIER 1: SUPREME GOVERNANCE**
+
+DEFAULT_ADMIN_ROLE
+├── Manages: All role admins + direct strategic roles
+├── Multi-sig: 4-of-7 (CEO, Directors, Senior Leadership)
+├── Frequency: Very Rare (emergency actions, role hierarchy changes)
+└── Override: Can override ANY role decision
+
+**TIER 2: OPERATIONAL ADMIN ROLES** 
+
+MONITOR_ADMIN_ROLE
+├── Manages: MONITOR_ROLE addresses
+├── Multi-sig: 2-of-3 (Dev/Ops Team)
+├── Frequency: High (bot rotation, address management)
+└── Purpose: Enable rapid response without executive bottlenecks
+
+CRON_JOB_ADMIN_ROLE  
+├── Manages: CRON_JOB_ROLE addresses
+├── Multi-sig: 2-of-3 (Dev/Ops Team) 
+├── Frequency: Medium (EOA rotation for epoch operations)
+└── Purpose: Enable automated operations without executive approval
+
+**TIER 3: HIGH-FREQUENCY OPERATIONAL ROLES**
+
+MONITOR_ROLE
+├── Functions: pause() across VotingEscrowMoca, VotingController, PaymentsController
+├── Addresses: Multiple monitoring bots (EOAs)
+├── Frequency: Rare but critical (emergency pause)
+└── Management: MONITOR_ADMIN_ROLE can add/remove addresses
+
+CRON_JOB_ROLE
+├── Functions: 
+│   ├── VotingEscrowMoca: createLockFor()
+│   ├── VotingController: depositEpochSubsidies(), finalizeEpochRewardsSubsidies()
+│   ├── VotingController: createPool(), removePool()
+├── Addresses: Automation EOAs (bi-weekly rotation)
+├── Frequency: High (every 2 weeks for epoch operations)
+└── Management: CRON_JOB_ADMIN_ROLE can add/remove addresses
+
+**TIER 4: STRATEGIC ROLES (Direct to Global Admin)**
+
+PAYMENTS_CONTROLLER_ADMIN_ROLE
+├── Functions: updateProtocolFeePercentage(), updateVotingFeePercentage()
+│             updateVerifierSubsidyPercentages(), updatePoolId()
+├── Multi-sig: 2-of-3 (Product/Finance Team)
+├── Frequency: Rare (governance-driven parameter updates)
+└── Management: DEFAULT_ADMIN_ROLE only
+
+VOTING_CONTROLLER_ADMIN_ROLE
+├── Functions: setMaxDelegateFeePct(), setFeeIncreaseDelayEpochs()
+│             setUnclaimedDelay(), setDelegateRegistrationFee()
+├── Multi-sig: 2-of-3 (Product/Governance Team)  
+├── Frequency: Rare (governance-driven parameter updates)
+└── Management: DEFAULT_ADMIN_ROLE only
+
+ASSET_MANAGER_ROLE
+├── Functions: withdrawUnclaimedRewards(), withdrawUnclaimedSubsidies()
+│             withdrawRegistrationFees(), withdrawProtocolFees(), withdrawVotersFees()
+├── Multi-sig: 2-of-3 (Treasury/Finance Team)
+├── Frequency: Medium (monthly/quarterly asset management)
+└── Management: DEFAULT_ADMIN_ROLE only
+
+EMERGENCY_EXIT_HANDLER_ROLE
+├── Functions: emergencyExit() across VotingEscrowMoca, VotingController
+│             emergencyExitVerifiers(), emergencyExitIssuers() in PaymentsController
+├── Multi-sig: 2-of-3 (Emergency Response Team)
+├── Frequency: Very Rare (emergency asset recovery)
+└── Management: DEFAULT_ADMIN_ROLE only
+
+# OPERATIONAL WORKFLOW
+
+**Daily Operations (No Executive Approval Needed):**
+Dev/Ops Team → MONITOR_ADMIN_ROLE → Add/Remove MONITOR_ROLE bots
+Dev/Ops Team → CRON_JOB_ADMIN_ROLE → Add/Remove CRON_JOB_ROLE addresses
+Monitoring Bots → MONITOR_ROLE → pause() contracts if issues detected
+Automation Scripts → CRON_JOB_ROLE → Bi-weekly epoch operations
+
+**Strategic Operations (Executive Approval Required):**
+Executive Team → DEFAULT_ADMIN_ROLE → Grant/Revoke strategic roles
+Product Team → PAYMENTS_CONTROLLER_ADMIN_ROLE → Update protocol parameters
+Governance Team → VOTING_CONTROLLER_ADMIN_ROLE → Update voting parameters  
+Treasury Team → ASSET_MANAGER_ROLE → Monthly asset withdrawals
+Emergency Team → EMERGENCY_EXIT_HANDLER_ROLE → Emergency asset recovery
+
+**HIERARCHY SUMMARY:**
+| Level | Role Type          | Frequency   | Management          | Multi-sig Size |
+|-------|--------------------|-------------|---------------------|----------------|
+| 1     | Supreme Admin      | Very Rare   | Self-managed        | 4-of-7         |
+| 2     | Operational Admins | High/Medium | DEFAULT_ADMIN_ROLE  | 2-of-3         |
+| 3     | Operational Roles  | High        | Dedicated Admins    | EOAs           |
+| 4     | Strategic Roles    | Rare/Medium | DEFAULT_ADMIN_ROLE  | 2-of-3         |
+
 # DEPLOYMENT & OPERATIONAL WORKFLOW
 Deployment Process:
 1. Deploy AddressBook → Set globalAdmin (executive multisig)
@@ -65,3 +171,4 @@ Executive Team (via DEFAULT_ADMIN_ROLE):
 -Role hierarchy changes (DEFAULT_ADMIN_ROLE)
 -Emergency actions (DEFAULT_ADMIN_ROLE, EMERGENCY_EXIT_HANDLER_ROLE)
 -Pause/unpause/freeze operations
+
