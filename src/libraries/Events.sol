@@ -123,8 +123,8 @@ library Events {
     event CronJobAdded(address indexed cronJob, address indexed addedBy);
     event CronJobRemoved(address indexed cronJob, address indexed removedBy);
     //
-    event EmergencyExitHandlerAdded(address indexed handler, address indexed addedBy);
-    event EmergencyExitHandlerRemoved(address indexed handler, address indexed removedBy);
+    event MonitorAdminAdded(address indexed admin, address indexed addedBy);
+    event CronJobAdminAdded(address indexed admin, address indexed addedBy);
     //
     event PaymentsControllerAdminAdded(address indexed admin, address indexed addedBy);
     event PaymentsControllerAdminRemoved(address indexed admin, address indexed removedBy);
@@ -134,4 +134,7 @@ library Events {
     //
     event AssetManagerAdded(address indexed manager, address indexed addedBy);
     event AssetManagerRemoved(address indexed manager, address indexed removedBy);
+    //
+    event EmergencyExitHandlerAdded(address indexed handler, address indexed addedBy);
+    event EmergencyExitHandlerRemoved(address indexed handler, address indexed removedBy);
 }

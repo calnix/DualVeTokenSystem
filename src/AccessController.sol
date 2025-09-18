@@ -20,46 +20,55 @@ import {IAddressBook} from "./interfaces/IAddressBook.sol";
 contract AccessController is AccessControl {
 
     IAddressBook internal immutable _addressBook;
-
-    // retrieved from AddressBook: DEFAULT_ADMIN_ROLE
-    bytes32 internal GLOBAL_ADMIN = keccak256("GLOBAL_ADMIN"); 
-
-   
-    // ----- Lowest privilege, automated/operational functions ----- 
-    // Operational roles - no admin privileges [attached to scripts]
-    bytes32 private constant MONITOR_ROLE = keccak256("MONITOR_ROLE");    // Pause only
-    bytes32 private constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");  // Automated tasks: createLockFor
-    bytes32 private constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256('EMERGENCY_EXIT_HANDLER_ROLE'); // Emergency only
+  
+    // ______ HIGH-FREQUENCY ROLES [AUTOMATED OPERATIONAL FUNCTIONS] ______
+    bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");    // Pause only
+    bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");  // Automated tasks: createLockFor, finalizeEpoch, depositSubsidies
     
-    // ----- Contract-specific admin roles -----
+    // Role admins for operational roles [Dedicated role admins for operational efficiency]
+    bytes32 public constant MONITOR_ADMIN_ROLE = keccak256("MONITOR_ADMIN_ROLE"); 
+    bytes32 public constant CRON_JOB_ADMIN_ROLE = keccak256("CRON_JOB_ADMIN_ROLE");
+
+    // ______ LOW-FREQUENCY STRATEGIC ROLES: NO DEDICATED ADMINS [MANAGED BY GLOBAL ADMIN] ______
     // Roles for making changes to contract parameters + configuration [multi-sig]
-    bytes32 private constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256('PAYMENTS_CONTROLLER_ADMIN_ROLE'); 
-    bytes32 private constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256('VOTING_CONTROLLER_ADMIN_ROLE');    
-    
-    // ----- Asset management roles [for multiple contracts] -----
-    // for depositing/withdrawing/converting assets across contracts: [PaymentsController, VotingController, esMoca]
-    bytes32 private constant ASSET_MANAGER_ROLE = keccak256('ASSET_MANAGER_ROLE'); //withdrawUnclaimedX, finalizeEpoch, depositSubsidies
+    bytes32 public constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256("PAYMENTS_CONTROLLER_ADMIN_ROLE");
+    bytes32 public constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256("VOTING_CONTROLLER_ADMIN_ROLE");
+    // [for multiple contracts]: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
+    bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE"); // withdraw fns on PaymentsController, VotingController
+    bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
 
 //-------------------------------constructor-----------------------------------------
 
     /**
      * @dev Constructor
-     * @param addressBook_ The address of the AddressBook
+     * @param addressBook The address of the AddressBook
     */
     constructor(address addressBook) {
-
-        // address book
         _addressBook = IAddressBook(addressBook);
-
-        // get global admin from AddressBook: DEFAULT_ADMIN_ROLE
-        address globalAdmin = _addressBook.addresses(bytes32(0));
+        
+        // Get global admin from AddressBook
+        address globalAdmin = _addressBook.getGlobalAdmin();
         require(globalAdmin != address(0), Errors.InvalidAddress());
 
-        // set DEFAULT_ADMIN_ROLE to global admin address
+        // Grant supreme admin role
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
+        
+        // Set up operational role hierarchy
+        _setRoleAdmin(MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        
+        // High-frequency roles managed by their dedicated admins
+        _setRoleAdmin(MONITOR_ROLE, MONITOR_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ROLE, CRON_JOB_ADMIN_ROLE);
+        
+        // Low-frequency roles managed directly by global admin
+        _setRoleAdmin(PAYMENTS_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(VOTING_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(ASSET_MANAGER_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
     }
 
-// ----- external functions -----
+// ----- generic setRoleAdmin function -----
 
     /**
      * @notice Sets the admin role for a specific role
@@ -71,32 +80,10 @@ contract AccessController is AccessControl {
         _setRoleAdmin(role, adminRole);
     }
 
-// ----- GLOBAL_ADMIN ROLE -----
 
-    /** note
-        do you want to have a separate global admin tt is not DEFAULT_ADMIN_ROLE[0x00]?
-        - how would it be useful?
-     */
+// -------------------- HIGH-FREQUENCY ROLE MANAGEMENT --------------------
 
-
-    function addGlobalAdmin(address addr) external noZeroAddress(addr) {
-        grantRole(DEFAULT_ADMIN_ROLE, addr);
-    }
-
-    function removeGlobalAdmin(address addr) external noZeroAddress(addr) {
-        revokeRole(DEFAULT_ADMIN_ROLE, addr);
-    }
-
-    function isGlobalAdmin(address addr) external view returns (bool) {
-        return hasRole(DEFAULT_ADMIN_ROLE, addr);
-    }
-
-// ----- MONITOR ROLE -----
-
-    //note: should probably set the roleAdmin for Monitors to be a different role [not 0x00]
-    //      so that we can manage the pause bots easily w/o GLOBAL_ADMIN
-    //      MONITOR_ROLE_ADMIN can be a 2/2 multisig, within just the engineers
-
+    // Monitor role functions
     function addMonitor(address addr) external noZeroAddress(addr) {
         grantRole(MONITOR_ROLE, addr);
         emit MonitorAdded(addr, msg.sender);
@@ -111,8 +98,7 @@ contract AccessController is AccessControl {
         return hasRole(MONITOR_ROLE, addr);
     }
 
-// ----- CRON_JOB ROLE -----
-
+    // CronJob role functions
     function addCronJob(address addr) external noZeroAddress(addr) {
         grantRole(CRON_JOB_ROLE, addr);
         emit CronJobAdded(addr, msg.sender);
@@ -126,51 +112,60 @@ contract AccessController is AccessControl {
     function isCronJob(address addr) external view returns (bool) {
         return hasRole(CRON_JOB_ROLE, addr);
     }
-
-
-// ----- EMERGENCY_EXIT ROLE -----
-
-    function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
-        grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
-        emit EmergencyExitHandlerAdded(addr, msg.sender);
+    
+    // --------------- OPERATIONAL ADMIN ROLE MANAGEMENT ---------------
+    
+    // Monitor admin functions
+    function addMonitorAdmin(address addr) external noZeroAddress(addr) {
+        grantRole(MONITOR_ADMIN_ROLE, addr);
+        emit MonitorAdminAdded(addr, msg.sender);
     }
 
-    function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) {
-        revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
-        emit EmergencyExitHandlerRemoved(addr, msg.sender);
+    function removeMonitorAdmin(address addr) external noZeroAddress(addr) {
+        revokeRole(MONITOR_ADMIN_ROLE, addr);
     }
 
-    function isEmergencyExitHandler(address addr) external view returns (bool) {
-        return hasRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    function isMonitorAdmin(address addr) external view returns (bool) {
+        return hasRole(MONITOR_ADMIN_ROLE, addr);
     }
 
+    // CronJob admin functions
+    function addCronJobAdmin(address addr) external noZeroAddress(addr) {
+        grantRole(CRON_JOB_ADMIN_ROLE, addr);
+        emit CronJobAdminAdded(addr, msg.sender);
+    }
 
-// ----- PaymentsController Admin -----
+    function removeCronJobAdmin(address addr) external noZeroAddress(addr) {
+        revokeRole(CRON_JOB_ADMIN_ROLE, addr);
+    }
 
+    function isCronJobAdmin(address addr) external view returns (bool) {
+        return hasRole(CRON_JOB_ADMIN_ROLE, addr);
+    }
+
+// -------------------- LOW-FREQUENCY STRATEGIC ROLES (managed by DEFAULT_ADMIN_ROLE) --------------------
+
+    // PaymentsControllerAdmin role functions
     function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
-        emit PaymentsControllerAdminAdded(addr, msg.sender);
     }
 
     function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
-        emit PaymentsControllerAdminRemoved(addr, msg.sender);
     }
 
     function isPaymentsControllerAdmin(address addr) external view returns (bool) {
         return hasRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
     }
 
-// ----- VotingController Admin -----
 
+    // VotingControllerAdmin role functions
     function addVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
-        emit VotingControllerAdminAdded(addr, msg.sender);
     }
 
     function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
-        emit VotingControllerAdminRemoved(addr, msg.sender);
     }
 
     function isVotingControllerAdmin(address addr) external view returns (bool) {
@@ -178,16 +173,13 @@ contract AccessController is AccessControl {
     }
 
 
-// ----- ASSET_MANAGER ROLE -----
-
+    // AssetManager role functions
     function addAssetManager(address addr) external noZeroAddress(addr) {
         grantRole(ASSET_MANAGER_ROLE, addr);
-        emit AssetManagerAdded(addr, msg.sender);
     }
-    
+
     function removeAssetManager(address addr) external noZeroAddress(addr) {
         revokeRole(ASSET_MANAGER_ROLE, addr);
-        emit AssetManagerRemoved(addr, msg.sender);
     }
 
     function isAssetManager(address addr) external view returns (bool) {
@@ -195,27 +187,38 @@ contract AccessController is AccessControl {
     }
 
 
-// ----- modifiers -----
+    // EmergencyExitHandler role functions
+    function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
+        grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    }
+    
+    function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) {
+        revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    }
+
+    function isEmergencyExitHandler(address addr) external view returns (bool) {
+        return hasRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+    }
+
+// -------------------- GLOBAL ADMIN FUNCTIONS --------------------
+
+    function addGlobalAdmin(address addr) external noZeroAddress(addr) {
+        grantRole(DEFAULT_ADMIN_ROLE, addr);
+    }
+
+    function removeGlobalAdmin(address addr) external noZeroAddress(addr) {
+        revokeRole(DEFAULT_ADMIN_ROLE, addr);
+    }
+
+    function isGlobalAdmin(address addr) external view returns (bool) {
+        return hasRole(DEFAULT_ADMIN_ROLE, addr);
+    }
+
+
+// -------------------- MODIFIERS --------------------------------
 
     modifier noZeroAddress(address addr) {
         require(addr != address(0), Errors.InvalidAddress());
         _;
     }
 }
-
-// https://aave.com/docs/developers/smart-contracts/acl-manager
-// https://github.com/aave-dao/aave-v3-origin/blob/main/src/contracts/protocol/configuration/ACLManager.sol
-
-
-    /**
-        for privileged calls, other contract would refer to this to check permissioning. 
-        
-        I.e. Voting.sol has modifier:
-
-            function _onlyRiskOrPoolAdmins() internal view {
-                IACLManager aclManager = IACLManager(_addressesProvider.getACLManager());
-                require(
-                    aclManager.isRiskAdmin(msg.sender) || aclManager.isPoolAdmin(msg.sender),
-                    Errors.CallerNotRiskOrPoolAdmin()
-            );
-    */
