@@ -16,7 +16,7 @@
 
 # ROLE HIERARCHY 
 
-DEFAULT_ADMIN_ROLE (Global Admin - CEO/Directors Multi-sig)
+DEFAULT_ADMIN_ROLE (Global Admin - Executive Multi-sig)
 ├── MONITOR_ADMIN_ROLE (Dev/Ops Team 2/3 Multi-sig)
 │   └── MONITOR_ROLE (High frequency - pause bots across all contracts)
 ├── CRON_JOB_ADMIN_ROLE (Dev/Ops Team 2/3 Multi-sig)
@@ -30,72 +30,73 @@ DEFAULT_ADMIN_ROLE (Global Admin - CEO/Directors Multi-sig)
 
 **TIER 1: SUPREME GOVERNANCE**
 
-DEFAULT_ADMIN_ROLE
+`DEFAULT_ADMIN_ROLE`
 ├── Manages: All role admins + direct strategic roles
-├── Multi-sig: 4-of-7 (CEO, Directors, Senior Leadership)
+├── Multi-sig: 4-of-7 (Senior Leadership)
 ├── Frequency: Very Rare (emergency actions, role hierarchy changes)
 └── Override: Can override ANY role decision
 
 **TIER 2: OPERATIONAL ADMIN ROLES** 
 
 MONITOR_ADMIN_ROLE
-├── Manages: MONITOR_ROLE addresses
+├── Manages: `MONITOR_ROLE` addresses
 ├── Multi-sig: 2-of-3 (Dev/Ops Team)
 ├── Frequency: High (bot rotation, address management)
 └── Purpose: Enable rapid response without executive bottlenecks
 
-CRON_JOB_ADMIN_ROLE  
-├── Manages: CRON_JOB_ROLE addresses
+`CRON_JOB_ADMIN_ROLE` 
+├── Manages: `CRON_JOB_ROLE` addresses
 ├── Multi-sig: 2-of-3 (Dev/Ops Team) 
-├── Frequency: Medium (EOA rotation for epoch operations)
+├── Frequency: Medium (EOA rotation as needed for bot management)
 └── Purpose: Enable automated operations without executive approval
 
 **TIER 3: HIGH-FREQUENCY OPERATIONAL ROLES**
 
-MONITOR_ROLE
-├── Functions: pause() across VotingEscrowMoca, VotingController, PaymentsController
+`MONITOR_ROLE`
+├── Functions: `pause()` across VotingEscrowMoca, VotingController, PaymentsController
 ├── Addresses: Multiple monitoring bots (EOAs)
 ├── Frequency: Rare but critical (emergency pause)
-└── Management: MONITOR_ADMIN_ROLE can add/remove addresses
+└── Management: `MONITOR_ADMIN_ROLE` can add/remove addresses
 
-CRON_JOB_ROLE
+`CRON_JOB_ROLE`
 ├── Functions: 
-│   ├── VotingEscrowMoca: createLockFor()
-│   ├── VotingController: depositEpochSubsidies(), finalizeEpochRewardsSubsidies()
-│   ├── VotingController: createPool(), removePool()
-├── Addresses: Automation EOAs (bi-weekly rotation)
+│   ├── VotingEscrowMoca: `createLockFor()`
+│   ├── VotingController: `depositEpochSubsidies()`, `finalizeEpochRewardsSubsidies()`
+│   ├── VotingController: `createPool()`, `removePool()`
+├── Addresses: Automation EOAs (addressed to be added, and then stripped after ops execution)
 ├── Frequency: High (every 2 weeks for epoch operations)
-└── Management: CRON_JOB_ADMIN_ROLE can add/remove addresses
+└── Management: `CRON_JOB_ADMIN_ROLE` can add/remove addresses
 
 **TIER 4: STRATEGIC ROLES (Direct to Global Admin)**
 
-PAYMENTS_CONTROLLER_ADMIN_ROLE
-├── Functions: updateProtocolFeePercentage(), updateVotingFeePercentage()
-│             updateVerifierSubsidyPercentages(), updatePoolId()
-├── Multi-sig: 2-of-3 (Product/Finance Team)
+`PAYMENTS_CONTROLLER_ADMIN_ROLE`
+├── Functions: `updateProtocolFeePercentage()`, `updateVotingFeePercentage()`
+│             `updateVerifierSubsidyPercentages()`, `updatePoolId()`
+├── Multi-sig: 2-of-3 (Dev/Ops Team)
 ├── Frequency: Rare (governance-driven parameter updates)
-└── Management: DEFAULT_ADMIN_ROLE only
+└── Management: `DEFAULT_ADMIN_ROLE` only
 
-VOTING_CONTROLLER_ADMIN_ROLE
-├── Functions: setMaxDelegateFeePct(), setFeeIncreaseDelayEpochs()
-│             setUnclaimedDelay(), setDelegateRegistrationFee()
-├── Multi-sig: 2-of-3 (Product/Governance Team)  
+`VOTING_CONTROLLER_ADMIN_ROLE`
+├── Functions: `setMaxDelegateFeePct()`, `setFeeIncreaseDelayEpochs()`
+│             `setUnclaimedDelay()`, `setDelegateRegistrationFee()`
+├── Multi-sig: 2-of-3 (Dev/Ops Team)  
 ├── Frequency: Rare (governance-driven parameter updates)
-└── Management: DEFAULT_ADMIN_ROLE only
+└── Management: `DEFAULT_ADMIN_ROLE` only
 
-ASSET_MANAGER_ROLE
-├── Functions: withdrawUnclaimedRewards(), withdrawUnclaimedSubsidies()
-│             withdrawRegistrationFees(), withdrawProtocolFees(), withdrawVotersFees()
-├── Multi-sig: 2-of-3 (Treasury/Finance Team)
+`ASSET_MANAGER_ROLE`
+├── Functions: `withdrawUnclaimedRewards()`, `withdrawUnclaimedSubsidies()`
+│              `withdrawRegistrationFees()`, `withdrawProtocolFees()`, `withdrawVotersFees()`
+├── Multi-sig: 2-of-3 (DAT Team)
 ├── Frequency: Medium (monthly/quarterly asset management)
-└── Management: DEFAULT_ADMIN_ROLE only
+└── Management: `DEFAULT_ADMIN_ROLE` only
 
-EMERGENCY_EXIT_HANDLER_ROLE
-├── Functions: emergencyExit() across VotingEscrowMoca, VotingController
-│             emergencyExitVerifiers(), emergencyExitIssuers() in PaymentsController
-├── Multi-sig: 2-of-3 (Emergency Response Team)
+`EMERGENCY_EXIT_HANDLER_ROLE`
+├── Functions: `emergencyExit()` across VotingEscrowMoca & VotingController.
+│              `emergencyExitVerifiers()`, `emergencyExitIssuers()` in PaymentsController.
+├── Multi-sig: 2-of-3 (Emergency Response Team) 
+               [multi-sig to freeze, then add EOA address for bot to call repeatedly]
 ├── Frequency: Very Rare (emergency asset recovery)
-└── Management: DEFAULT_ADMIN_ROLE only
+└── Management: `DEFAULT_ADMIN_ROLE` only
 
 # OPERATIONAL WORKFLOW
 
