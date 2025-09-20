@@ -14,7 +14,7 @@
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE");
 ```
 
-# ROLE HIERARCHY 
+# ROLE HIERARCHY OVERVIEW 
 
 DEFAULT_ADMIN_ROLE (Global Admin - Executive Multi-sig)
 ├── MONITOR_ADMIN_ROLE (Dev/Ops Team 2/3 Multi-sig)
@@ -25,6 +25,22 @@ DEFAULT_ADMIN_ROLE (Global Admin - Executive Multi-sig)
 ├── VOTING_CONTROLLER_ADMIN_ROLE (Direct to Global Admin - Executive Multi-sig)
 ├── ASSET_MANAGER_ROLE (Direct to Global Admin - Executive Multi-sig)
 └── EMERGENCY_EXIT_HANDLER_ROLE (Direct to Global Admin - Executive Multi-sig)
+
+**Operational Benefits**
+
+High-frequency roles (`MONITOR`, `CRON_JOB`):
+✅ Dev team can manage daily operations without exec approval
+✅ Faster response for bot rotation/maintenance
+✅ Global admin retains override capability
+
+Low-frequency roles:
+✅ Deliberate changes requiring exec review
+✅ Simplified hierarchy for infrequent updates
+✅ Direct global admin control
+
+>1. Role Admin Override: DEFAULT_ADMIN_ROLE can still override any role admin
+>2. Least Privilege: High-frequency roles get dedicated admins, low-frequency stay centralized
+>3. Separation of Concerns: Daily ops vs strategic decisions clearly separated
 
 ## DETAILED ROLE BREAKDOWN:
 
@@ -101,25 +117,40 @@ MONITOR_ADMIN_ROLE
 # OPERATIONAL WORKFLOW
 
 **Daily Operations (No Executive Approval Needed):**
-Dev/Ops Team → MONITOR_ADMIN_ROLE → Add/Remove MONITOR_ROLE bots
-Dev/Ops Team → CRON_JOB_ADMIN_ROLE → Add/Remove CRON_JOB_ROLE addresses
-Monitoring Bots → MONITOR_ROLE → pause() contracts if issues detected
-Automation Scripts → CRON_JOB_ROLE → Bi-weekly epoch operations
+Dev/Ops Team       → `MONITOR_ADMIN_ROLE`  → Add/Remove MONITOR_ROLE bots
+Dev/Ops Team       → `CRON_JOB_ADMIN_ROLE` → Add/Remove CRON_JOB_ROLE bots
+Monitoring Bots    → `MONITOR_ROLE`        → Pause contracts if issues detected
+Automation Scripts → `CRON_JOB_ROLE`       → Epoch operations [every 14 days & 2.8 months for withdrawX]
 
 **Strategic Operations (Executive Approval Required):**
-Executive Team → DEFAULT_ADMIN_ROLE → Grant/Revoke strategic roles
-Product Team → PAYMENTS_CONTROLLER_ADMIN_ROLE → Update protocol parameters
-Governance Team → VOTING_CONTROLLER_ADMIN_ROLE → Update voting parameters  
-Treasury Team → ASSET_MANAGER_ROLE → Monthly asset withdrawals
-Emergency Team → EMERGENCY_EXIT_HANDLER_ROLE → Emergency asset recovery
+Executive Team → `DEFAULT_ADMIN_ROLE`             → Grant/Revoke strategic roles
+DevOps Team    → `PAYMENTS_CONTROLLER_ADMIN_ROLE` → Update protocol parameters
+DevOps Team    → `VOTING_CONTROLLER_ADMIN_ROLE`   → Update voting parameters
+Treasury Team  → `ASSET_MANAGER_ROLE`             → Monthly asset withdrawals
+Emergency Team → `EMERGENCY_EXIT_HANDLER_ROLE`    → Emergency asset recovery
 
-**HIERARCHY SUMMARY:**
+## SECURITY FEATURES:
+
+**Defense in Depth:**
+✅ Role Isolation: Compromise of operational admin doesn't affect strategic functions
+✅ Override Capability: DEFAULT_ADMIN_ROLE can override any decision
+✅ Frequency-Based Access: Administrative overhead matches operational needs
+✅ Multi-signature Requirements: All roles require multi-sig approval
+
+**Operational Efficiency:**
+✅ No Bottlenecks: High-frequency operations don't need executive approval
+✅ Rapid Response: Monitor bots can be managed immediately by dev team
+✅ Automated Operations: Epoch operations can proceed without delays
+✅ Clear Boundaries: Obvious separation between operational and strategic functions
+
+## HIERARCHY SUMMARY:
 | Level | Role Type          | Frequency   | Management          | Multi-sig Size |
 |-------|--------------------|-------------|---------------------|----------------|
 | 1     | Supreme Admin      | Very Rare   | Self-managed        | 4-of-7         |
 | 2     | Operational Admins | High/Medium | DEFAULT_ADMIN_ROLE  | 2-of-3         |
 | 3     | Operational Roles  | High        | Dedicated Admins    | EOAs           |
 | 4     | Strategic Roles    | Rare/Medium | DEFAULT_ADMIN_ROLE  | 2-of-3         |
+
 
 # DEPLOYMENT & OPERATIONAL WORKFLOW
 Deployment Process:
@@ -129,7 +160,7 @@ Deployment Process:
 4. Initial role assignment:
     - Grant MONITOR_ADMIN_ROLE to dev/ops multisig
     - Grant CRON_JOB_ADMIN_ROLE to dev/ops multisig
-    - Grant strategic roles directly to appropriate multisigs
+    - Grant strategic roles directly to appropriate multi-sigs
 
 # Daily Operations
 Dev/Ops Team (via role admins):
@@ -143,15 +174,10 @@ Executive Team (via DEFAULT_ADMIN_ROLE):
 - Strategic role assignments (rare)
 
 # Production Setup:
-- DEFAULT_ADMIN_ROLE: 4-of-7 (CEO, Directors, Senior Leadership)
+- DEFAULT_ADMIN_ROLE: 4-of-7 (Senior Leadership)
 - MONITOR_ADMIN_ROLE: 2-of-3 (Dev/Ops Team)
 - CRON_JOB_ADMIN_ROLE: 2-of-3 (Dev/Ops Team)
-- Strategic Roles: Individual 2-of-3 multisigs per function
-
-# Development/Staging:
-- More permissive for testing
-- Single EOAs acceptable for role admins
-- Clear upgrade path to production security
+- Strategic Roles: Individual 2-of-3 multi-sigs per function
 
 # SUMMARY BY FREQUENCY:
 
@@ -162,7 +188,7 @@ Executive Team (via DEFAULT_ADMIN_ROLE):
 
 ## MEDIUM FREQUENCY (Monthly)
 -Asset withdrawals (ASSET_MANAGER_ROLE)
--Pool creation/removal (VOTING_CONTROLLER_ADMIN_ROLE → should be CRON_JOB_ROLE)
+-Pool creation/removal (CRON_JOB_ROLE)
 
 ## LOW FREQUENCY (Quarterly/Governance)
 -Protocol parameter updates (Contract-specific admin roles)
