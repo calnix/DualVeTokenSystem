@@ -2,68 +2,73 @@
 
 ## Executive Summary
 
-The AccessController implements a role-based access control system that organizes permissions according to operational frequency rather than traditional security hierarchies. This approach enables rapid response for routine operations while maintaining strict governance over strategic decisions.
+The AccessController implements a **frequency-based role hierarchy** that aligns administrative authority with operational demands. This design eliminates bottlenecks in daily operations while maintaining executive oversight for strategic decisions.
 
-**Core Innovation**: Administrative authority is distributed based on how frequently roles need to be updated—high-frequency operational roles get dedicated administrators to avoid bottlenecks, while low-frequency strategic roles remain under direct executive oversight.
+**The Innovation:** 
+- Rather than traditional static hierarchies, permissions are assigned as a pair-wise evaluation on frequency of calls and its corresponding impact: {Freq. function call, Impact of fn call}. 
+- High-frequency operational roles have dedicated admins for instant action.
+- Low-frequency, high-impact roles fall directly under global admin control.
 
-Key Benefits:
-- Operational teams can manage routine tasks without executive delays
-- Strategic decisions receive appropriate governance review
-- Security risks are contained through role isolation
-- Emergency procedures remain available under all circumstances
+Additionally, authority is mapped to how often roles need to be updated. High-frequency operational roles have dedicated admins to add/remove addresses [i.e. risk bots, cron jobs].
+
+**Key Benefits:**
+- Operational efficiency: Teams manage routine tasks without executive delays.
+- Strategic oversight: Critical decisions undergo rigorous governance review.
+- Security containment: Role isolation limits the impact of potential compromises.
+- Emergency readiness: Emergency procedures remain immediately accessible.
 
 ## The Challenge of Secure Operations
 
-Every decentralized protocol faces a fundamental tension: how do you enable rapid operational responses while maintaining strict security controls? 
-- Too much bureaucracy creates dangerous delays. 
-- Too little oversight invites catastrophic mistakes.
+Decentralized protocols often face a tension between enabling rapid responses and enforcing security controls. 
+- Traditional systems typically require executive approval for all privileged operations, leading to delays in routine maintenance or emergency responses. 
+- This creates bottlenecks where operational needs outpace governance processes, potentially exposing systems to risks.
+- Consequently, risk updates execution always lag behind.
 
-Traditional access control systems force an difficult choice:
-- Grant broad permissions to operators (fast but risky)
-- Require executive approval for everything (secure but slow)
+The core issue is the mismatch between rigid hierarchies and dynamic operational requirements.
+- High-frequency and low-impact tasks such as bot management or automated processes need immediate action
+- Low-frequency and high-impact changes like contract params updates benefit from deliberate review. 
 
-**Understanding the challenge**
+A system that treats all operations uniformly can hinder efficiency without necessarily improving security.
 
-Traditional access control systems create operational bottlenecks by requiring executive approval for all privileged operations. 
-When monitoring systems detect anomalies and need immediate response, or when automated systems require routine maintenance, the approval process can introduce dangerous delays.
+## Core Innovation: Frequency-Based Access Control
 
-Consider a scenario where automated monitoring detects a potential security issue at 2 AM. The team needs to rotate monitoring addresses or pause contracts immediately, but must wait for executive approval. This delay could allow problems to escalate.
+The AccessController addresses this by organizing roles according to how frequently they need to be managed, creating distinct paths for operations:
 
-The AccessController system addresses this tension through a simple observation that reshapes how we think about permissions.
-It recognizes that not all privileged operations carry the same risk, or require the same level of oversight.
+- High-Frequency Operations: Include monitoring, automation, and routine maintenance. These are assigned dedicated administrators to avoid delays, ensuring rapid responses without compromising security.
+- Low-Frequency Strategic Operations: Cover protocol parameters, asset management, and emergency procedures. These remain under executive oversight to allow for careful consideration.
+- Emergency capabilities stay accessible, preventing lockouts.
 
-**Core Insight**
-Not all administrative tasks are created equal.
+**TLDR:**
+- Approval friction should scale with operational frequency. Match admin overhead to how often a role is used, and you get both speed and security.
+- Therefore, a frequency-based approach.
 
-*Some actions happen daily:*
-- Rotating monitoring bots
-- Processing scheduled operations
-- Responding to alerts
+## Key Insight
 
-*Others happen rarely:*
-- Changing protocol fees
-- Updating voting parameters
-- Recovering emergency funds
+The key insight is recognizing that not all administrative tasks require the same level of oversight. 
+- This reshapes how we think about permissions. 
+- Not all privileged actions are equal
+    - Some are daily (bot rotation, scheduled ops, alert response).
+    - Others are rare, ad-hoc or situational (fee changes, voting config, emergency recovery). The approval process should match the frequency and risk.
 
-The frequency of an action should determine its approval process.
-This insight drives our entire security architecture. By matching administrative overhead to operational frequency, we achieve both speed and security without compromise.
+By assigning authority based on a pair-wise evaluation of frequency and impact, the system reduces friction for common operations while ensuring safeguards for critical ones. 
 
-## The Frequency-Based Approach
-The system organizes roles according to how frequently they need to be managed, creating two distinct paths:
+## The Innovation: Frequency-Based Approach
+
+Roles are split by how often they need to be managed:
 
 **High-Frequency Operations**
-- Monitoring and pause functions: enable immediate response to issues
-- Automated system management: support routine maintenance
-- Bot rotation: ensure operational reliability
-- All require dedicated administrators for rapid, bottleneck-free action
+- Monitoring/pause: instant response to issues
+- Automation: routine maintenance
+- Bot rotation: operational reliability
+- All require dedicated admins for fast, bottleneck-free action
 
 **Low-Frequency Strategic Operations**
-- Protocol parameter updates: Economic decisions requiring careful consideration
-- Asset management: Treasury operations with financial implications
-- Emergency procedures: Crisis response requiring ultimate authority
-These operations benefit from centralized executive oversight.
-This separation creates operational efficiency while maintaining appropriate governance controls.
+- Protocol parameter updates: economic/strategic decisions
+- Asset management: treasury ops
+- Emergency procedures: crisis response
+- These stay under centralized executive oversight
 
+This separation delivers operational efficiency and strong governance.
 
 | High-Frequency Operations                | Strategic Operations            |
 |------------------------------------------|---------------------------------|
@@ -73,58 +78,52 @@ This separation creates operational efficiency while maintaining appropriate gov
 | **Need:** Instant response               | **Need:** Deliberate review     |
 | **Solution:** Dedicated admins           | **Solution:** Executive control |
 
+## Design Philosophy
 
-## Innovation and Design Philosophy
+Old model: All privileged ops go through execs—slow, bottle-necked, risky in emergencies.
 
-The old way—forcing all privileged ops through executive approval—creates bottlenecks, slows routine work, and delays emergency response. 
+Frequency-based model:  
+- High-frequency ops (bot rotation, monitoring) → dedicated admins, instant action  
+- Low-frequency, high-impact ops (protocol changes, asset management) → execs only  
+- Emergency powers always available, never stuck in red tape
 
-Our frequency-based model fixes this: high-frequency roles (like bot rotation and monitoring) get dedicated admins for rapid, frictionless ops; low-frequency, high-impact roles (like protocol changes and asset management) stay under executive control. 
+This lets teams move fast on daily ops, keeps critical decisions under review, and ensures global admin can always override. The result: scalable, secure, and operationally realistic permissions.
 
-Emergency powers are always available, not stuck in red tape.
+**Traditional Limitations:**
+- Exec approval for everything
+- Routine ops bottle-necked
+- Security model ignores operational reality
+- Emergency response tend to be delayed or bottle-necked
 
-This structure lets teams handle daily ops fast, keeps critical decisions under tight review, and ensures the global admin can always override if needed. The result: scalable permissions, strong security boundaries, and governance that actually fits how protocols run.
+**Frequency-Based Solution:**
+- High-frequency roles = dedicated admins
+- Strategic roles = exec oversight
+- Authority matches operational need
+- Emergency powers always on tap
 
-The AccessController introduces a fundamental shift from traditional role-based access control by recognizing that administrative overhead should match operational frequency.
+This model is both efficient and secure. Routine ops run without bureaucracy; critical changes get real governance. Global admin always has the override.
 
-**Traditional Approach Limitations:**
-- All privileged operations require executive approval
-- Routine maintenance becomes governance bottleneck
-- Security hierarchy doesn't reflect operational reality
-- Emergency response may be delayed by approval processes
-**Frequency-Based Innovation:**
-- High-frequency operational roles get dedicated administrators
-- Low-frequency strategic roles remain under direct executive oversight
-- Administrative authority matches operational needs
-- Emergency capabilities remain immediately available
-
-This approach creates a system that is both operationally efficient and strategically controlled. Teams can manage routine operations without bureaucratic delays, while critical decisions receive appropriate governance review. The global admin retains ultimate override capability, ensuring no operational issue can permanently compromise system control.
-
-The result is a permission system that scales with operational complexity while maintaining security boundaries, providing the foundation for sustainable protocol governance.
-
-**Core principles:**
-- Practical hierarchy: Roles that change frequently have dedicated admins
-- Strategic oversight: Rare, high-impact decisions remain with executives
-- Override safety: Global admin retains ultimate control
-- Multi-sig everything: No single points of failure
+**Core Principles:**
+- Practical hierarchy: frequent-change roles = dedicated admins
+- Strategic oversight: rare, high-impact = execs only
+- Override safety: global admin always in control
+- Multi-sig everywhere: no single point of failure
 
 **Key Benefits:**
-- Operational teams manage routine tasks without executive delays
-- Strategic decisions undergo rigorous governance review
-- Role isolation compartmentalizes security risks
-- Emergency procedures are always accessible
+- Ops teams move fast, no exec bottlenecks
+- Strategic changes get real review
+- Role isolation contains risk
+- Emergency actions always possible
 
-```
-*TLDR: The system is optimized for two key factors:*
-1. How frequently roles (and their related fns) need to be called
-2. How often privileged/admin actions are performed
-```
+---
 
 # Role Architecture Structure
 
-The system organizes roles into four tiers based on their operational frequency and risk profile:
+The system organizes roles into four tiers based on operational frequency and risk profile.
 
+**Roles: Overview**
 ```lua
-DEFAULT_ADMIN_ROLE (Global Admin)
+`DEFAULT_ADMIN_ROLE` 
 ├── MONITOR_ADMIN_ROLE ──────────► MONITOR_ROLE
 ├── CRON_JOB_ADMIN_ROLE ─────────► CRON_JOB_ROLE
 ├── PAYMENTS_CONTROLLER_ADMIN_ROLE
@@ -133,13 +132,14 @@ DEFAULT_ADMIN_ROLE (Global Admin)
 └── EMERGENCY_EXIT_HANDLER_ROLE
 ```
 
+**Roles: Hierarchy breakdown**
 ```lua
-DEFAULT_ADMIN_ROLE          (GlobalAdmin: Senior Leadership)     
-├── Operational Admins      (Manage frequent tasks)
-│   ├── MONITOR_ADMIN_ROLE  (Controls pause bots)               [DevOps: 2/3 Multi-sig]
-│   │   └── MONITOR_ROLE    (Calls pause across contracts)
-│   └── CRON_JOB_ADMIN_ROLE (Controls automation)   
-│       └── CRON_JOB_ROLE   (Periodic epoch ops & pool management)
+DEFAULT_ADMIN_ROLE              (GlobalAdmin: Senior Leadership)     
+├── Operational Admins          (Manage frequent tasks)
+│   ├── MONITOR_ADMIN_ROLE      (Controls pause bots)               
+│   │   └── MONITOR_ROLE        (Calls pause across contracts)
+│   └── CRON_JOB_ADMIN_ROLE     (Controls automation)   
+│       └── CRON_JOB_ROLE       (Periodic epoch ops & pool management)
 │   
 └── Strategic Roles         
     ├── PAYMENTS_CONTROLLER_ADMIN_ROLE  [Parameter updates]
@@ -149,23 +149,27 @@ DEFAULT_ADMIN_ROLE          (GlobalAdmin: Senior Leadership)
 
 ```
 
-Admin roles can add and remove addresses for the corresponding roles they govern.
+- Admin roles have authority to add or remove addresses for the specific roles they oversee.
+- Monitor and Cron roles have dedicated admins serving as structural "middle-managers"; the rest are managed directly by `DEFAULT_ADMIN_ROLE`.
+- In turn, `DEFAULT_ADMIN_ROLE` supervises `MONITOR_ADMIN_ROLE` & `CRON_JOB_ADMIN_ROLE`.
 
-**Why dedicated admins**
-- These operations happen frequently and can't wait for executives.
-- Risk Mitigation 
+**Why dedicated admins?**
+- Frequent operational changes shouldn't bottleneck on executive approval. *[i.e. epoch ops, bot changes]*
+- Tiering for these high-frequency roles, creates isolation to reduces risk and contain damage in the event of exploit.
 
-## Risk Mitigation Example
-If an operational admin key is compromised:
-- Attacker gains control of bot management.
-- Protocol parameters remain inaccessible due to role isolation.
-- Executive override cannot be blocked because of enforced hierarchy.
-- Attack impact is limited to operational disruption; funds remain secure.
-- Global admin can revoke compromised access and restore normal service.
+## Example
 
-<span style="color:red">__The blast radius is contained by design.__</span>
+If an operational admin is compromised:
+- Attacker can control bot operations, but not protocol parameters.
+- Role isolation prevents escalation beyond their scope.
+- Executive override remains available due to enforced hierarchy.
+- Impact is limited to operational disruption; funds and core settings stay protected.
+- Global admin can promptly revoke access and restore normal operations.
 
-## Multi-sig config
+<span style="color:red">__Blast radius is intentionally limited by design.__</span>
+
+
+**Roles: Multi-sig Configuration**
 
 ```lua
 DEFAULT_ADMIN_ROLE                                  (SeniorLeadership: 4/7 Multi-sig)
@@ -176,57 +180,42 @@ DEFAULT_ADMIN_ROLE                                  (SeniorLeadership: 4/7 Multi
 ├── ASSET_MANAGER_ROLE                              (DatTeam: 2/3 Multi-sig)
 └── EMERGENCY_EXIT_HANDLER_ROLE                     (DevOps5: 2/3 Multi-sig) 
 ```
+Avoid using a single DevOps multi-sig address for all roles—this would centralize risk rather than isolate it.
 
-Cannot have a common DevOps multi-sig address across the board, as thay would concentrate risk - not silo it.
-
-EMERGENCY_EXIT_HANDLER_ROLE
-- needs to be a script to make repeatedly calls of relevant emergency exit functions
-- the DEFAULT_ADMIN_ROLE will grant EMERGENCY_EXIT_HANDLER_ROLE to a EOA address attached for to a script.
-- the script executes till completion
-- then remove it [or address can revoke itself]
-
+**Roles: Responsible Actors**
 ```
-Executive Team → DEFAULT_ADMIN_ROLE → Grant/Revoke strategic roles
-DAT Team       → ASSET_MANAGER_ROLE → Execute asset withdrawals
-DevOps Team    → PAYMENTS_CONTROLLER_ADMIN_ROLE → Update protocol parameters
-DevOps Team    → VOTING_CONTROLLER_ADMIN_ROLE → Update voting parameters
-DevOps Team    → EMERGENCY_EXIT_HANDLER_ROLE → Emergency asset recovery
+SeniorLeadership → DEFAULT_ADMIN_ROLE → Grant/Revoke strategic roles
+DAT Team         → ASSET_MANAGER_ROLE → Execute asset withdrawals
+DevOps Team      → PAYMENTS_CONTROLLER_ADMIN_ROLE, VOTING_CONTROLLER_ADMIN_ROLE, EMERGENCY_EXIT_HANDLER_ROLE 
 ```
 
-## Security Model & Risk Matrix
+# Risk Matrix, Security Model, Defenses
 
-### Defense Layers
-
-**Layer 1: Role Isolation**
-- Operational roles can't touch strategic functions 
-- Strategic roles can't interfere with operations
-- Clean boundaries prevent cascade failures
-I.e. monitor/cron admins are siloed from contract admins, and vice versa.
-
-**Layer 2: Multi-signature Protection**
-- Every admin role requires multi-sig 
-- Thresholds match risk levels
-
-Exception: multi-sig would add EOA addresses to execute automated tasks.
-- For example, emergencyExit, or batch creation of pools.
-- But these would be added and then removed. Multi-sig remains constant. 
-
-**Layer 3: Override Mechanisms**
-- Global admin can intervene anywhere
-- Emergency procedures bypass normal flow
-- No permanent lockouts possible
-
-### Attack Vectors
-
-| Attack Vector         | Likelihood | Impact    | Mitigation                        |
-|-----------------------|------------|-----------|-----------------------------------|
-| Bot compromise        | Medium     | Limited   | Role isolation, quick rotation    |
-| Admin key loss        | Low        | High      | Multi-sig, global override        |
-| Governance capture    | Low        | Critical  | Executive override, timelock      |
-| Operational delay     | Medium     | Medium    | Dedicated admins, automation      |
+**System Architecture Flow**
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                            MOCA ECOSYSTEM                                           │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
+│  │   AddressBook   │◄───┤ AccessController │───►│ All Contracts  │                  │
+│  │  (Immutable)    │    │  (Upgradeable)  │    │  (Query ACL)    │                  │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
+│           │                       │                                                 │
+│           ▼                       ▼                                                 │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
+│  │PaymentsController│   │ VotingController │   │VotingEscrowMoca │                  │
+│  │                 │◄──►│                 │◄──►│                 │                  │
+│  │ • Verification  │    │ • Vote Mgmt     │    │ • Lock Mgmt     │                  │
+│  │ • Fee Mgmt      │    │ • Reward Dist   │    │ • Delegation    │                  │
+│  │ • Subsidy Calc  │    │ • Epoch Mgmt    │    │ • veToken       │                  │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ### **Risk Level Matrix**
 
+```
                     RISK LEVEL: LOW ◄────────────────────────────────► HIGH
 ┌─────────────────┬─────────────────┬─────────────────┬─────────────────┐
 │ OPERATIONAL     │ ADMINISTRATIVE  │ STRATEGIC       │ EMERGENCY       │
@@ -253,27 +242,30 @@ Exception: multi-sig would add EOA addresses to execute automated tasks.
 │                 │                 │ • Voting config │                 │
 │                 │                 │ • Pool mgmt     │                 │
 └─────────────────┴─────────────────┴─────────────────┴─────────────────┘
+```
+**Attack Vectors**
 
-**System Architecture Flow**
+```lua
+| Attack Vector           | Likelihood | Impact   | Mitigation                         |
+|-------------------------|------------|----------|------------------------------------|
+| Bot compromise          | Medium     | Limited  | Role isolation, quick rotation     | [monitor,cron]
+| Admin role compromised  | Low        | High     | Multi-sig, global override         | [unless GlobalAdmin multi-sig was infiltrated]
+```
 
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                            MOCA VALIDATOR ECOSYSTEM                                 │
-├─────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                     │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
-│  │   AddressBook   │◄───┤ AccessController │───►│ All Contracts  │                  │
-│  │  (Immutable)    │    │  (Upgradeable)  │    │  (Query ACL)    │                  │
-│  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
-│           │                       │                                                 │
-│           ▼                       ▼                                                 │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
-│  │PaymentsController│   │ VotingController │   │VotingEscrowMoca │                  │
-│  │                 │◄──►│                 │◄──►│                 │                  │
-│  │ • Verification  │    │ • Vote Mgmt     │    │ • Lock Mgmt     │                  │
-│  │ • Fee Mgmt      │    │ • Reward Dist   │    │ • Delegation    │                  │
-│  │ • Subsidy Calc  │    │ • Epoch Mgmt    │    │ • veToken       │                  │
-│  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
-└─────────────────────────────────────────────────────────────────────────────────────┘
+## Defense Layers
+
+1. Role Isolation: Operational roles cannot access strategic functions, and vice versa; preventing cascade failures.
+2. Multi-Signature Protection: All admin roles require distributed approval, with thresholds aligned to risk levels.
+3. Override Mechanisms: Global admin can intervene in any role, ensuring no permanent lockouts.
+
+This layered approach contains risks while allowing flexible operations, demonstrating the system's robustness in handling diverse scenarios.
+
+**Exception:**
+Some admin roles would be granted to EOA addresses *temporarily* to execute automated tasks.
+- For example, emergencyExit, or batch creation of pools.
+- Upon completion, EOA role to be revoked.
+
+Regardless, each admin role will never lose it's multi-sig; which is its anchor.
 
 ## Detailed Role Specifications
 
@@ -360,50 +352,52 @@ Rationale: Routine operations can't wait for executives; hence dedicated admins.
 
 
 
-# Operational Model + Workflows
+# Operational Model + Execution Workflows
 
-## Three-Tiered Operational Model
+The model supports three tiers of operations, each with tailored processes.
 
-1. **Autonomous Operations**
-   - Monitoring bots pause contracts on anomalies
-   - Automated scripts handle bi-weekly epochs
-   - Bot addresses rotate frequently
-   - *No executive sign-off needed*
+## Three-Tiered Operational Model [*Frequency Principle in Action*]
 
-2. **Governed Strategic Actions**
-   - Fee changes, voting updates, treasury withdrawals
-   - *Require executive multi-signature approval*
+1. **Autonomous Operations**: Monitoring bots handle alerts and pauses; automated scripts manage epochs. No executive sign-off required.
+2. **Governed Strategic Actions**: Contract updates and parameter changes require review and multi-signature approval.
+3. **Protected Emergency Controls**: Freezes and recoveries activate only under strict conditions.
 
-3. **Protected Emergency Controls**
-   - System-wide freeze, asset recovery, overrides
-   - *Strictly limited, rarely used*
+This structure ensures fast routine ops, deliberate governance, and robust emergency safeguards; no bottlenecks or unchecked power.
 
-**Frequency Principle in Action**
+## Execution flows
 
-- *Bot Replacement*: Ops team swaps monitoring bots instantly—no executive delay.
-- *Fee Adjustment*: Proposals undergo executive review and multi-sig approval before changes.
+### 1. **Withdrawing USD8 from PaymentsController (Every 2 Weeks)**
 
-This structure ensures fast routine ops, deliberate governance, and robust emergency safeguards—no bottlenecks, no unchecked power.
+```lua
+Time T-1: Preparation
+└── Dev team adds EOA address to CRON_JOB_ROLE
+Time T: Execution
+├── Bot calls depositEpochSubsidies()
+├── Bot calls finalizeEpochRewardsSubsidies()
+├── Bot withdraws protocol fees and voting fees in USD8
+└── Dev team revokes role from EOA address [via dedicated admin]
+Time T+1: Verification
+└── Back-end confirms successful execution
+```
+Proceed to convert USD8 to esMoca and deposit into VotingController.
 
-## **Routine Epoch Processing (Every 2 Weeks)**
+### 2. **Routine Epoch Processing (Every 2 Weeks)**
 
->*TODO: missing the bit about withdrawing from PaymentsController*
-
-```bash
+```lua
 Time T-1: Preparation
 └── Dev team adds EOA address to `CRON_JOB_ROLE`
 
 Time T: Execution
 ├── Bot calls `depositEpochSubsidies()`
 ├── Bot calls `finalizeEpochRewardsSubsidies()`
-└── Dev team revokes role from EOA address
+└── Dev team revokes role from EOA address [via dedicated admin]
 
 Time T+1: Verification
 └── Back-end confirms successful execution
 ```
 No executive involvement required; no delays or bottlenecks.
 
-## **Contract Parameter Updates**
+### 3. **Arbitrary Contract Parameter Updates**
 
 ```bash
 Step 1: Deliberation
@@ -413,8 +407,10 @@ Step 2: Review
 ├── Technical analysis
 └── Economic modeling
 
-Step 3: Approval + Execution
+Step 3: Approval + Verification + Execution
 ├── Relevant contact admin multi-sig coordination (e.g. VOTING_CONTROLLER_ADMIN_ROLE)
+├── Ensure all multi-sig signers, have signed. 
+├── Internal security consultant to verify before submitting for execution
 └── Parameter update execution
 
 Step 4: Assessment 
@@ -432,61 +428,62 @@ Detection → Pause → Assessment → Resolution
 3. Team investigates issue
 4. Executive decision on response 
 5. Normal operations resume or emergency procedures activate [`freeze` + `emergencyExit`]
+
+EMERGENCY_EXIT_HANDLER_ROLE Execution
+Time T-1: Preparation
+└── DEFAULT_ADMIN_ROLE grants EMERGENCY_EXIT_HANDLER_ROLE to EOA address attached to script
+Time T: Execution
+└── Script makes repeated calls to relevant emergency exit functions until completion
+Time T+1: Verification
+└── Role is revoked (by DEFAULT_ADMIN_ROLE or address self-revokes)
 ```
 
 ## **Other ad-hoc operations (No Executive approval required)**
-```
+
+```bash
 Dev/Ops Team → MONITOR_ADMIN_ROLE → Add/Remove monitor bots
 Dev/Ops Team → CRON_JOB_ADMIN_ROLE → Add/Remove automation addresses
 Monitor Bots → MONITOR_ROLE → Pause contracts if issues detected
 Automation Scripts → CRON_JOB_ROLE → Execute bi-weekly epoch operations
 ```
 
+# Summary and Key Outcomes
 
+This frequency-based role architecture addresses the limitations of traditional models by aligning administrative authority with the operational cadence of each role. 
+It optimizes both efficiency and security, via a flexible governance layer that supports real-world operational demands and practical organizational structure.
 
-# Why This Design Works [Benefits and Impact]
+**Salient Features:**
 
-The traditional approach forces every permission change through executive approval. This creates dangerous bottlenecks - imagine waiting for 4 executives to coordinate just to rotate a monitoring bot that detected suspicious activity.
+- **Operational Efficiency:**
+  - High-frequency tasks (e.g., bot rotation, routine automation) are managed by dedicated admins, eliminating executive bottlenecks and enabling rapid response.
+  - Automated and scheduled operations proceed without delay, supporting continuous protocol function.
+  - Clear separation between operational and strategic roles ensures focused responsibility and reduces cross-functional risk.
 
-Our frequency-based hierarchy solves this elegantly. High-frequency operations get nimble management. Strategic decisions get appropriate oversight. The system self-organizes around actual operational needs rather than theoretical security models.
+- **Security and Risk Containment:**
+  - Role isolation ensures that compromise of one admin is contained, preventing escalation across unrelated functions.
+  - Global admin retains override authority, providing a robust failsafe for critical interventions.
+  - Strategic actions require multi-signature approval, maintaining strong oversight for high-impact changes.
 
-Operational Efficiency
-✅ No Bottlenecks: High-frequency operations proceed without executive approval [Bot rotation in minutes]
-✅ Automated Operations: Epoch operations proceed without delays [Epoch operations run automatically]
-✅ Clear Boundaries: Chinese walls between operational and strategic functions
+- **Governance and Transparency:**
+  - Administrative authority is explicitly mapped to operational needs, clarifying responsibilities and reducing ambiguity.
+  - All role changes are logged via events, supporting comprehensive audit trails and operational transparency.
+  - The model is designed to scale, maintaining clarity and control as protocol complexity grows.
 
-Security Robustness
-✅ Role Isolation: Compromise of one admin doesn't affect other functions
-✅ Override Capability: Global admin retains ultimate control
-✅ Appropriate Oversight: Strategic decisions require executive review
-✅ Multi-signature Protection: All roles require distributed approval
+**Innovation Highlight:**
+An RBAC based upon expected frequency and risk profile of operations, is the innovation that allows for streamlining contract administration, risk mitigation and security. 
+By focusing on practicality rather than theoretical security models, the AccessController delivers a robust, operationally realistic solution for decentralized protocols.
 
-Governance Clarity
-✅ Frequency-Based Logic: Administrative authority matches operational needs
-✅ Clear Responsibilities: Each role has specific, limited permissions
-✅ Audit Trail: All role changes tracked through events
-✅ Operational Transparency: Clear workflows for different operation types
-
-# Summary: Elegant Security Through Operational Reality
-
-The AccessController represents a fundamental rethink of access control. Instead of forcing operations into a rigid hierarchy, it molds permissions around actual usage patterns.
-
-The result:
-- Daily operations flow without friction
-- Strategic decisions receive appropriate oversight
-- Security remains uncompromised
-- The system scales with the protocol
-By aligning administrative overhead with operational frequency, we've created a security model that teams actually want to use—because it makes their jobs easier, not harder.
 
 # Deployment Process
 1. Deploy AddressBook → Set globalAdmin (executive multisig)
 2. Deploy AccessController → Retrieves globalAdmin from AddressBook
 3. Deploy other contracts → Reference AccessController for permissions
 4. Initial role assignment:
-    - Grant MONITOR_ADMIN_ROLE to dev/ops multisig
-    - Grant CRON_JOB_ADMIN_ROLE to dev/ops multisig
+    - Grant `MONITOR_ADMIN_ROLE` to dev/ops multisig
+    - Grant `CRON_JOB_ADMIN_ROLE` to dev/ops multisig
     - Grant strategic roles directly to appropriate multi-sigs
-
+    - Assign `MONITOR_ROLE` to risk bots
+    - Keep the following roles unassigned: `CRON_JOB`, `EMERGENCY_EXIT_HANDLER_ROLE`. These are only assigned temporally and removed after immediately. 
 
 # Appendix
 
