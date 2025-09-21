@@ -15,23 +15,33 @@ The AccessController contract establishes a role-based permission model that ali
 1. How frequently roles need to be updated
 2. How often privileged/admin actions are performed
 
-By separating high-frequency operations from critical governance, the architecture enables rapid day-to-day responses while maintaining strict security. This approach reduces admin overhead and signer fatigue, isolates risk through role separation, and empowers the team to act quickly—without compromising control or security.
+By separating high-frequency operations from critical governance, the architecture enables rapid day-to-day responses while maintaining strict security.
+This approach reduces admin overhead and signer fatigue, isolates risk through role separation, and empowers the team to act quickly—without compromising control or security.
 
 ## Key Design Principles
 
-**The core structure is guided by operational frequency:**
-- High-frequency roles (e.g., daily monitoring or epoch processing) are managed by dedicated admins for rapid, frictionless updates without delays.
-- Low-frequency strategic roles (e.g., parameter updates or asset withdrawals) stay under direct global admin control, requiring explicit senior leadership approval. *[enforces thoughtful governance]*
-- Dedicated admins manage high-frequency operations (e.g., monitoring, epoch processing) for speed, while global admin approval is mandatory for low-frequency, high-impact actions (e.g., parameter changes, asset withdrawals) to guarantee rigorous oversight.
+This architecture is built on a simple, powerful principle: align authority with operational frequency to maximize both agility and security.
 
-- This frequency-based separation reduces administrative bottlenecks for routine operations, while concentrating authority for critical changes. 
+**Frequency-Driven Authority:** High-frequency roles—like daily monitoring or epoch processing—are managed by dedicated admin teams, enabling rapid updates and seamless daily operations without executive bottlenecks. In contrast, low-frequency, high-impact roles—such as protocol parameter changes or asset withdrawals—require direct global admin approval, ensuring deliberate, thoughtful governance.
 
+**Operational Efficiency & Security:** By separating routine operations from strategic decisions, the system eliminates unnecessary delays and reduces admin fatigue. Least-privilege access and strict role isolation limit the blast radius of any compromise. Multi-signature wallets are required for all roles, removing single points of failure and distributing control.
 
+**Override & Resilience:** The global admin always retains ultimate override authority, providing a robust failsafe for emergencies or unexpected events.
 
-**This creates three distinct operational layers:**
-Daily Operations - Bot monitoring and epoch processing have dedicated admin teams that can rapidly add or remove operators without executive involvement
-Strategic Functions - Protocol parameters, voting configuration, and treasury management require executive multi-signature approval
-Emergency Controls - Asset recovery and system pauses remain available but tightly controlled
+**Simplicity & Scalability:** The hierarchy is minimal and clear, with immutable role identifiers and explicit, non-overlapping permissions. This makes the system easy to maintain and adapt as the protocol grows.
+
+**Three Operational Layers:**
+1. **Daily Operations:** Bot monitoring and epoch processing, managed by dedicated admin teams for fast, flexible response.
+2. **Strategic Functions:** Protocol parameters, voting configuration, and treasury management, all requiring executive multi-signature approval.
+3. **Emergency Controls:** Asset recovery and system pauses, tightly controlled and always available to the global admin.
+
+**Security by Design:**  
+- Operational and strategic roles are strictly segregated.  
+- All admin actions require multi-signature approval.  
+- The global admin can override any role or action.  
+- Each role’s permissions are explicit and limited, with no overlap.
+
+This frequency-based, least-privilege model streamlines daily operations, concentrates authority for critical changes, and delivers a system that is both robust against threats and highly adaptable to evolving needs.
 
 
 ## Core Principle: Operational Frequency Drives Administrative Authority
