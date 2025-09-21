@@ -7,14 +7,16 @@
 
 ## Executive Summary
 
-The AccessController implements a **frequency-based role hierarchy** that adapts administrative authority to operational reality. It recognizes that some 
-roles need frequent updates (like monitoring bots), while others rarely change (like protocol parameters).
+The AccessController implements a **frequency-based role hierarchy** that adapts administrative authority to operational reality. 
+It recognizes that some roles need frequent updates (like monitoring bots), while others rarely change (like protocol parameters).
 
-By assigning dedicated administrators to high-frequency roles (like monitoring bots) and reserving executive oversight for low-frequency, strategic roles (like protocol parameters), it eliminates daily bottlenecks while maintaining strict governance where it matters most.
+By assigning *dedicated administrators* to high-frequency roles (like monitoring bots) and reserving executive oversight for low-frequency, strategic roles (like protocol parameters), it eliminates daily bottlenecks while maintaining strict governance where it matters most.
 
-## Challenge of Secure Operations
+## The Challenge of Secure Operations
 
-Every decentralized protocol faces a fundamental tension: how do you enable rapid operational responses while maintaining strict security controls? Too much bureaucracy creates dangerous delays. Too little oversight invites catastrophic mistakes.
+Every decentralized protocol faces a fundamental tension: how do you enable rapid operational responses while maintaining strict security controls? 
+- Too much bureaucracy creates dangerous delays. 
+- Too little oversight invites catastrophic mistakes.
 
 Traditional access control systems force an difficult choice:
 - Grant broad permissions to operators (fast but risky)
@@ -22,12 +24,13 @@ Traditional access control systems force an difficult choice:
 
 **Understanding the challenge**
 
-Traditional access control systems create operational bottlenecks by requiring executive approval for all privileged operations. When monitoring systems detect anomalies and need immediate response, or when automated systems require routine maintenance, the approval process can introduce dangerous delays.
+Traditional access control systems create operational bottlenecks by requiring executive approval for all privileged operations. 
+When monitoring systems detect anomalies and need immediate response, or when automated systems require routine maintenance, the approval process can introduce dangerous delays.
 
 Consider a scenario where automated monitoring detects a potential security issue at 2 AM. The team needs to rotate monitoring addresses or pause contracts immediately, but must wait for executive approval. This delay could allow problems to escalate.
 
-The AccessController addresses this tension through a simple observation that reshapes how we think about permissions.
-IT resolves this by recognizing that not all privileged operations carry the same risk or require the same level of oversight.
+The AccessController system addresses this tension through a simple observation that reshapes how we think about permissions.
+It recognizes that not all privileged operations carry the same risk, or require the same level of oversight.
 
 **Core Insight**
 Not all administrative tasks are created equal.
@@ -48,13 +51,13 @@ This insight drives our entire security architecture. By matching administrative
 ## The Frequency-Based Approach
 The system organizes roles according to how frequently they need to be managed, creating two distinct paths:
 
-High-Frequency Operations
+**High-Frequency Operations**
 - Monitoring and pause functions: enable immediate response to issues
 - Automated system management: support routine maintenance
 - Bot rotation: ensure operational reliability
 - All require dedicated administrators for rapid, bottleneck-free action
 
-Low-Frequency Strategic Operations
+**Low-Frequency Strategic Operations**
 - Protocol parameter updates: Economic decisions requiring careful consideration
 - Asset management: Treasury operations with financial implications
 - Emergency procedures: Crisis response requiring ultimate authority
@@ -75,7 +78,8 @@ This separation creates operational efficiency while maintaining appropriate gov
 
 **Core Innovation**
 
-Authority is distributed based on how frequently roles need management/execution, not just security sensitivity. High-frequency operational roles get dedicated administrators for rapid response, while low-frequency strategic roles remain under direct executive oversight (senior leadership).
+Authority is distributed based on how frequently roles need management/execution, not just security sensitivity. 
+High-frequency operational roles get dedicated administrators for rapid response, while low-frequency strategic roles remain under direct executive oversight (senior leadership).
 
 Traditional access control creates unnecessary friction. A monitoring bot that needs daily rotation shouldn't require the same approval process as changing protocol fees. Our system recognizes this fundamental difference.
 
@@ -97,9 +101,10 @@ Traditional access control creates unnecessary friction. A monitoring bot that n
 2. How often privileged/admin actions are performed
 ```
 
-## Role Architecture Structure
+# Role Architecture Structure
 
 The system organizes roles into four tiers based on their operational frequency and risk profile:
+
 ```lua
 DEFAULT_ADMIN_ROLE (Global Admin)
 ├── MONITOR_ADMIN_ROLE ──────────► MONITOR_ROLE
@@ -109,61 +114,24 @@ DEFAULT_ADMIN_ROLE (Global Admin)
 ├── ASSET_MANAGER_ROLE
 └── EMERGENCY_EXIT_HANDLER_ROLE
 ```
+
 ```lua
-DEFAULT_ADMIN_ROLE (Global Admin)
-├── Operational Admins (Manage frequent tasks)
-│   ├── MONITOR_ADMIN → Controls pause bots
-│   └── CRON_JOB_ADMIN → Controls automation
-└── Strategic Roles (Direct executive control)
-    ├── Protocol parameter updates
-    ├── Asset management
-    └── Emergency functions
+DEFAULT_ADMIN_ROLE          (GlobalAdmin: Senior Leadership)     
+├── Operational Admins      (Manage frequent tasks)
+│   ├── MONITOR_ADMIN_ROLE  (Controls pause bots)               [DevOps: 2/3 Multi-sig]
+│   │   └── MONITOR_ROLE    (Calls pause across contracts)
+│   └── CRON_JOB_ADMIN_ROLE (Controls automation)   
+│       └── CRON_JOB_ROLE   (Periodic epoch ops & pool management)
+│   
+└── Strategic Roles         
+    ├── PAYMENTS_CONTROLLER_ADMIN_ROLE  [Parameter updates]
+    ├── VOTING_CONTROLLER_ADMIN_ROLE    [Parameter updates]
+    ├── ASSET_MANAGER_ROLE              [Asset management]
+    └── EMERGENCY_EXIT_HANDLER_ROLE     [Emergency functions]
+
 ```
 
-**Tier 1: Supreme Governance**
-`DEFAULT_ADMIN_ROLE` (Global Admin)
-- Authority: Ultimate override across all role admins & strategic roles directly
-- Multi-sig: 4-of-7 (Senior Leadership)
-- Frequency: Very rare (emergencies, hierarchy changes)
-- Purpose: Final authority and emergency failsafe [Can override any role decision]
-
-__*Why this matters*: This role serves as the ultimate authority, ensuring no operational issue can permanently lock out executive control.__
-
-
-**Tier 2: High-Frequency Operational Role Administrators**
-Dedicated administrators for high-frequency role management
-
-`MONITOR_ADMIN_ROLE`
-- Purpose: Manages monitoring bot addresses
-- Multi-signature: 2-of-3 (development/operations team)
-- Frequency: High (bot rotation, address management)
-- Rationale: Monitoring systems require frequent updates without executive bottlenecks
-
-`CRON_JOB_ADMIN_ROLE`
-- Purpose: Manages automation script addresses
-- Multi-signature: 2-of-3 (development/operations team)
-- Frequency: Medium (EOA rotation for scheduled operations)
-- Rationale: Automated processes need reliable management without delays
-
-__**The innovation: Dedicated admins for frequent operations eliminate governance bottlenecks while maintaining multi-sig security.**__
-
-
-**Tier 3: High-Frequency Operational Roles**
-Direct execution roles managed by dedicated administrators
-
-`MONITOR_ROLE`
-- Functions: Emergency pause across all protocol contracts
-- Frequency: Rare but critical (emergency response)
-- Addresses: Multiple monitoring bots (EOAs)
-- Management: Instant address rotation via `MONITOR_ADMIN_ROLE`
-> Why dedicated admin: Bots need frequent updates without executive delays
-
-`CRON_JOB_ROLE`
-- Functions: Epoch finalization and reward distribution, pool management, createLockFor
-- Frequency: High (automated bi-weekly cycles)
-- Addresses: Automation scripts (temporary assignments)
-- Assignment: Scheduling systems (EOAs)
-- Management: Address rotation via CRON_JOB_ADMIN_ROLE
+Admin roles can add and remove addresses for the corresponding roles they govern.
 
 __*Why dedicated admin*:__
 - These operations happen frequently and can't wait for executives.
@@ -179,31 +147,100 @@ If an operational admin key is compromised:
 
 <span style="color:red">__The blast radius is contained by design.__</span>
 
-
-**Tier 4: Low-Frequency Strategic Roles**
-Direct executive oversight for deliberate governance
-
-Specialized Function Roles (2-of-3 multi-signature)
-- Payments Administrator: Manages protocol fee and subsidy operations
-- Voting Administrator: Configures voting parameters
-- Asset Manager: Oversees treasury and withdrawal processes
-- Emergency Handler: Executes crisis asset recovery procedures
-
-These roles handle strategic protocol functions and report directly to the Global Admin[`DEFAULT_ADMIN_ROLE`].
-> Strategic rationale: Low-frequency, high-impact decisions remain centralized to ensure deliberate governance.
-
+### Multi-sig config
 
 ```lua
-DEFAULT_ADMIN_ROLE (Global Admin - Executive 4/7 Multi-sig)
-├── MONITOR_ADMIN_ROLE (Dev/Ops 2/3 Multi-sig)
-│   └── MONITOR_ROLE (Emergency pause across contracts)
-├── CRON_JOB_ADMIN_ROLE (Dev/Ops 2/3 Multi-sig)
-│   └── CRON_JOB_ROLE (Epoch operations & pool management)
-├── PAYMENTS_CONTROLLER_ADMIN_ROLE (controlled by DEFAULT_ADMIN_ROLE)
-├── VOTING_CONTROLLER_ADMIN_ROLE (controlled by DEFAULT_ADMIN_ROLE)
-├── ASSET_MANAGER_ROLE (controlled by DEFAULT_ADMIN_ROLE)
-└── EMERGENCY_EXIT_HANDLER_ROLE (controlled by DEFAULT_ADMIN_ROLE)
+DEFAULT_ADMIN_ROLE                                  (SeniorLeadership: 4/7 Multi-sig)
+├── MONITOR_ADMIN_ROLE ──────────► MONITOR_ROLE     (DevOps1: 2/3 Multi-sig)
+├── CRON_JOB_ADMIN_ROLE ─────────► CRON_JOB_ROLE    (DevOps2: 2/3 Multi-sig)
+├── PAYMENTS_CONTROLLER_ADMIN_ROLE                  (DevOps3: 2/3 Multi-sig)
+├── VOTING_CONTROLLER_ADMIN_ROLE                    (DevOps4: 2/3 Multi-sig)                                               
+├── ASSET_MANAGER_ROLE                              (DatTeam: 2/3 Multi-sig)
+└── EMERGENCY_EXIT_HANDLER_ROLE                     (DevOps5: 2/3 Multi-sig) 
 ```
+
+Cannot have a common DevOps multi-sig address across the board, as thay would concentrate risk - not silo it.
+
+EMERGENCY_EXIT_HANDLER_ROLE
+- needs to be a script to make repeatedly calls of relevant emergency exit functions
+- the DEFAULT_ADMIN_ROLE will grant EMERGENCY_EXIT_HANDLER_ROLE to a EOA address attached for to a script.
+- the script executes till completion
+- then remove it [or address can revoke itself]
+
+## Detailed Role Specifications
+
+🔴 **Tier 1: Supreme Governance**
+`DEFAULT_ADMIN_ROLE` (Global Admin)
+- Override Power: Can override ANY role decision
+- Purpose: Final authority and emergency failsafe
+- Frequency: Very rare (emergencies, hierarchy changes)
+
+*Why this matters*: This role serves as the ultimate authority, ensuring no operational issue can permanently lock out executive control.
+
+`EMERGENCY_EXIT_HANDLER_ROLE`
+- Purpose: Last-resort asset recovery when system is frozen
+- Holders: Emergency response team (2-of-3 multi-sig)
+- Activation: Only after system freeze by global admin
+Rationale: Emergency functions must be available but tightly controlled
+
+🟡 **Tier 2: Strategic Roles (Low Frequency, High Impact)**
+
+`PAYMENTS_CONTROLLER_ADMIN_ROLE`
+- Controls: protocol fees, subsidy percentages, and payment configurations
+- Impact: Direct economic parameters
+- Updates: Governance proposals only
+Rationale: Economic parameters require deliberate review and approval
+
+`VOTING_CONTROLLER_ADMIN_ROLE`
+- Controls: Voting parameters, delegate fees, registration requirements
+- Impact: Governance mechanics
+- Updates: Following community decisions
+Rationale: Voting mechanics affect protocol governance; require careful consideration
+
+`ASSET_MANAGER_ROLE`
+- Function: Withdraw protocol fees and unclaimed assets
+- Schedule: Monthly/quarterly treasury operations
+Rationale: Asset movements require treasury oversight and approval
+
+__**The innovation: Dedicated admins for frequent operations eliminate governance bottlenecks while maintaining multi-sig security.**__
+
+
+🟢 **Tier 3: High-Frequency Operational Admin Roles**
+*High-frequency operational needs demand dedicated admins*
+
+`MONITOR_ADMIN_ROLE` → `MONITOR_ROLE`
+- Admin controls: Bot address rotation
+- Frequency: High (bot rotation, address management)
+- Security: Multiple redundant bots prevent single failure
+Rationale: Bots need frequent updates without executive delays
+
+`CRON_JOB_ADMIN_ROLE` → `CRON_JOB_ROLE`
+- Admin controls: Automation address management
+- Automation functions:
+    - Epoch finalization (bi-weekly)
+    - Subsidy deposits
+    - Pool creation/removal
+Rationale: Routine operations can't wait for executives; hence dedicated admins.
+
+🟢 **TIER 4: High-Frequency Operational Roles**
+*Direct execution roles for automated systems*
+
+**`MONITOR_ROLE`**
+- Functions: pause() across all contracts
+- Addresses: Multiple monitoring bots (EOAs)
+- Frequency: Rare but critical (emergency pause)
+- Security: Monitored by multiple independent bots for redundancy
+
+**`CRON_JOB_ROLE`**
+- Functions:
+    - VotingEscrowMoca: createLockFor()
+    - VotingController: depositEpochSubsidies(), finalizeEpochRewardsSubsidies()
+    - VotingController: createPool(), removePool()
+- Addresses: Automation EOAs (bi-weekly rotation)
+- Frequency: High (every 2 weeks for epoch operations)
+- Security: Addresses added temporarily, then removed after operations
+
+
 
 
 ```?
@@ -240,22 +277,6 @@ Scenario B: Protocol fees need adjustment
 The architecture naturally enforces appropriate oversight without creating bottlenecks.
 ```
 
-
-```lua
-DEFAULT_ADMIN_ROLE (Global Admin - Executive Multi-sig 4/7)
-├── MONITOR_ADMIN_ROLE (Dev/Ops Team 2/3 Multi-sig)
-│   └── MONITOR_ROLE (Pause bots - EOAs)
-├── CRON_JOB_ADMIN_ROLE (Dev/Ops Team 2/3 Multi-sig)
-│   └── CRON_JOB_ROLE (Epoch operations - EOAs)
-├── PAYMENTS_CONTROLLER_ADMIN_ROLE (Direct to Global Admin)
-├── VOTING_CONTROLLER_ADMIN_ROLE (Direct to Global Admin)
-├── ASSET_MANAGER_ROLE (Direct to Global Admin)
-└── EMERGENCY_EXIT_HANDLER_ROLE (Direct to Global Admin)
-```
-
-
-
-
 **Quick Reference**
 
 | Frequency      | Role Type     | Example Functions                | Management         |
@@ -267,9 +288,11 @@ DEFAULT_ADMIN_ROLE (Global Admin - Executive Multi-sig 4/7)
 | Emergency      | Crisis        | System freeze, recovery          | Global admin       |
 
 
-# Operational Flows
+# Operational Workflows
 
 **Routine Epoch Processing (Every 2 Weeks)**
+
+>*TODO: missing the bit about withdrawing from PaymentsController*
 
 ```bash
 Time T-1: Preparation
@@ -283,31 +306,31 @@ Time T: Execution
 Time T+1: Verification
 └── Back-end confirms successful execution
 ```
-No executive involvement required. No delays. No bottlenecks.
+No executive involvement required; no delays or bottlenecks.
 
-**Parameter Update (Quarterly)**
+**Contract Parameter Updates**
 
 ```bash
-Week 1: Proposal
-└── Governance discussion on fee adjustment
+Step 1: Deliberation
+└── Discussion on updates to contract parameters
 
-Week 2: Review
+Step 2: Review
 ├── Technical analysis
 └── Economic modeling
 
-Week 3: Approval
-├── Executive multi-sig coordination
+Step 3: Approval + Execution
+├── Relevant contact admin multi-sig coordination (e.g. VOTING_CONTROLLER_ADMIN_ROLE)
 └── Parameter update execution
 
-Week 4: Monitoring
-└── Verify intended effects
+Step 4: Assessment 
+└── Verify changes are in-line with original intention
 ```
 Deliberate process for high-impact changes.
 
 **Emergency Response (If Needed)**
 
 ```bash
-Detection → Pause → Assessment → Resolution
+Detection → Pause → Assessment → Resolution 
 
 1. Monitor bot detects anomaly
 2. Automatic pause (MONITOR_ROLE)
@@ -315,9 +338,6 @@ Detection → Pause → Assessment → Resolution
 4. Executive decision on response 
 5. Normal operations resume or emergency procedures activate [`freeze` + `emergencyExit`]
 ```
-Speed where it matters, control where it counts.
-
-
 
 ### Daily Operations (No Executive approval required)
 ```
