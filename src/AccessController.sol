@@ -54,7 +54,7 @@ contract AccessController is AccessControl {
         // Grant supreme admin role
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
         
-        // Set up operational role hierarchy
+        // Operational role administrators managed by global admin
         _setRoleAdmin(MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         
