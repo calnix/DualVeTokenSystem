@@ -91,10 +91,12 @@ contract EscrowedMoca is ERC20, Pausable {
 
 
     /**
-     * @notice Allows users to redeem esMoca for Moca; choice ofh different redemption options
-     * @dev Cannot cancel redemption once initiated
-     * @param redemptionAmount The amount of esMoca to redeem
-     * @param redemptionOption The redemption option (0: Standard, 1: Early, 2: Instant)
+     * @notice Redeems esMoca for Moca using a specified redemption option.
+     * @dev Redemption is irreversible once initiated. Users select from available redemption options, each with distinct lock durations and penalty structures.
+     * @param redemptionAmount Amount of esMoca to redeem.
+     * @param redemptionOption Redemption option index. (0: Standard, 1: Early, 2: Instant)
+     * @custom:requirements `redemptionOption` must be enabled and configured.
+     * Emits {RedemptionScheduled} or {Redeemed} depending on lock duration.
      */
     function redeem(uint128 redemptionAmount, uint256 redemptionOption) external whenNotPaused {
         // sanity checks: amount & balance
