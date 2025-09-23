@@ -128,19 +128,20 @@ contract EscrowedMoca is ERC20, Pausable {
             redemptionSchedule[msg.sender][redemptionTimestamp].amount = mocaReceivable;
             redemptionSchedule[msg.sender][redemptionTimestamp].penalty = penaltyAmount;
 
-        } else {
-            // instant redemption
+            emit RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp, redemptionOption);
+
+        } else {    // instant redemption
+            
             redemptionTimestamp = block.timestamp;
 
-            // book redemption amount + redemption timestamp
+            // book redemption amount + penalty amount + claimed
             redemptionSchedule[msg.sender][redemptionTimestamp].claimed = true;
             redemptionSchedule[msg.sender][redemptionTimestamp].amount = mocaReceivable;
+            redemptionSchedule[msg.sender][redemptionTimestamp].penalty = penaltyAmount;
 
             mocaToken.safeTransfer(msg.sender, mocaReceivable);
             emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionOption);
         }
-
-
 
         // burn corresponding esMoca tokens from the caller
         _burn(msg.sender, redemptionAmount);
@@ -159,18 +160,6 @@ contract EscrowedMoca is ERC20, Pausable {
 
             emit PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
         }
-
-        //event: redeemed
-
-        // for instant redemption (no lockup), transfer tokens immediately
-        if(option.lockDuration == 0) {
-            
-            // book claimed + transfer
-
-        }
-
-        
-
     }
 
     // claim everything. no partial claims.

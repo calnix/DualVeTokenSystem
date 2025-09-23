@@ -8,6 +8,8 @@ library Events {
 
 // --------- EscrowedMoca.sol ---------
     event Redeemed(address indexed caller, uint256 mocaReceivable, uint256 lockupTime, uint256 redemptionOption);
+    event RedemptionScheduled(address indexed caller, uint256 mocaReceivable, uint256 penaltyAmount, uint256 redemptionTimestamp, uint256 redemptionOption);
+
     event PenaltyAccrued(uint256 penaltyToVoters, uint256 penaltyToTreasury);
 
 
