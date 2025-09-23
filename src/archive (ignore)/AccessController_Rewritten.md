@@ -308,8 +308,8 @@ Emergency Team → EMERGENCY_EXIT_HANDLER_ROLE → Crisis asset recovery
 ### Critical Path Risk Assessment
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              ATTACK SURFACE ANALYSIS                            │
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                              ATTACK SURFACE ANALYSIS                          │
 ├─────────────────┬─────────────────┬─────────────────┬─────────────────────────┤
 │ ATTACK VECTOR   │ LIKELIHOOD      │ IMPACT          │ MITIGATION              │
 ├─────────────────┼─────────────────┼─────────────────┼─────────────────────────┤
@@ -339,9 +339,9 @@ Emergency Team → EMERGENCY_EXIT_HANDLER_ROLE → Crisis asset recovery
                     NORMAL ◄──────────────────────► PAUSED ◄──────► FROZEN
                       │                               │              │
                       │                               │              │
-    ┌─────────────────┴─────────────────┐            │              │
-    │                                   │            │              │
-    ▼                                   ▼            ▼              ▼
+    ┌─────────────────┴─────────────────┐             │              │
+    │                                   │             │              │
+    ▼                                   ▼             ▼              ▼
 ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
 │  User   │  │Verifier │  │ Issuer  │  │Delegate │  │ Monitor │  │Emergency│
 │Actions  │  │Actions  │  │Actions  │  │Actions  │  │Actions  │  │Handler  │
@@ -350,7 +350,7 @@ Emergency Team → EMERGENCY_EXIT_HANDLER_ROLE → Crisis asset recovery
 │• Lock   │  │• Stake  │  │• Fees   │  │• Fees   │  │         │  │• Exfil  │
 │• Claim  │  │• Claim  │  │• Claim  │  │• Claim  │  │         │  │         │
 └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘
-    ✓            ✓           ✓           ✓           ✓           ✓
+    ✓            ✓           ✓           ✓           ✓            ✓
     ✗            ✗           ✗           ✗           ✗           ✓
     ✗            ✗           ✗           ✗           ✗           ✓
 
@@ -436,15 +436,15 @@ Epoch Finalization
 ```
 Time-Based Dependencies:
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│ EPOCH LIFECYCLE (1 week cycles)                                                │
+│ EPOCH LIFECYCLE (1 week cycles)                                                 │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                 │
-│ Week N-1    │ Week N (Active)  │ Week N+1 (Finalization) │ Week N+2          │
-│ ────────────┼──────────────────┼──────────────────────────┼─────────────────  │
-│             │ • Voting active  │ • Epoch ends             │ • Claims active   │
-│             │ • Verifications  │ • Subsidies deposited    │ • Unclaimed sweep │
-│             │ • Delegations    │ • Rewards calculated     │   (after delay)   │
-│             │ • Fee updates    │ • Pools finalized        │                   │
+│ Week N-1    │ Week N (Active)  │ Week N+1 (Finalization) │ Week N+2             │
+│ ────────────┼──────────────────┼──────────────────────────┼─────────────────────│
+│             │ • Voting active  │ • Epoch ends             │ • Claims active     │
+│             │ • Verifications  │ • Subsidies deposited    │ • Unclaimed sweep   │
+│             │ • Delegations    │ • Rewards calculated     │   (after delay)     │
+│             │ • Fee updates    │ • Pools finalized        │                     │
 │                                                                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```

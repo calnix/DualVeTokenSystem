@@ -78,27 +78,15 @@ The AccessController addresses this by organizing roles according to how frequen
 
 Roles are split by how often they need to be managed:
 
-**High-Frequency Operations**
-- Monitoring/pause: instant response to issues
-- Automation: routine maintenance
-- Bot rotation: operational reliability
-- All require dedicated admins for fast, bottleneck-free action
-
-**Low-Frequency Strategic Operations**
-- Protocol parameter updates: economic/strategic decisions
-- Asset management: treasury ops
-- Emergency procedures: crisis response
-- These stay under centralized executive oversight
-
-This separation delivers operational efficiency and strong governance.
-
-| High-Frequency Operations                | Strategic Operations            |
+| **High-Frequency Operations**            | **Strategic Operations**        |
 |------------------------------------------|---------------------------------|
 | Bot rotation, monitoring                 | Protocol parameter changes      |
 | Epoch processing                         | Asset management decisions      |
 | Emergency responses                      | Governance modifications        |
 | **Need:** Instant response               | **Need:** Deliberate review     |
 | **Solution:** Dedicated admins           | **Solution:** Executive control |
+
+This separation delivers operational efficiency and strong governance.
 
 ## Design Philosophy
 
@@ -116,7 +104,7 @@ This lets teams move fast on daily ops, keeps critical decisions under review, a
 | Exec approval for everything                       | High-frequency roles = dedicated admins     |
 | Routine ops bottle-necked                          | Strategic roles = exec oversight            |
 | Security model ignores operational reality         | Authority matches operational need          |
-| Emergency response tend to be delayed or bottle-necked | Emergency powers always on tap           |
+| Emergency response tend to be delayed or bottle-necked | Emergency powers always on tap          |
 
 This model is both efficient and secure. Routine ops run without bureaucracy; critical changes get real governance. Global admin always has the override.
 
@@ -134,7 +122,7 @@ This model is both efficient and secure. Routine ops run without bureaucracy; cr
 
 ---
 
-# Role Architecture Structure
+# Roles: Organizational Structure
 
 The system organizes roles into four tiers based on operational frequency and risk profile.
 
@@ -185,7 +173,6 @@ If an operational admin is compromised:
 
 <span style="color:red">__Blast radius is intentionally limited by design.__</span>
 
-
 **Roles: Multi-sig Configuration**
 
 ```lua
@@ -197,9 +184,9 @@ DEFAULT_ADMIN_ROLE                                  (SeniorLeadership: 4/7 Multi
 ├── ASSET_MANAGER_ROLE                              (DatTeam: 2/3 Multi-sig)
 └── EMERGENCY_EXIT_HANDLER_ROLE                     (DevOps5: 2/3 Multi-sig) 
 ```
-Avoid using a single DevOps multi-sig address for all roles—this would centralize risk rather than isolate it.
+Avoid using a single DevOps multi-sig address for all roles, as this would centralize risk instead of isolating it.
 
-**Roles: Responsible Actors**
+**Roles: Actors Involved**
 ```
 SeniorLeadership → DEFAULT_ADMIN_ROLE → Grant/Revoke strategic roles
 DAT Team         → ASSET_MANAGER_ROLE → Execute asset withdrawals
@@ -215,13 +202,13 @@ DevOps Team      → PAYMENTS_CONTROLLER_ADMIN_ROLE, VOTING_CONTROLLER_ADMIN_ROL
 ├─────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                     │
 │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
-│  │   AddressBook   │◄───┤ AccessController │───►│ All Contracts  │                  │
+│  │   AddressBook   │◄───┤ AccessController│───►│ All Contracts   │                  │
 │  │  (Immutable)    │    │  (Upgradeable)  │    │  (Query ACL)    │                  │
 │  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
 │           │                       │                                                 │
 │           ▼                       ▼                                                 │
 │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
-│  │PaymentsController│   │ VotingController │   │VotingEscrowMoca │                  │
+│  │PaymensController│    │ VotingController│    │VotingEscrowMoca │                  │
 │  │                 │◄──►│                 │◄──►│                 │                  │
 │  │ • Verification  │    │ • Vote Mgmt     │    │ • Lock Mgmt     │                  │
 │  │ • Fee Mgmt      │    │ • Reward Dist   │    │ • Delegation    │                  │
@@ -230,7 +217,7 @@ DevOps Team      → PAYMENTS_CONTROLLER_ADMIN_ROLE, VOTING_CONTROLLER_ADMIN_ROL
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### **Risk Level Matrix**
+### **Risk Matrix**
 
 ```
                     RISK LEVEL: LOW ◄────────────────────────────────► HIGH
@@ -260,16 +247,8 @@ DevOps Team      → PAYMENTS_CONTROLLER_ADMIN_ROLE, VOTING_CONTROLLER_ADMIN_ROL
 │                 │                 │ • Pool mgmt     │                 │
 └─────────────────┴─────────────────┴─────────────────┴─────────────────┘
 ```
-**Attack Vectors**
 
-```lua
-| Attack Vector           | Likelihood | Impact   | Mitigation                         |
-|-------------------------|------------|----------|------------------------------------|
-| Bot compromise          | Medium     | Limited  | Role isolation, quick rotation     | [monitor,cron]
-| Admin role compromised  | Low        | High     | Multi-sig, global override         | [unless GlobalAdmin multi-sig was infiltrated]
-```
-
-## Defense Layers
+## DEFENSE LAYERS
 
 We implement a layered approach, enabling strict risk containment, while allowing flexible operations: 
 
@@ -285,6 +264,67 @@ Some admin roles would be granted to EOA addresses *temporarily* to execute auto
 - Upon completion, EOA role to be revoked.
 
 **Regardless, each admin role will be anchored to a fixed multi-sig; regardless the temporal additions/removals of other EOA scripts.**
+
+### ATTACK SURFACE ANALYSIS  
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                              ATTACK SURFACE ANALYSIS                          │
+├─────────────────┬─────────────────┬─────────────────┬─────────────────────────┤
+│ ATTACK VECTOR   │ LIKELIHOOD      │ IMPACT          │ MITIGATION              │
+├─────────────────┼─────────────────┼─────────────────┼─────────────────────────┤
+│ Signature Forge │ Medium          │ High            │ • EIP712 + nonces       │
+│                 │                 │                 │ • Multi-sig validation  │
+├─────────────────┼─────────────────┼─────────────────┼─────────────────────────┤
+│ Double Voting   │ High            │ High            │ • Forward-booking       │
+│                 │                 │                 │ • State validation      │
+├─────────────────┼─────────────────┼─────────────────┼─────────────────────────┤
+│ Fee Manipulation│ Medium          │ Medium          │ • Delay periods         │
+│                 │                 │                 │ • Admin controls        │
+├─────────────────┼─────────────────┼─────────────────┼─────────────────────────┤
+│ Re-entrancy     │ Low             │ High            │ • Checks-Effects-Inter  │
+│                 │                 │                 │ • State updates first   │
+├─────────────────┼─────────────────┼─────────────────┼─────────────────────────┤
+│ Access Control  │ Low             │ Critical        │ • Multi-layer ACL       │
+│ Bypass          │                 │                 │ • Role separation       │
+├─────────────────┼─────────────────┼─────────────────┼─────────────────────────┤
+│ Economic Attack │ Medium          │ High            │ • Staking requirements  │
+│                 │                 │                 │ • Fee structures        │
+└─────────────────┴─────────────────┴─────────────────┴─────────────────────────┘
+```
+
+### Security State Transitions
+
+```
+                    NORMAL ◄──────────────────────► PAUSED ◄──────► FROZEN
+                      │                               │              │
+                      │                               │              │
+    ┌─────────────────┴─────────────────┐             │              │
+    │                                   │             │              │
+    ▼                                   ▼             ▼              ▼
+┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
+│  User   │  │Verifier │  │ Issuer  │  │Delegate │  │ Monitor │  │Emergency│
+│Actions  │  │Actions  │  │Actions  │  │Actions  │  │Actions  │  │Handler  │
+│         │  │         │  │         │  │         │  │         │  │Actions  │
+│• Vote   │  │• Verify │  │• Create │  │• Vote   │  │• Pause  │  │• Exit   │
+│• Lock   │  │• Stake  │  │• Fees   │  │• Fees   │  │         │  │• Exfil  │
+│• Claim  │  │• Claim  │  │• Claim  │  │• Claim  │  │         │  │         │
+└─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘
+    ✓            ✓           ✓           ✓           ✓            ✓
+    ✗            ✗           ✗           ✗           ✗           ✓
+    ✗            ✗           ✗           ✗           ✗           ✓
+
+Legend: ✓ = Allowed, ✗ = Blocked
+```
+
+**Example: Attack -> Impact -> Mitigation**
+
+```lua
+| Attack Vector           | Likelihood | Impact   | Mitigation                         |
+|-------------------------|------------|----------|------------------------------------|
+| Bot compromise          | Medium     | Limited  | Role isolation, quick rotation     | [monitor,cron]
+| Admin role compromised  | Low        | High     | Multi-sig, global override         | [unless GlobalAdmin multi-sig was infiltrated]
+```
 
 ## Detailed Role Specifications
 
@@ -546,3 +586,94 @@ By focusing on practicality rather than theoretical security models, the AccessC
 - Parameter updates: PAYMENTS_CONTROLLER_ADMIN_ROLE
 - Fee withdrawals: ASSET_MANAGER_ROLE
 - Emergency exits: EMERGENCY_EXIT_HANDLER_ROLE
+
+
+## Execution Flow Analysis
+
+### Verification Flow (PaymentsController)
+
+```
+User Verification Request
+         │
+         ▼
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│   Schema Fee Check  │───►│  Signature Verify   │───►│  Balance Deduction  │
+│   • Current fee     │    │  • EIP712 sig       │    │  • USD8 transfer    │
+│   • Pending fee     │    │  • Nonce check      │    │  • Fee split        │
+│   • Auto-apply      │    │  • Signer validate  │    │  • Subsidy calc     │
+└─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+         │                           │                           │
+         ▼                           ▼                           ▼
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│    RISK POINTS      │    │    RISK POINTS      │    │    RISK POINTS      │
+│ • Fee manipulation  │    │ • Signature forge   │    │ • Insufficient bal  │
+│ • Race conditions   │    │ • Replay attacks    │    │ • Calculation error │
+│ • Timing attacks    │    │ • Wrong signer      │    │ • Reentrancy        │
+└─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+```
+
+### Voting Flow (VotingController)
+
+```
+Vote Casting
+         │
+         ▼
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│  Voting Power Check │───►│   Pool Validation   │───►│   Vote Recording    │
+│  • Personal/Deleg   │    │   • Pool exists     │    │   • Update counters │
+│  • Available votes  │    │   • Not removed     │    │   • Emit events     │
+│  • Epoch status     │    │   • Vote limits     │    │   • State changes   │
+└─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+         │                           │                           │
+         ▼                           ▼                           ▼
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│    RISK POINTS      │    │    RISK POINTS      │    │    RISK POINTS      │
+│ • Double voting     │    │ • Pool manipulation │    │ • State corruption  │
+│ • Delegate fraud    │    │ • Invalid pools     │    │ • Overflow/underfl  │
+│ • Power calculation │    │ • Removed pools     │    │ • Gas limit issues  │
+└─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+```
+
+### Reward Distribution Flow
+
+```
+Epoch Finalization
+         │
+         ▼
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│ Subsidy Calculation │───►│  Reward Allocation  │───►│   Claim Processing  │
+│ • Pool proportions  │    │  • Pro-rata dist    │    │  • User claims      │
+│ • Verifier stakes   │    │  • Fee calculations │    │  • Delegate fees    │
+│ • Epoch totals      │    │  • Pool allocations │    │  • Transfer tokens  │
+└─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+         │                           │                           │
+         ▼                           ▼                           ▼
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│    RISK POINTS      │    │    RISK POINTS      │    │    RISK POINTS      │
+│ • Calculation error │    │ • Unfair allocation │    │ • Double claiming   │
+│ • Rounding issues   │    │ • Precision loss    │    │ • Wrong recipients  │
+│ • Pool manipulation │    │ • Timing attacks    │    │ • Token shortfall   │
+└─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+```
+
+---
+
+## Temporal Dependencies & Epoch Lifecycle
+
+### Time-Based Operations
+
+```
+Time-Based Dependencies:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ EPOCH LIFECYCLE (1 week cycles)                                                 │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│ Week N-1    │ Week N (Active)  │ Week N+1 (Finalization) │ Week N+2             │
+│ ────────────┼──────────────────┼──────────────────────────┼─────────────────────│
+│             │ • Voting active  │ • Epoch ends             │ • Claims active     │
+│             │ • Verifications  │ • Subsidies deposited    │ • Unclaimed sweep   │
+│             │ • Delegations    │ • Rewards calculated     │   (after delay)     │
+│             │ • Fee updates    │ • Pools finalized        │                     │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
