@@ -93,11 +93,6 @@ contract AddressBook is Ownable2Step {
         return addresses[PAYMENTS_CONTROLLER];
     }
 
-    function getRouter() external view returns (address) {
-        return addresses[ROUTER];
-    }
-
-
     function getTreasury() external view returns (address) {
         return addresses[TREASURY];
     }

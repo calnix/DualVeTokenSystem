@@ -158,10 +158,35 @@ library DataTypes {
     struct VeBalance {
         uint128 bias;
         uint128 slope;
-        // permanentLockBalance
     }
 
+// --------- EscrowedMoca.sol -------
 
+    struct RedemptionOption {
+        uint128 lockDuration;       // number of seconds until redemption is available    | 0 for instant redemption
+        uint128 receivablePct;      // this is what the user receives; if 10_000, no penalty applied. | if 0, redemption type is disabled
+        // range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
+    }
 
+    struct Redemption {
+        uint128 mocaReceivable;
+        uint128 penalty;
+        bool claimed; // true if claimed, false if not
+    }
+
+   /* 
+    struct Redemption {
+        uint128 moca;
+        uint128 esMoca;
+        uint128 veMoca;
+        uint128 penalty;
+    }
+
+    struct RedemptionRequest {
+        uint128 moca;
+        uint128 esMoca;
+        uint128 veMoca;
+        uint128 penalty;
+    }*/
 
 }

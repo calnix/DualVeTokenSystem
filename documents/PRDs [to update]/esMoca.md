@@ -65,6 +65,3 @@ $esMOCA penalties for early redemption are `redistributed` `50-50`:
 ## Only Treasury can convert esMoca to Moca
 
 - treaasury fn to convert
-
-## Auto-compounding
-

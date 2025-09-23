@@ -6,6 +6,9 @@ library Events {
     // --------- Generic: Risk ---------
     event ContractFrozen();
 
+// --------- EscrowedMoca.sol ---------
+    event Redeemed(address indexed caller, uint256 mocaReceivable, uint256 lockupTime, uint256 redemptionOption);
+    event PenaltyAccrued(uint256 penaltyToVoters, uint256 penaltyToTreasury);
 
 
 // --------- VotingEscrowMoca.sol ---------

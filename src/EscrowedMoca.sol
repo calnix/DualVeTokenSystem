@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
+// External: OZ
 import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
-import {EpochMath} from "./libraries/EpochMath.sol";
-import {DataTypes} from "./libraries/DataTypes.sol";
+import {EpochMath} from "../libraries/EpochMath.sol";
+import {DataTypes} from "../libraries/DataTypes.sol";
+import {Constants} from "../libraries/Constants.sol";
 
-import {Errors} from "./libraries/Errors.sol";
-import {Events} from "./libraries/Events.sol";
+import {Errors} from "../libraries/Errors.sol";
+import {Events} from "../libraries/Events.sol";
 
 // interfaces
-import {IAddressBook} from "./interfaces/IAddressBook.sol";
-import {IAccessController} from "./interfaces/IAccessController.sol";
+import {IAddressBook} from "../interfaces/IAddressBook.sol";
+import {IAccessController} from "../interfaces/IAccessController.sol";
 
 
 /**
@@ -27,100 +29,135 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
 
 /**
     esMoca is given out to:
-    1. validators as direct emissions
-    2. voters gets esMoca from verification fee split
-    3. verifiers claim subsidies as esMoca
+    1. validators as discretionary rewards
+    2. voters receive their voting rewards as esMoca [from verification fee split]
+    3. verifiers receive subsidies as esMoca
 
-    voters+verifiers will have to initiate claim through voting contract
+    USD8 must be withdrawn from PaymentsController
+    converted to Moca
+    Moca must be then converted to esMoca, via this contract
  */
 
-contract EscrowedMoca is ERC20, AccessControl {
+contract EscrowedMoca is ERC20, Pausable {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable mocaToken;
-    uint256 public constant PRECISION_BASE = 100;    // 100%: 100, 1%: 1 | no decimal places
+    // immutable
+    IAddressBook internal immutable _addressBook;
 
-    uint256 public PENALTY_FACTOR_TO_VOTERS;         // range:[1,100] 100%: 100 | 1%: 1. no decimal places
+    // penalty split between voters and treasury
+    uint256 public VOTERS_PENALTY_SPLIT;         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
     
-    uint256 public totalPenaltyToVoters; 
-    uint256 public totalPenaltyToTreasury; 
+    //note: or just combine and track the sum total. distribution is discretionary and through finalizeEpoch on VotingController
+    uint256 public TOTAL_ACCRUED_TO_VOTERS; 
+    uint256 public TOTAL_ACCRUED_TO_TREASURY; 
+
+//-------------------------------mapping----------------------------------------------
+
+    // redemption options | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 | 2dp precision (XX.yy)
+    mapping(uint256 redemptionType => DataTypes.RedemptionOption redemptionOption) public redemptionOptions;
     
-    address public TREASURY; // multisig or contract?
+    // redemption history
+    mapping(address user => mapping(uint256 redemptionTimestamp => DataTypes.Redemption redemption)) public redemptionSchedule;
 
-    struct RedemptionOption {
-        uint128 lockDuration;       // number of seconds until redemption is available    | 0 for instant redemption
-        uint128 conversionRate;     // range:[1,100] 100%: 100 | 1%: 1. no decimal places | if 0, redemption type is disabled
-    }
-
-    struct Redemption {
-        uint256 amount;
-        bool claimed; // true if claimed, false if not
-    }
-
-    mapping(uint256 redemptionType => RedemptionOption redemptionOption) public redemptionOptions;
-
-    mapping(address user => mapping(uint256 timestamp => Redemption redemption)) public redemptions;
-
-    // addresses that can transfer esMoca to other addresses: voting claims, verifier subsidy claims
+    // addresses that can transfer esMoca to other addresses: Asset Manager to deposit to VotingController
     mapping(address addr => bool isWhitelisted) public whitelist;
 
 
 //-------------------------------constructor------------------------------------------
 
-    // check naming style; MOCA or Moca?
-    constructor(address mocaToken_, address owner) ERC20("esMOCA", "esMOCA") {
-        mocaToken = IERC20(mocaToken_);
-
-        _grantRole(DEFAULT_ADMIN_ROLE, owner);
+    constructor(address addressBook) ERC20("esMoca", "esMoca") {
+        
+        _addressBook = IAddressBook(addressBook);
     }
 
 //-------------------------------user functions------------------------------------------
 
-    //convert moca to esMoca
-    function escrow(uint256 amount) external {
+    /**
+     * @notice Converts Moca tokens to esMoca by transferring Moca from the user and minting an equivalent amount of esMoca.
+     * @dev Moca tokens are transferred from the caller to this contract and esMoca is minted 1:1 to the caller.
+     * @custom:security Non-reentrant, only callable when not paused.
+     * @custom:assumptions Assumes Moca token address is valid and user has approved sufficient Moca.
+     * @param amount The amount of Moca to convert to esMoca.
+     */
+    function escrowMoca(uint256 amount) external whenNotPaused {
+        require(amount > 0, Errors.InvalidAmount());
+
+        IERC20 mocaToken = IERC20(_addressBook.getMoca());
+        require(address(mocaToken) != address(0), Errors.InvalidAddress());
+
         mocaToken.safeTransferFrom(msg.sender, address(this), amount);
         _mint(msg.sender, amount);
     }
 
 
     /**
-     * @notice Allows users to redeem esMOCA for MOCA with different redemption options
+     * @notice Allows users to redeem esMoca for Moca; choice ofh different redemption options
      * @dev Cannot cancel redemption once initiated
-     * @param redemptionAmount The amount of esMOCA to redeem
+     * @param redemptionAmount The amount of esMoca to redeem
      * @param redemptionOption The redemption option (0: Standard, 1: Early, 2: Instant)
      */
-    function redeem(uint256 redemptionAmount, uint256 redemptionOption) external {
-        require(redemptionAmount > 0, "Amount must be greater than zero");
-        require(redemptionOption <= 2, "Invalid redemption option");
-        require(balanceOf(msg.sender) >= redemptionAmount, "Insufficient esMOCA balance");
+    function redeem(uint128 redemptionAmount, uint256 redemptionOption) external whenNotPaused {
+        // sanity checks: amount & balance
+        require(redemptionAmount > 0, Errors.InvalidAmount());
+        require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
+        
+        // get redemption option ptr + sanity check: redemption option
+        DataTypes.RedemptionOption memory option = redemptionOptions[redemptionOption];
+        require(option.receivablePct > 0, Errors.InvalidRedemptionOption());    //  redemption type is not set or disabled
 
-        // get redemption option 
-        RedemptionOption memory option = redemptionOptions[redemptionOption];
-        require(option.conversionRate > 0, "Redemption option not enabled");
+        uint128 mocaReceivable;
+        uint128 penaltyAmount;
+        // calculate moca receivable + penalty
+        if(option.receivablePct == Constants.PRECISION_BASE) {
+            // redemption with no penalty
+            mocaReceivable = redemptionAmount;
+        } else {
+            // redemption with penalty
+            mocaReceivable = redemptionAmount * option.receivablePct / Constants.PRECISION_BASE;
+            penaltyAmount = redemptionAmount - mocaReceivable;
+        }
+        
+        // calculate redemptionTimestamp
+        uint256 redemptionTimestamp;
+        if(option.lockDuration > 0) {
+            
+            // calculate redemptionTimestamp
+            redemptionTimestamp = block.timestamp + option.lockDuration;
+
+            // book redemption amount + penalty amount
+            redemptionSchedule[msg.sender][redemptionTimestamp].amount = mocaReceivable;
+            redemptionSchedule[msg.sender][redemptionTimestamp].penalty = penaltyAmount;
+
+        } else {
+            // instant redemption
+            redemptionTimestamp = block.timestamp;
+
+            // book redemption amount + redemption timestamp
+            redemptionSchedule[msg.sender][redemptionTimestamp].claimed = true;
+            redemptionSchedule[msg.sender][redemptionTimestamp].amount = mocaReceivable;
+
+            mocaToken.safeTransfer(msg.sender, mocaReceivable);
+            emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionOption);
+        }
+
+
 
         // burn corresponding esMoca tokens from the caller
         _burn(msg.sender, redemptionAmount);
 
-        // calculate moca receivable + lockup time
-        uint256 lockupTime = block.timestamp + option.lockDuration;
-        uint256 mocaReceivable = redemptionAmount * option.conversionRate / PRECISION_BASE;
-        // book redemption amount
-        redemptions[msg.sender][lockupTime].amount += mocaReceivable;
 
         // ------ if penalty, calculate and book penalty ------
-        if(option.conversionRate < PRECISION_BASE) {
+        if(penaltyAmount > 0) {
             
             // calculate penalty amount
-            uint256 penaltyAmount = redemptionAmount - mocaReceivable;
-            uint256 penaltyToVoters = penaltyAmount * PENALTY_FACTOR_TO_VOTERS / PRECISION_BASE;        //note: how/where to push the tokens to for claiming?
+            uint256 penaltyToVoters = penaltyAmount * VOTERS_PENALTY_SPLIT / Constants.PRECISION_BASE;
             uint256 penaltyToTreasury = penaltyAmount - penaltyToVoters;
+            
+            // book penalty amounts to globals
+            if(penaltyToTreasury > 0) TOTAL_ACCRUED_TO_TREASURY += penaltyToTreasury;
+            if(penaltyToVoters > 0) TOTAL_ACCRUED_TO_VOTERS += penaltyToVoters;
 
-            _mint(address(this), penaltyToVoters);  // note: update depending how distribution is done
-            _mint(TREASURY, penaltyToTreasury);
-
-            // book penalty amount
-            totalPenaltyToVoters += penaltyToVoters;
-            totalPenaltyToTreasury += penaltyToTreasury;
+            emit PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
         }
 
         //event: redeemed
@@ -129,11 +166,11 @@ contract EscrowedMoca is ERC20, AccessControl {
         if(option.lockDuration == 0) {
             
             // book claimed + transfer
-            redemptions[msg.sender][lockupTime].claimed = true;
-            mocaToken.safeTransfer(msg.sender, mocaReceivable);
 
-            // event: claimed
         }
+
+        
+
     }
 
     // claim everything. no partial claims.
