@@ -118,36 +118,29 @@ contract EscrowedMoca is ERC20, Pausable {
         }
         
         // calculate redemptionTimestamp
-        uint256 redemptionTimestamp;
-        if(option.lockDuration > 0) {
+        uint256 redemptionTimestamp = block.timestamp + option.lockDuration;
+
+        // book redemption amount + penalty amount
+        redemptionSchedule[msg.sender][redemptionTimestamp].amount += mocaReceivable;
+        redemptionSchedule[msg.sender][redemptionTimestamp].penalty += penaltyAmount;
+
+        if(option.lockDuration == 0) {
             
-            // calculate redemptionTimestamp
-            redemptionTimestamp = block.timestamp + option.lockDuration;
-
-            // book redemption amount + penalty amount
-            redemptionSchedule[msg.sender][redemptionTimestamp].amount = mocaReceivable;
-            redemptionSchedule[msg.sender][redemptionTimestamp].penalty = penaltyAmount;
-
-            emit RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp, redemptionOption);
-
-        } else {    // instant redemption
-            
-            redemptionTimestamp = block.timestamp;
-
-            // book redemption amount + penalty amount + claimed
+            // Instant redemption: mark claimed, transfer immediately
             redemptionSchedule[msg.sender][redemptionTimestamp].claimed = true;
-            redemptionSchedule[msg.sender][redemptionTimestamp].amount = mocaReceivable;
-            redemptionSchedule[msg.sender][redemptionTimestamp].penalty = penaltyAmount;
+            emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionOption);
 
             mocaToken.safeTransfer(msg.sender, mocaReceivable);
-            emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionOption);
+
+        } else {    // Scheduled redemption
+            emit RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp, redemptionOption);
         }
 
         // burn corresponding esMoca tokens from the caller
         _burn(msg.sender, redemptionAmount);
 
 
-        // ------ if penalty, calculate and book penalty ------
+        // ------ if penalty, calculate and book splits ------
         if(penaltyAmount > 0) {
             
             // calculate penalty amount
