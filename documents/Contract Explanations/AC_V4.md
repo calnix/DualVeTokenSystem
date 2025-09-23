@@ -111,17 +111,12 @@ Frequency-based model:
 
 This lets teams move fast on daily ops, keeps critical decisions under review, and ensures global admin can always override. The result: scalable, secure, and operationally realistic permissions.
 
-**Traditional Limitations:**
-- Exec approval for everything
-- Routine ops bottle-necked
-- Security model ignores operational reality
-- Emergency response tend to be delayed or bottle-necked
-
-**Frequency-Based Solution:**
-- High-frequency roles = dedicated admins
-- Strategic roles = exec oversight
-- Authority matches operational need
-- Emergency powers always on tap
+| **Traditional Limitations**                        | **Frequency-Based Solution**                |
+|----------------------------------------------------|---------------------------------------------|
+| Exec approval for everything                       | High-frequency roles = dedicated admins     |
+| Routine ops bottle-necked                          | Strategic roles = exec oversight            |
+| Security model ignores operational reality         | Authority matches operational need          |
+| Emergency response tend to be delayed or bottle-necked | Emergency powers always on tap           |
 
 This model is both efficient and secure. Routine ops run without bureaucracy; critical changes get real governance. Global admin always has the override.
 
@@ -276,18 +271,20 @@ DevOps Team      → PAYMENTS_CONTROLLER_ADMIN_ROLE, VOTING_CONTROLLER_ADMIN_ROL
 
 ## Defense Layers
 
+We implement a layered approach, enabling strict risk containment, while allowing flexible operations: 
+
 1. Role Isolation: Operational roles cannot access strategic functions, and vice versa; preventing cascade failures.
 2. Multi-Signature Protection: All admin roles require distributed approval, with thresholds aligned to risk levels.
 3. Override Mechanisms: Global admin can intervene in any role, ensuring no permanent lockouts.
 
-This layered approach contains risks while allowing flexible operations, demonstrating the system's robustness in handling diverse scenarios.
+This demonstrates the system's robustness in handling diverse scenarios.
 
 **Exception:**
 Some admin roles would be granted to EOA addresses *temporarily* to execute automated tasks.
 - For example, emergencyExit, or batch creation of pools.
 - Upon completion, EOA role to be revoked.
 
-Regardless, each admin role will never lose it's multi-sig; which is its anchor.
+**Regardless, each admin role will be anchored to a fixed multi-sig; regardless the temporal additions/removals of other EOA scripts.**
 
 ## Detailed Role Specifications
 
@@ -491,10 +488,25 @@ It optimizes both efficiency and security, via a flexible governance layer that 
   - All role changes are logged via events, supporting comprehensive audit trails and operational transparency.
   - The model is designed to scale, maintaining clarity and control as protocol complexity grows.
 
+## Comparative Analysis: Traditional vs Frequency-Based RBAC
+
+| **Aspect**                  |<span style="color:red">**Traditional RBAC**</span> | <span style="color:green">**Frequency-Based, Risk-weighted RBAC**</span> |
+|:----------------------------|:---------------------------------------------------|:-------------------------------------------------------------------------|
+| **Authority Structure**     | Hierarchical, top-down approval                    | Risk-weighted, frequency-aligned                                         |
+| **Operational Bottlenecks** | All privileged ops require executive approval      | High-frequency ops have dedicated admins                                 |
+| **Emergency Response**      | Delayed by approval chains                         | Immediate response capabilities                                          |
+| **Role Granularity**        | Broad permissions or restrictive gates             | Precise matching of authority to operational need                        |
+| **Risk Containment**        | Single failure affects entire hierarchy            | Role isolation limits blast radius                                       |
+| **Operational Reality**     | Ignores frequency of administrative tasks          | Designed around actual operational patterns                              |
+| **Governance Overhead**     | High friction for routine operations               | Strategic oversight where it matters                                     |
+| **Scalability**             | Becomes unwieldy as protocol grows                 | Maintains clarity through operational tiers                              |
+| **Security Model**          | One-size-fits-all approach                         | Risk-profiled, context-aware permissions                                 |
+
 **Innovation Highlight:**
 An RBAC based upon expected frequency and risk profile of operations, is the innovation that allows for streamlining contract administration, risk mitigation and security. 
 By focusing on practicality rather than theoretical security models, the AccessController delivers a robust, operationally realistic solution for decentralized protocols.
 
+--- 
 
 # Deployment Process
 1. Deploy AddressBook → Set globalAdmin (executive multisig)
@@ -506,6 +518,8 @@ By focusing on practicality rather than theoretical security models, the AccessC
     - Grant strategic roles directly to appropriate multi-sigs
     - Assign `MONITOR_ROLE` to risk bots
     - Keep the following roles unassigned: `CRON_JOB`, `EMERGENCY_EXIT_HANDLER_ROLE`. These are only assigned temporally and removed after immediately. 
+
+----
 
 # Appendix
 
