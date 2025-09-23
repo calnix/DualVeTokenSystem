@@ -1,9 +1,29 @@
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.26;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
 
 import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+
+// libraries
+import {EpochMath} from "./libraries/EpochMath.sol";
+import {DataTypes} from "./libraries/DataTypes.sol";
+
+import {Errors} from "./libraries/Errors.sol";
+import {Events} from "./libraries/Events.sol";
+
+// interfaces
+import {IAddressBook} from "./interfaces/IAddressBook.sol";
+import {IAccessController} from "./interfaces/IAccessController.sol";
+
+
+/**
+ * @title EscrowedMoca
+ * @author Calnix [@cal_nix]
+ * @notice EscrowedMoca is a non-transferable token representing the escrowed MOCA tokens.
+ * @dev EscrowedMoca represents MOCA tokens held in escrow, which can be redeemed under various options—similar to early bond redemption—with penalties applied based on the chosen redemption method.
+*/
+
 
 /**
     esMoca is given out to:
