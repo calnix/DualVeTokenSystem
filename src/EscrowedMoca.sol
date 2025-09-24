@@ -157,24 +157,32 @@ contract EscrowedMoca is ERC20, Pausable {
         }
     }
 
-    // claim everything. no partial claims.
-    // validators to claim esMoca from direct emissions
+
+    /**
+     * @notice Claims the redeemed MOCA tokens after the lock period has elapsed.
+     * @dev Transfers the receivable MOCA to the caller and marks the redemption as claimed.
+     *      Emits a {Redeemed} event upon successful claim.
+     * @param redemptionTimestamp The timestamp at which the redemption becomes available for claim.
+     * @custom:revert RedemptionNotAvailableYet if the redemption is not yet available.
+     * @custom:revert AlreadyClaimed if the redemption has already been claimed.
+     */
     function claimRedemption(uint256 redemptionTimestamp) external {
-        // check if redemption is available
-        require(redemptionTimestamp < block.timestamp, "Redemption not available yet");
-        
-        Redemption memory redemption = redemptions[msg.sender][redemptionTimestamp];
+        // check redemption eligibility
+        require(redemptionTimestamp < block.timestamp, Errors.RedemptionNotAvailableYet());
 
-        // check if there is anything to claim
-        require(redemption.claimed == false, "Already claimed");
+        DataTypes.Redemption storage redemptionPtr = redemptionSchedule[msg.sender][redemptionTimestamp];
 
-        // update claimed status
-        redemptions[msg.sender][redemptionTimestamp].claimed = true;
+        // check if redemption is claimed
+        require(redemptionPtr.claimed == false, Errors.AlreadyClaimed());
 
-        // event: claimed
+        // get redemption amount + update claimed status
+        uint128 mocaReceivable = redemptionPtr.amount;
+        redemptionPtr.claimed = true;
+
+        emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionPtr.penalty);
 
         // transfer moca
-        mocaToken.safeTransfer(msg.sender, redemption.amount);
+        mocaToken.safeTransfer(msg.sender, mocaReceivable);
     }
 
 

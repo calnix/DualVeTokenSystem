@@ -80,5 +80,8 @@ library Errors {
     // removePool
     error EndOfEpochOpsUnderway();
 
+// --------- EscrowedMoca.sol ---------
+    error RedemptionNotAvailableYet();
+    error AlreadyClaimed();
 
 }
