@@ -87,7 +87,7 @@ contract EscrowedMoca is ERC20, Pausable {
         // mint esMoca to user
         _mint(msg.sender, amount);
 
-        emit EscrowedMoca(msg.sender, amount);
+        emit Events.EscrowedMoca(msg.sender, amount);
     }
 
 
@@ -131,12 +131,12 @@ contract EscrowedMoca is ERC20, Pausable {
             
             // Instant redemption: mark claimed, transfer immediately
             redemptionSchedule[msg.sender][redemptionTimestamp].claimed = true;
-            emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionOption);
+            emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionOption);
 
             _moca().safeTransfer(msg.sender, mocaReceivable);
 
         } else {    // Scheduled redemption
-            emit RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp, redemptionOption);
+            emit Events.RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp, redemptionOption);
         }
 
         // burn corresponding esMoca tokens from the caller
@@ -154,7 +154,7 @@ contract EscrowedMoca is ERC20, Pausable {
             if(penaltyToTreasury > 0) TOTAL_ACCRUED_TO_TREASURY += penaltyToTreasury;
             if(penaltyToVoters > 0) TOTAL_ACCRUED_TO_VOTERS += penaltyToVoters;
 
-            emit PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
+            emit Events.PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
         }
     }
 
@@ -180,7 +180,7 @@ contract EscrowedMoca is ERC20, Pausable {
         uint128 mocaReceivable = redemptionPtr.amount;
         redemptionPtr.claimed = true;
 
-        emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionPtr.penalty);
+        emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionPtr.penalty);
 
         // transfer moca
         _moca().safeTransfer(msg.sender, mocaReceivable);
@@ -220,7 +220,7 @@ contract EscrowedMoca is ERC20, Pausable {
         // transfer total moca 
         _moca().safeTransferFrom(msg.sender, address(this), totalMocaAmount);
 
-        emit StakedOnBehalf(users, amounts);
+        emit Events.StakedOnBehalf(users, amounts);
     }
 
 //-------------------------------admin: update functions-----------------------------------------
@@ -240,7 +240,7 @@ contract EscrowedMoca is ERC20, Pausable {
         uint256 oldPenaltyToVoters = VOTERS_PENALTY_SPLIT;
         VOTERS_PENALTY_SPLIT = penaltyToVoters;
 
-        emit PenaltyToVotersUpdated(oldPenaltyToVoters, penaltyToVoters);
+        emit Events.PenaltyToVotersUpdated(oldPenaltyToVoters, penaltyToVoters);
     }
 
 
@@ -263,7 +263,7 @@ contract EscrowedMoca is ERC20, Pausable {
             isEnabled: true
         });
 
-        emit RedemptionOptionUpdated(redemptionOption, lockDuration, receivablePct);
+        emit Events.RedemptionOptionUpdated(redemptionOption, lockDuration, receivablePct);
     }
 
     /**
@@ -278,13 +278,13 @@ contract EscrowedMoca is ERC20, Pausable {
         if (enable) {
             require(optionPtr.isDisabled, Errors.RedemptionOptionAlreadyEnabled());
             optionPtr.isDisabled = false;
-            emit RedemptionOptionEnabled(redemptionOption, optionPtr.receivablePct, optionPtr.lockDuration);
+            emit Events.RedemptionOptionEnabled(redemptionOption, optionPtr.receivablePct, optionPtr.lockDuration);
             
         } else {
             require(!optionPtr.isDisabled, Errors.RedemptionOptionAlreadyDisabled());
             optionPtr.receivablePct = 0;
             optionPtr.isDisabled = true;
-            emit RedemptionOptionDisabled(redemptionOption);
+            emit Events.RedemptionOptionDisabled(redemptionOption);
         }
     }
 
@@ -303,11 +303,34 @@ contract EscrowedMoca is ERC20, Pausable {
 
         whitelist[addr] = isWhitelisted;
 
-        emit AddressWhitelisted(addr, isWhitelisted);
+        emit Events.AddressWhitelisted(addr, isWhitelisted);
     }
 
 
     // claim for voters and treasury
+
+//-------------------------------admin: release function-----------------------------------------
+
+    /**
+     * @notice ALlows caller to release their esMoca to moca instantly.
+     * @dev Only callable by EscrowedMocaAdmin.
+     * @param amount The amount of esMoca to release to the admin caller.
+     */
+    function releaseEscrowedMoca(uint256 amount) external onlyEscrowedMocaAdmin {
+        require(amount > 0, Errors.InvalidAmount());
+        
+        require(balanceOf(msg.sender) >= amount, Errors.InsufficientBalance());
+
+        // burn esMoca
+        _burn(msg.sender, amount);
+
+        // transfer moca
+        _moca().safeTransfer(msg.sender, amount);
+
+        emit Events.EscrowedMocaReleased(msg.sender, amount);
+    }
+
+
 
 //-------------------------------Internal functions---------------------------------------------------------------
 
