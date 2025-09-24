@@ -21,7 +21,7 @@ interface IAddressBook {
 
     /// @notice Returns the address of the MOCA token.
     /// @return The MOCA token address.
-    function getMocaToken() external view returns (address);
+    function getMoca() external view returns (address);
 
     /// @notice Returns the address of the escrowed MOCA token.
     /// @return The escrowed MOCA token address.

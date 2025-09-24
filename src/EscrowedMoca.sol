@@ -7,16 +7,15 @@ import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/ut
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
-import {EpochMath} from "../libraries/EpochMath.sol";
-import {DataTypes} from "../libraries/DataTypes.sol";
-import {Constants} from "../libraries/Constants.sol";
+import {DataTypes} from "./libraries/DataTypes.sol";
+import {Constants} from "./libraries/Constants.sol";
 
-import {Errors} from "../libraries/Errors.sol";
-import {Events} from "../libraries/Events.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {Events} from "./libraries/Events.sol";
 
 // interfaces
-import {IAddressBook} from "../interfaces/IAddressBook.sol";
-import {IAccessController} from "../interfaces/IAccessController.sol";
+import {IAddressBook} from "./interfaces/IAddressBook.sol";
+import {IAccessController} from "./interfaces/IAccessController.sol";
 
 
 /**
@@ -107,7 +106,7 @@ contract EscrowedMoca is ERC20, Pausable {
             mocaReceivable = redemptionAmount;
         } else {
             // redemption with penalty
-            mocaReceivable = redemptionAmount * option.receivablePct / Constants.PRECISION_BASE;
+            mocaReceivable = redemptionAmount * option.receivablePct / uint128(Constants.PRECISION_BASE);
             penaltyAmount = redemptionAmount - mocaReceivable;
         }
         
@@ -115,7 +114,7 @@ contract EscrowedMoca is ERC20, Pausable {
         uint256 redemptionTimestamp = block.timestamp + option.lockDuration;
 
         // book redemption amount + penalty amount
-        redemptionSchedule[msg.sender][redemptionTimestamp].amount += mocaReceivable;
+        redemptionSchedule[msg.sender][redemptionTimestamp].mocaReceivable += mocaReceivable;
         redemptionSchedule[msg.sender][redemptionTimestamp].penalty += penaltyAmount;
 
         if(option.lockDuration == 0) {
@@ -168,7 +167,7 @@ contract EscrowedMoca is ERC20, Pausable {
         require(redemptionPtr.claimed == false, Errors.AlreadyClaimed());
 
         // get redemption amount + update claimed status
-        uint128 mocaReceivable = redemptionPtr.amount;
+        uint128 mocaReceivable = redemptionPtr.mocaReceivable;
         redemptionPtr.claimed = true;
 
         emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionPtr.penalty);
@@ -189,7 +188,7 @@ contract EscrowedMoca is ERC20, Pausable {
      */
     function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external onlyAssetManager {
         uint256 length = users.length;
-        require(length == amounts.length, Errors.InvalidArrayLength());
+        require(length == amounts.length, Errors.MismatchedArrayLengths());
         
         uint256 totalMocaAmount;
         for (uint256 i; i < length; ++i) {
@@ -267,14 +266,14 @@ contract EscrowedMoca is ERC20, Pausable {
         DataTypes.RedemptionOption storage optionPtr = redemptionOptions[redemptionOption];
 
         if (enable) {
-            require(optionPtr.isDisabled, Errors.RedemptionOptionAlreadyEnabled());
-            optionPtr.isDisabled = false;
+            require(!optionPtr.isEnabled, Errors.RedemptionOptionAlreadyEnabled());
+            optionPtr.isEnabled = true;
             emit Events.RedemptionOptionEnabled(redemptionOption, optionPtr.receivablePct, optionPtr.lockDuration);
             
         } else {
-            require(!optionPtr.isDisabled, Errors.RedemptionOptionAlreadyDisabled());
+            require(optionPtr.isEnabled, Errors.RedemptionOptionAlreadyDisabled());
             optionPtr.receivablePct = 0;
-            optionPtr.isDisabled = true;
+            optionPtr.isEnabled = false;
             emit Events.RedemptionOptionDisabled(redemptionOption);
         }
     }

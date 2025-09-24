@@ -83,7 +83,7 @@ library Errors {
     error RedemptionOptionAlreadyDisabled();
     error WhitelistStatusUnchanged();
     error OnlyCallableByWhitelistedAddress();
-    
+
 // --------- AccessController.sol ---------
     error CallerNotRiskOrPoolAdmin();
     error OnlyCallableByVotingControllerAdmin();
@@ -92,4 +92,5 @@ library Errors {
     error OnlyCallableByCronJob();
     error OnlyCallableByGlobalAdmin();
     error OnlyCallableByEmergencyExitHandler();
+    error OnlyCallableByEscrowedMocaAdmin();
 }
