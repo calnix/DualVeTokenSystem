@@ -187,7 +187,7 @@ contract EscrowedMoca is ERC20, Pausable {
     }
 
 
-//-------------------------------admin functions-----------------------------------------
+//-------------------------------asset manager functions-----------------------------------------
 
 
     /**
@@ -223,6 +223,8 @@ contract EscrowedMoca is ERC20, Pausable {
         emit StakedOnBehalf(users, amounts);
     }
 
+//-------------------------------admin: update functions-----------------------------------------
+
 
     /**
      * @notice Updates the percentage of penalty allocated to voters.
@@ -241,16 +243,26 @@ contract EscrowedMoca is ERC20, Pausable {
         emit PenaltyToVotersUpdated(oldPenaltyToVoters, penaltyToVoters);
     }
 
-    // redemptionOption & lockDuration, can have 0 values
-    function setRedemptionOption(uint256 redemptionOption, uint128 lockDuration, uint128 conversionRate) external onlyEscrowedMocaAdmin {
-        require(conversionRate > 0, "Conversion rate must be greater than 0");
 
-        redemptionOptions[redemptionOption] = RedemptionOption({
+    /**
+     * @notice Sets the redemption option for a given redemption type.
+     * @dev The receivablePct must be greater than 0.
+     *      Only callable by EscrowedMocaAdmin.
+     * @param redemptionOption The redemption option index.
+     * @param lockDuration The lock duration for the redemption option. [0 for instant redemption]
+     * @param receivablePct The conversion rate for the redemption option. [cannot be 0; else nothing is receivable]
+     */
+    function setRedemptionOption(uint256 redemptionOption, uint128 lockDuration, uint128 receivablePct) external onlyEscrowedMocaAdmin {
+        // range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
+        require(receivablePct > 0, Errors.InvalidPercentage());
+        require(receivablePct <= 10_000, Errors.InvalidPercentage());
+
+        redemptionOptions[redemptionOption] = DataTypes.RedemptionOption({
             lockDuration: lockDuration,
-            conversionRate: conversionRate
+            receivablePct: receivablePct
         });
 
-        // event
+        emit RedemptionOptionUpdated(redemptionOption, lockDuration, receivablePct);
     }
 
     // disable redemption option

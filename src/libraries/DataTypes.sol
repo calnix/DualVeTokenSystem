@@ -164,8 +164,9 @@ library DataTypes {
 
     struct RedemptionOption {
         uint128 lockDuration;       // number of seconds until redemption is available    | 0 for instant redemption
-        uint128 receivablePct;      // this is what the user receives; if 10_000, no penalty applied. | if 0, redemption type is disabled
-        // range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
+        uint128 receivablePct;      // if 0, redemption type is disabled (flag)
+        // user receives this percentage of the redemption amount; if 10_000, no penalty applied.     
+        // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
     }
 
     struct Redemption {

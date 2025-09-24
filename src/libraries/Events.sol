@@ -19,7 +19,7 @@ library Events {
     // setPenaltyToVoters()
     event PenaltyToVotersUpdated(uint256 oldPenaltyToVoters, uint256 newPenaltyToVoters);
     // setRedemptionOption()
-    event RedemptionOptionUpdated(uint256 redemptionOption, uint256 lockDuration, uint256 conversionRate);
+    event RedemptionOptionUpdated(uint256 redemptionOption, uint256 lockDuration, uint256 receivablePct);
     // disableRedemption()
 
 // --------- VotingEscrowMoca.sol ---------
