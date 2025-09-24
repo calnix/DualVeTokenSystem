@@ -24,6 +24,8 @@ library Events {
     event AddressWhitelisted(address indexed addr, bool isWhitelisted);
     // releaseEscrowedMoca()
     event EscrowedMocaReleased(address indexed caller, uint256 amount);
+    // claimPenalty()
+    event PenaltyClaimed(uint256 totalClaimable);
 
 // --------- VotingEscrowMoca.sol ---------
     event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);

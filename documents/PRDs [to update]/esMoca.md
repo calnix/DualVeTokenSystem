@@ -1,5 +1,16 @@
 # esMoca
 
+/**
+    esMoca is given out to:
+    1. validators as discretionary rewards
+    2. voters receive their voting rewards as esMoca [from verification fee split]
+    3. verifiers receive subsidies as esMoca
+
+    USD8 must be withdrawn from PaymentsController
+    converted to Moca
+    Moca must be then converted to esMoca, via this contract
+ */
+
 All rewards are expressed as esMOCA and subject to a common redemption structure.
 
 - esMOCA redeemable 1:1 to MOCA; ignoring penalties.
