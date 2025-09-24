@@ -23,8 +23,8 @@ contract AccessController is AccessControl {
     IAddressBook internal immutable _addressBook;
   
     // ______ HIGH-FREQUENCY ROLES [AUTOMATED OPERATIONAL FUNCTIONS] ______
-    bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");    // Pause only
-    bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");  // Automated tasks: createLockFor, finalizeEpoch, depositSubsidies
+    bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");      // Pause only
+    bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");    // Automated tasks: createLockFor, finalizeEpoch, depositSubsidies
     
     // Role admins for operational roles [Dedicated role admins for operational efficiency]
     bytes32 public constant MONITOR_ADMIN_ROLE = keccak256("MONITOR_ADMIN_ROLE"); 
@@ -34,6 +34,7 @@ contract AccessController is AccessControl {
     // Roles for making changes to contract parameters + configuration [multi-sig]
     bytes32 public constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256("PAYMENTS_CONTROLLER_ADMIN_ROLE");
     bytes32 public constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256("VOTING_CONTROLLER_ADMIN_ROLE");
+    bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = keccak256("ESCROWED_MOCA_ADMIN_ROLE");
     // [for multiple contracts]: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE"); // withdraw fns on PaymentsController, VotingController
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
@@ -177,6 +178,22 @@ contract AccessController is AccessControl {
 
     function isVotingControllerAdmin(address addr) external view returns (bool) {
         return hasRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+
+    // EscrowedMocaAdmin role functions
+    function addEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
+        grantRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
+        emit Events.EscrowedMocaAdminAdded(addr, msg.sender);
+    }
+    
+    function removeEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
+        revokeRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
+        emit Events.EscrowedMocaAdminRemoved(addr, msg.sender);
+    }
+
+    function isEscrowedMocaAdmin(address addr) external view returns (bool) {
+        return hasRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
     }
 
 

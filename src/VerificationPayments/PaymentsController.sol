@@ -83,13 +83,13 @@ contract PaymentsController is EIP712, Pausable {
         _addressBook = IAddressBook(addressBook);
       
         // check if protocol fee percentage is valid
-        require(protocolFeePercentage < Constants.PRECISION_BASE, Errors.InvalidFeePercentage());
-        require(protocolFeePercentage > 0, Errors.InvalidFeePercentage());
+        require(protocolFeePercentage < Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        require(protocolFeePercentage > 0, Errors.InvalidPercentage());
         PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
 
         // check if voter fee percentage is valid
-        require(voterFeePercentage < Constants.PRECISION_BASE, Errors.InvalidFeePercentage());
-        require(voterFeePercentage > 0, Errors.InvalidFeePercentage());
+        require(voterFeePercentage < Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        require(voterFeePercentage > 0, Errors.InvalidPercentage());
         VOTING_FEE_PERCENTAGE = voterFeePercentage;
 
         // min. delay period is 1 epoch; value must be in epoch intervals

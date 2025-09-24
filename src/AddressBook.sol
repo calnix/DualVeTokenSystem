@@ -70,6 +70,7 @@ contract AddressBook is Ownable2Step {
     }
 
     function getMoca() external view returns (address) {
+        require(addresses[MOCA] != address(0), "Invalid address");
         return addresses[MOCA];
     }
 

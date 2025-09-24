@@ -12,14 +12,11 @@ library Errors {
     error InvalidEpoch();
     error InvalidArray();
     error MismatchedArrayLengths();
-    error InvalidFeePercentage();
+    error InvalidPercentage();
     error InvalidDelayPeriod();
     error NotFrozen();
     error IsFrozen();
     
-    // Access control
-    error CallerNotRiskOrPoolAdmin();
-
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
     error SignatureExpired();
@@ -41,7 +38,6 @@ library Errors {
     error EpochNotEnded();
     error EpochFinalized();
     error NoAvailableVotes();
-    error InvalidFeePct();
     error ZeroVotes();
     error PoolDoesNotExist();
     error PoolRemoved();
@@ -84,4 +80,12 @@ library Errors {
     error RedemptionNotAvailableYet();
     error AlreadyClaimed();
 
+// --------- AccessController.sol ---------
+    error CallerNotRiskOrPoolAdmin();
+    error OnlyCallableByVotingControllerAdmin();
+    error OnlyCallableByAssetManager();
+    error OnlyCallableByMonitor();
+    error OnlyCallableByCronJob();
+    error OnlyCallableByGlobalAdmin();
+    error OnlyCallableByEmergencyExitHandler();
 }

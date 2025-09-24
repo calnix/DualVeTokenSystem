@@ -7,11 +7,20 @@ library Events {
     event ContractFrozen();
 
 // --------- EscrowedMoca.sol ---------
+    // escrow()
+    event EscrowedMoca(address indexed caller, uint256 amount);
+    // redeem()
     event RedemptionScheduled(address indexed caller, uint256 mocaReceivable, uint256 penaltyAmount, uint256 redemptionTimestamp, uint256 redemptionOption);
     event PenaltyAccrued(uint256 penaltyToVoters, uint256 penaltyToTreasury);
     // claimRedemption()
     event RedemptionClaimed(address indexed caller, uint256 mocaReceivable, uint256 redemptionTimestamp, uint256 penaltyAmount);
-
+    // stakeOnBehalf()
+    event StakedOnBehalf(address[] callers, uint256[] amounts);
+    // setPenaltyToVoters()
+    event PenaltyToVotersUpdated(uint256 oldPenaltyToVoters, uint256 newPenaltyToVoters);
+    // setRedemptionOption()
+    event RedemptionOptionUpdated(uint256 redemptionOption, uint256 lockDuration, uint256 conversionRate);
+    // disableRedemption()
 
 // --------- VotingEscrowMoca.sol ---------
     event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);
@@ -118,7 +127,9 @@ library Events {
 // --------- AddressBook.sol ---------
     event AddressSet(bytes32 indexed identifier, address registeredAddress);
     event GlobalAdminUpdated(address indexed oldGlobalAdmin, address indexed newGlobalAdmin);
-
+    // EscrowedMocaAdmin role functions
+    event EscrowedMocaAdminAdded(address indexed admin, address indexed addedBy);
+    event EscrowedMocaAdminRemoved(address indexed admin, address indexed removedBy);
 
 // --------- AccessController.sol ---------
     //

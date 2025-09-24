@@ -287,8 +287,8 @@ contract VotingController is Pausable {
      * or the registration fee cannot be transferred from the caller.
      */
     function registerAsDelegate(uint128 feePct) external whenNotPaused {
-        require(feePct > 0, Errors.InvalidFeePct());
-        require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());
+        require(feePct > 0, Errors.InvalidPercentage());
+        require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidPercentage());
 
         Delegate storage delegate = delegates[msg.sender];
         require(!delegate.isRegistered, Errors.DelegateAlreadyRegistered());
@@ -1164,42 +1164,42 @@ contract VotingController is Pausable {
     // creating pools, removing pools
     modifier onlyCronJob() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isCronJob(msg.sender), "Only callable by CronJob");
+        require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
         _;
     }
 
     // for setting contract params
     modifier onlyVotingControllerAdmin() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isVotingControllerAdmin(msg.sender), "Only callable by Voting Controller Admin");
+        require(accessController.isVotingControllerAdmin(msg.sender), Errors.OnlyCallableByVotingControllerAdmin());
         _;
     }
 
     // for depositing/withdrawing assets [depositSubsidies(), finalizeEpoch(), withdrawUnclaimedX()]
     modifier onlyAssetManager() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isAssetManager(msg.sender), "Only callable by Asset Manager");
+        require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
         _;
     }
 
     // pause
     modifier onlyMonitor() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isMonitor(msg.sender), "Only callable by Monitor");
+        require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
         _;
     }
 
     // for unpause + freeze 
     modifier onlyGlobalAdmin() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isGlobalAdmin(msg.sender), "Only callable by Global Admin");
+        require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
         _;
     }   
     
     // to exfil assets, when frozen
     modifier onlyEmergencyExitHandler() {
         IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isEmergencyExitHandler(msg.sender), "Only callable by Emergency Exit Handler");
+        require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
         _;
     }
 

@@ -82,11 +82,12 @@ contract EscrowedMoca is ERC20, Pausable {
     function escrowMoca(uint256 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
-        IERC20 mocaToken = IERC20(_addressBook.getMoca());
-        require(address(mocaToken) != address(0), Errors.InvalidAddress());
+        _moca().safeTransferFrom(msg.sender, address(this), amount);
 
-        mocaToken.safeTransferFrom(msg.sender, address(this), amount);
+        // mint esMoca to user
         _mint(msg.sender, amount);
+
+        emit EscrowedMoca(msg.sender, amount);
     }
 
 
@@ -132,7 +133,7 @@ contract EscrowedMoca is ERC20, Pausable {
             redemptionSchedule[msg.sender][redemptionTimestamp].claimed = true;
             emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionOption);
 
-            mocaToken.safeTransfer(msg.sender, mocaReceivable);
+            _moca().safeTransfer(msg.sender, mocaReceivable);
 
         } else {    // Scheduled redemption
             emit RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp, redemptionOption);
@@ -166,7 +167,7 @@ contract EscrowedMoca is ERC20, Pausable {
      * @custom:revert RedemptionNotAvailableYet if the redemption is not yet available.
      * @custom:revert AlreadyClaimed if the redemption has already been claimed.
      */
-    function claimRedemption(uint256 redemptionTimestamp) external {
+    function claimRedemption(uint256 redemptionTimestamp) external whenNotPaused {
         // check redemption eligibility
         require(redemptionTimestamp < block.timestamp, Errors.RedemptionNotAvailableYet());
 
@@ -182,38 +183,66 @@ contract EscrowedMoca is ERC20, Pausable {
         emit Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionPtr.penalty);
 
         // transfer moca
-        mocaToken.safeTransfer(msg.sender, mocaReceivable);
+        _moca().safeTransfer(msg.sender, mocaReceivable);
     }
 
 
 //-------------------------------admin functions-----------------------------------------
 
-    // might need a fn to convert moca to esMoca
-    // might also needs a stakeOnBehalf fn
 
-    // note: for distributing esMoca to validators - direct emissions
-    // note: for allocating subsidies to a pool, per epoch
-    function stakeOnBehalf(address user, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(user != address(0), "Invalid user address");
-        require(amount > 0, "Amount must be greater than 0");
+    /**
+     * @notice Escrows Moca on behalf of multiple users.
+     * @dev Transfers Moca from the caller to the contract and mints esMoca to each user.
+     * @param users Array of user addresses to escrow for.
+     * @param amounts Array of amounts to escrow for each user.
+     */
+    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external onlyAssetManager {
+        uint256 length = users.length;
+        require(length == amounts.length, Errors.InvalidArrayLength());
         
-        mocaToken.safeTransferFrom(msg.sender, address(this), amount);
-        
-        _mint(user, amount);
-        
-        // Emit stake event
+        uint256 totalMocaAmount;
+        for (uint256 i; i < length; ++i) {
+            // get user + amount
+            address user = users[i];
+            uint256 amount = amounts[i];
+
+            // sanity checks
+            require(amount > 0, Errors.InvalidAmount());
+            require(user != address(0), Errors.InvalidAddress());
+
+            // mint esMoca to user
+            _mint(user, amount);
+
+            // add to total amount
+            totalMocaAmount += amount;
+        }
+
+        // transfer total moca 
+        _moca().safeTransferFrom(msg.sender, address(this), totalMocaAmount);
+
+        emit StakedOnBehalf(users, amounts);
     }
 
-    function setPenaltyToVoters(uint256 penaltyToVoters) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(penaltyToVoters <= 100, "Penalty to voters must be less than or equal to 100");
 
-        PENALTY_FACTOR_TO_VOTERS = penaltyToVoters;
+    /**
+     * @notice Updates the percentage of penalty allocated to voters.
+     * @dev The value must be within (0, 10_000), representing up to 100% with 2 decimal precision.
+     *      Only callable by EscrowedMocaAdmin.
+     * @param penaltyToVoters The new penalty percentage for voters (2dp precision, e.g., 100 = 1%).
+     */
+    function setPenaltyToVoters(uint256 penaltyToVoters) external onlyEscrowedMocaAdmin {
+        // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
+        require(penaltyToVoters < 10_000, Errors.InvalidPercentage());
+        require(penaltyToVoters > 0, Errors.InvalidPercentage());
 
-        // event
+        uint256 oldPenaltyToVoters = VOTERS_PENALTY_SPLIT;
+        VOTERS_PENALTY_SPLIT = penaltyToVoters;
+
+        emit PenaltyToVotersUpdated(oldPenaltyToVoters, penaltyToVoters);
     }
 
     // redemptionOption & lockDuration, can have 0 values
-    function setRedemptionOption(uint256 redemptionOption, uint128 lockDuration, uint128 conversionRate) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setRedemptionOption(uint256 redemptionOption, uint128 lockDuration, uint128 conversionRate) external onlyEscrowedMocaAdmin {
         require(conversionRate > 0, "Conversion rate must be greater than 0");
 
         redemptionOptions[redemptionOption] = RedemptionOption({
@@ -246,6 +275,49 @@ contract EscrowedMoca is ERC20, Pausable {
 
 
     // claim for voters and treasury
+
+//-------------------------------Internal functions---------------------------------------------------------------
+
+    function _moca() internal view returns (IERC20){
+        return IERC20(_addressBook.getMoca());
+    }
+
+//-------------------------------Modifiers---------------------------------------------------------------
+    
+    // for setting contract params
+    modifier onlyEscrowedMocaAdmin() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isEscrowedMocaAdmin(msg.sender), Errors.OnlyCallableByEscrowedMocaAdmin());
+        _;
+    }
+
+    // for depositing/withdrawing assets [stakeOnBehalf(), ]
+    modifier onlyAssetManager() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
+        _;
+    }
+
+    // pause
+    modifier onlyMonitor() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
+        _;
+    }
+
+    // for unpause + freeze 
+    modifier onlyGlobalAdmin() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
+        _;
+    }   
+    
+    // to exfil assets, when frozen
+    modifier onlyEmergencyExitHandler() {
+        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
+        _;
+    }
 
 //-------------------------------overrides-----------------------------------------
 
