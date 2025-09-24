@@ -163,16 +163,17 @@ library DataTypes {
 // --------- EscrowedMoca.sol -------
 
     struct RedemptionOption {
-        uint128 lockDuration;       // number of seconds until redemption is available    | 0 for instant redemption
-        uint128 receivablePct;      // if 0, redemption type is disabled (flag)
-        // user receives this percentage of the redemption amount; if 10_000, no penalty applied.     
-        // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
+        uint128 lockDuration;    // Seconds until redemption is available; 0 for instant redemption
+        uint128 receivablePct;   // Percentage of redemption amount user receives; cannot be 0
+        //2 decimals (XX.yy), 1–10_000 (100%: 10_000, 1%: 100, 0.1%: 10, 0.01%: 1)
+
+        bool isEnabled;
     }
 
     struct Redemption {
         uint128 mocaReceivable;
         uint128 penalty;
-        bool claimed; // true if claimed, false if not
+        bool claimed;      // if claimed: true
     }
 
    /* 

@@ -99,15 +99,15 @@ contract EscrowedMoca is ERC20, Pausable {
      * @custom:requirements `redemptionOption` must be enabled and configured.
      * Emits {RedemptionScheduled} or {Redeemed} depending on lock duration.
      */
-    function redeem(uint128 redemptionAmount, uint256 redemptionOption) external whenNotPaused {
+    function selectRedemptionOption(uint256 redemptionOption, uint128 redemptionAmount) external whenNotPaused {
         // sanity checks: amount & balance
         require(redemptionAmount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
         
         // get redemption option ptr + sanity check: redemption option
         DataTypes.RedemptionOption memory option = redemptionOptions[redemptionOption];
-        require(option.receivablePct > 0, Errors.InvalidRedemptionOption());    //  redemption type is not set or disabled
-
+        require(option.isEnabled, Errors.RedemptionOptionAlreadyDisabled());
+        
         uint128 mocaReceivable;
         uint128 penaltyAmount;
         // calculate moca receivable + penalty
@@ -259,30 +259,51 @@ contract EscrowedMoca is ERC20, Pausable {
 
         redemptionOptions[redemptionOption] = DataTypes.RedemptionOption({
             lockDuration: lockDuration,
-            receivablePct: receivablePct
+            receivablePct: receivablePct,
+            isEnabled: true
         });
 
         emit RedemptionOptionUpdated(redemptionOption, lockDuration, receivablePct);
     }
 
-    // disable redemption option
-    function disableRedemption(uint256 redemptionOption) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        redemptionOptions[redemptionOption].conversionRate = 0;
+    /**
+     * @notice Enables or disables a redemption option.
+     * @dev  Only callable by EscrowedMocaAdmin.
+     * @param redemptionOption Index of the redemption option to update.
+     * @param enable Set to true to enable, false to disable the redemption option.
+     */
+    function setRedemptionOptionStatus(uint256 redemptionOption, bool enable) external onlyEscrowedMocaAdmin {
+        DataTypes.RedemptionOption storage optionPtr = redemptionOptions[redemptionOption];
 
-        // event
+        if (enable) {
+            require(optionPtr.isDisabled, Errors.RedemptionOptionAlreadyEnabled());
+            optionPtr.isDisabled = false;
+            emit RedemptionOptionEnabled(redemptionOption, optionPtr.receivablePct, optionPtr.lockDuration);
+            
+        } else {
+            require(!optionPtr.isDisabled, Errors.RedemptionOptionAlreadyDisabled());
+            optionPtr.receivablePct = 0;
+            optionPtr.isDisabled = true;
+            emit RedemptionOptionDisabled(redemptionOption);
+        }
     }
 
-    function setTreasury(address treasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        TREASURY = treasury;
-        // event
-    }
+    // Note: for Asset Manager to deposit esMoca to VotingController
+    /**
+     * @notice Updates the whitelist status for an address, allowing or revoking permission to transfer esMoca.
+     * @dev   Whitelisted addresses can transfer esMoca to other addresses (e.g., Asset Manager to VotingController).
+     * @param addr The address to update whitelist status for.
+     * @param isWhitelisted True to whitelist, false to remove from whitelist.
+     */
+    function setWhitelistStatus(address addr, bool isWhitelisted) external onlyEscrowedMocaAdmin {
+        require(addr != address(0), Errors.InvalidAddress());
 
-    // for voting contract to claim esMoca from voters
-    // for verifier subsidy claims
-    function whitelistAddress(address addr, bool isWhitelisted) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        bool currentStatus = whitelist[addr];
+        require(currentStatus != isWhitelisted, Errors.WhitelistStatusUnchanged());
+
         whitelist[addr] = isWhitelisted;
 
-        // event
+        emit AddressWhitelisted(addr, isWhitelisted);
     }
 
 
@@ -331,21 +352,30 @@ contract EscrowedMoca is ERC20, Pausable {
         _;
     }
 
-//-------------------------------overrides-----------------------------------------
+//-------------------------------Transfer Function Overrides-----------------------------------------
 
     /**
-     * @notice Override the transfer function to block transfers
-     * @dev veMOCA is non-transferable
+     * @notice Override ERC20 transfer function to restrict transfers to whitelisted addresses only.
+     * @dev Only addresses in the whitelist can transfer esMoca; all others are blocked.
+     * @param recipient The address to transfer to.
+     * @param amount The amount to transfer.
+     * @return success True if transfer is allowed and successful.
      */
-    function transfer(address, uint256) public pure override returns (bool) {
-        revert("veMOCA is non-transferable");
+    function transfer(address recipient, uint256 amount) public override returns (bool) {
+        require(whitelist[msg.sender], Errors.OnlyCallableByWhitelistedAddress());
+        return super.transfer(recipient, amount);
     }
 
     /**
-     * @notice Override the transferFrom function to block transfers
-     * @dev veMOCA is non-transferable
+     * @notice Override the transferFrom function to restrict transfers to whitelisted addresses only.
+     * @dev Only addresses in the whitelist can transfer esMoca; all others are blocked.
+     * @param sender The address which owns the tokens.
+     * @param recipient The address to transfer to.
+     * @param amount The amount to transfer.
+     * @return success True if transfer is allowed and successful.
      */
-    function transferFrom(address, address, uint256) public pure override returns (bool) {
-        revert("veMOCA is non-transferable");
+    function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool) {
+        require(whitelist[sender], Errors.OnlyCallableByWhitelistedAddress());
+        return super.transferFrom(sender, recipient, amount);
     }
 }

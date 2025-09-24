@@ -79,7 +79,11 @@ library Errors {
 // --------- EscrowedMoca.sol ---------
     error RedemptionNotAvailableYet();
     error AlreadyClaimed();
-
+    error RedemptionOptionAlreadyEnabled();
+    error RedemptionOptionAlreadyDisabled();
+    error WhitelistStatusUnchanged();
+    error OnlyCallableByWhitelistedAddress();
+    
 // --------- AccessController.sol ---------
     error CallerNotRiskOrPoolAdmin();
     error OnlyCallableByVotingControllerAdmin();

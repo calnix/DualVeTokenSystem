@@ -20,7 +20,8 @@ library Events {
     event PenaltyToVotersUpdated(uint256 oldPenaltyToVoters, uint256 newPenaltyToVoters);
     // setRedemptionOption()
     event RedemptionOptionUpdated(uint256 redemptionOption, uint256 lockDuration, uint256 receivablePct);
-    // disableRedemption()
+    // setWhitelistStatus()
+    event AddressWhitelisted(address indexed addr, bool isWhitelisted);
 
 // --------- VotingEscrowMoca.sol ---------
     event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);
