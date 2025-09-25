@@ -371,6 +371,15 @@ require(lockDuration <= 888 days, Errors.InvalidLockDuration());
 ```
 Prevents unreasonably long lock periods that could break the system.
 
+## TODO: Upgradeability [?????]
+
+The contract uses the AddressBook pattern for external contract references, enabling:
+- Modular upgrades of connected contracts
+- Emergency migration capabilities via emergency exit
+- Preservation of user funds during system transitions
+
+How and when would we need to upgrade/transition?
+
 # Appendix
 
 ## selectRedemptionOption: Precision Loss Issue [minor]
