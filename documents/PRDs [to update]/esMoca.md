@@ -75,4 +75,23 @@ $esMOCA penalties for early redemption are `redistributed` `50-50`:
 
 ## Only Treasury can convert esMoca to Moca
 
-- treaasury fn to convert
+- treasury fn to convert
+
+
+# Overview
+
+
+
+## selectRedemptionOption: Precision Loss Issue [minor]
+
+This is regarding penalty calculation. Assume that:
+
+1. `VOTERS_PENALTY_SPLIT` = 1 (0.01%)
+2. `penaltyAmount` = 99
+
+Therefore: 
+- `penaltyToVoters` = 99 * 1 / 10000 = 0 (floored)
+- `penaltyToTreasury` = 99
+
+All penalty goes to treasury despite split configuration.
+Recognized and ignored, as this edge case is contingent on `VOTERS_PENALTY_SPLIT = 1`.

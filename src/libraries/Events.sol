@@ -10,9 +10,9 @@ library Events {
     // escrow()
     event EscrowedMoca(address indexed caller, uint256 amount);
     // redeem()
-    event RedemptionScheduled(address indexed caller, uint256 mocaReceivable, uint256 penaltyAmount, uint256 redemptionTimestamp, uint256 redemptionOption);
+    event RedemptionScheduled(address indexed caller, uint256 mocaReceivable, uint256 penaltyAmount, uint256 redemptionTimestamp);
     event PenaltyAccrued(uint256 penaltyToVoters, uint256 penaltyToTreasury);
-    event Redeemed(address indexed caller, uint256 mocaReceivable, uint256 redemptionTimestamp, uint256 redemptionOption);
+    event Redeemed(address indexed caller, uint256 mocaReceivable, uint256 redemptionTimestamp);
     // claimRedemption()
     event RedemptionClaimed(address indexed caller, uint256 mocaReceivable, uint256 redemptionTimestamp, uint256 penaltyAmount);
     // stakeOnBehalf()

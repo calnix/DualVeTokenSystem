@@ -171,9 +171,9 @@ library DataTypes {
     }
 
     struct Redemption {
-        uint128 mocaReceivable;
-        uint128 penalty;
-        bool claimed;      // if claimed: true
+        uint256 mocaReceivable;
+        uint256 claimed;  
+        uint256 penalty;   
     }
 
    /* 

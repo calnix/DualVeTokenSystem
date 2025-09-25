@@ -29,7 +29,9 @@ contract EscrowedMoca is ERC20, Pausable {
     using SafeERC20 for IERC20;
 
     // immutable
-    IAddressBook internal immutable _addressBook;
+    IAddressBook public immutable _addressBook;
+
+    uint256 public TOTAL_MOCA_ESCROWED;
 
     // penalty split between voters and treasury
     uint256 public VOTERS_PENALTY_SPLIT;         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
@@ -41,7 +43,10 @@ contract EscrowedMoca is ERC20, Pausable {
     uint256 public ACCRUED_PENALTY_TO_TREASURY; 
     uint256 public CLAIMED_PENALTY_FROM_TREASURY;
 
-//-------------------------------mapping----------------------------------------------
+    //risk
+    uint256 public isFrozen;
+
+//-------------------------------Mappings----------------------------------------------
 
     // redemption options | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 | 2dp precision (XX.yy)
     mapping(uint256 redemptionType => DataTypes.RedemptionOption redemptionOption) public redemptionOptions;
@@ -53,14 +58,19 @@ contract EscrowedMoca is ERC20, Pausable {
     mapping(address addr => bool isWhitelisted) public whitelist;
 
 
-//-------------------------------constructor------------------------------------------
+//-------------------------------Constructor------------------------------------------
 
-    constructor(address addressBook) ERC20("esMoca", "esMoca") {
+    constructor(address addressBook, uint256 votersPenaltySplit) ERC20("esMoca", "esMoca") {    
         
+        require(addressBook != address(0), Errors.InvalidAddress());
         _addressBook = IAddressBook(addressBook);
+        
+        require(votersPenaltySplit > 0, Errors.InvalidPercentage());
+        require(votersPenaltySplit <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        VOTERS_PENALTY_SPLIT = votersPenaltySplit;
     }
 
-//-------------------------------user functions------------------------------------------
+//-------------------------------User functions------------------------------------------
 
     /**
      * @notice Converts Moca tokens to esMoca by transferring Moca from the user and minting an equivalent amount of esMoca.
@@ -72,7 +82,9 @@ contract EscrowedMoca is ERC20, Pausable {
     function escrowMoca(uint256 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
+        // transfer moca
         _moca().safeTransferFrom(msg.sender, address(this), amount);
+        TOTAL_MOCA_ESCROWED += amount;
 
         // mint esMoca to user
         _mint(msg.sender, amount);
@@ -89,58 +101,68 @@ contract EscrowedMoca is ERC20, Pausable {
      * @custom:requirements `redemptionOption` must be enabled and configured.
      * Emits {RedemptionScheduled} or {Redeemed} depending on lock duration.
      */
-    function selectRedemptionOption(uint256 redemptionOption, uint128 redemptionAmount) external whenNotPaused {
+    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount) external whenNotPaused {
         // sanity checks: amount & balance
         require(redemptionAmount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
+        require(TOTAL_MOCA_ESCROWED >= redemptionAmount, Errors.InsufficientBalance());
         
-        // get redemption option ptr + sanity check: redemption option
+        // get redemption option + sanity check: redemption option is enabled
         DataTypes.RedemptionOption memory option = redemptionOptions[redemptionOption];
         require(option.isEnabled, Errors.RedemptionOptionAlreadyDisabled());
-        
-        uint128 mocaReceivable;
-        uint128 penaltyAmount;
+
         // calculate moca receivable + penalty
+        uint256 mocaReceivable;
+        uint256 penaltyAmount;
         if(option.receivablePct == Constants.PRECISION_BASE) {
             // redemption with no penalty
             mocaReceivable = redemptionAmount;
         } else {
             // redemption with penalty
-            mocaReceivable = redemptionAmount * option.receivablePct / uint128(Constants.PRECISION_BASE);
+            mocaReceivable = redemptionAmount * option.receivablePct / Constants.PRECISION_BASE;
             penaltyAmount = redemptionAmount - mocaReceivable;
+            require(penaltyAmount > 0, Errors.InvalidAmount()); // ensures penaltyAmount & mocaReceivable are > 0
+
+            // we block the case where penaltyAmount is floored to 0, but mocaReceivable is > 0
+            // when selecting a redemption option, the user must honour its penalty. 
+            // to prevent users from abusing the system, we block the case where penaltyAmount is floored to 0, but mocaReceivable is > 0
         }
-        
+
         // calculate redemptionTimestamp
         uint256 redemptionTimestamp = block.timestamp + option.lockDuration;
 
-        // book redemption amount + penalty amount
-        redemptionSchedule[msg.sender][redemptionTimestamp].mocaReceivable += mocaReceivable;
-        redemptionSchedule[msg.sender][redemptionTimestamp].penalty += penaltyAmount;
+        DataTypes.Redemption storage schedulePtr = redemptionSchedule[msg.sender][redemptionTimestamp];
 
-        if(option.lockDuration == 0) {
+        // book redemption receivable + penalty
+        schedulePtr.mocaReceivable += mocaReceivable;
+        schedulePtr.penalty += penaltyAmount;
+
+        if(option.lockDuration == 0) { // Instant redemption, transfer immediately
             
-            // Instant redemption: mark claimed, transfer immediately
-            redemptionSchedule[msg.sender][redemptionTimestamp].claimed = true;
-            emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionOption);
-
+            // book claimed amount + transfer moca
+            schedulePtr.claimed += mocaReceivable;
             _moca().safeTransfer(msg.sender, mocaReceivable);
 
-        } else {    // Scheduled redemption
-            emit Events.RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp, redemptionOption);
+            // update total moca escrowed | do not deduct the penalty amount as it was not transferred
+            TOTAL_MOCA_ESCROWED -= mocaReceivable;
+
+            emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp);
+
+        } else {    
+            // Scheduled redemption
+            emit Events.RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp);
         }
 
         // burn corresponding esMoca tokens from the caller
         _burn(msg.sender, redemptionAmount);
 
-
         // ------ if penalty, calculate and book splits ------
         if(penaltyAmount > 0) {
-            
             // calculate penalty amount
             uint256 penaltyToVoters = penaltyAmount * VOTERS_PENALTY_SPLIT / Constants.PRECISION_BASE;
             uint256 penaltyToTreasury = penaltyAmount - penaltyToVoters;
-            
-            // book penalty amounts to globals
+        
+             // book penalty amounts to globals
             if(penaltyToTreasury > 0) ACCRUED_PENALTY_TO_TREASURY += penaltyToTreasury;
             if(penaltyToVoters > 0) ACCRUED_PENALTY_TO_VOTERS += penaltyToVoters;
 
@@ -148,7 +170,7 @@ contract EscrowedMoca is ERC20, Pausable {
         }
     }
 
-
+    // Note: does not burn esMoca - which is done during selectRedemptionOption()
     /**
      * @notice Claims the redeemed MOCA tokens after the lock period has elapsed.
      * @dev Transfers the receivable MOCA to the caller and marks the redemption as claimed.
@@ -163,21 +185,22 @@ contract EscrowedMoca is ERC20, Pausable {
 
         DataTypes.Redemption storage redemptionPtr = redemptionSchedule[msg.sender][redemptionTimestamp];
 
-        // check if redemption is claimed
-        require(redemptionPtr.claimed == false, Errors.AlreadyClaimed());
+        // get claimable amount
+        uint256 claimableAmount = redemptionPtr.mocaReceivable - redemptionPtr.claimed;
+        require(claimableAmount > 0, Errors.NothingToClaim());
 
-        // get redemption amount + update claimed status
-        uint128 mocaReceivable = redemptionPtr.mocaReceivable;
-        redemptionPtr.claimed = true;
-
-        emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp, redemptionPtr.penalty);
+        // update claimed 
+        redemptionPtr.claimed += claimableAmount;
 
         // transfer moca
-        _moca().safeTransfer(msg.sender, mocaReceivable);
+        _moca().safeTransfer(msg.sender, claimableAmount);
+        TOTAL_MOCA_ESCROWED -= claimableAmount;
+
+        emit Events.Redeemed(msg.sender, claimableAmount, redemptionTimestamp);
     }
 
 
-//-------------------------------asset manager functions-----------------------------------------
+//-------------------------------Asset manager functions-----------------------------------------
 
 
     /**
@@ -186,7 +209,7 @@ contract EscrowedMoca is ERC20, Pausable {
      * @param users Array of user addresses to escrow for.
      * @param amounts Array of amounts to escrow for each user.
      */
-    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external onlyAssetManager {
+    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external whenNotPaused onlyAssetManager {
         uint256 length = users.length;
         require(length == amounts.length, Errors.MismatchedArrayLengths());
         
@@ -209,11 +232,57 @@ contract EscrowedMoca is ERC20, Pausable {
 
         // transfer total moca 
         _moca().safeTransferFrom(msg.sender, address(this), totalMocaAmount);
+        TOTAL_MOCA_ESCROWED += totalMocaAmount;
 
         emit Events.StakedOnBehalf(users, amounts);
     }
 
-//-------------------------------admin: update functions-----------------------------------------
+    
+    /**
+     * @notice Claims accrued penalty amounts for voters and treasury. [Penalties are accrued in Moca]
+     * @dev Transfers the total claimable penalty (sum of voters and treasury) to the caller [Asset Manager]
+     *      Updates claimed penalty tracking variables accordingly.
+     */
+    function claimPenalties() external whenNotPaused onlyAssetManager {
+        // is there anything to claim?
+        uint256 totalPenaltyAccrued = ACCRUED_PENALTY_TO_VOTERS + ACCRUED_PENALTY_TO_TREASURY;
+        uint256 totalClaimable = totalPenaltyAccrued - CLAIMED_PENALTY_FROM_VOTERS - CLAIMED_PENALTY_FROM_TREASURY;
+        require(totalClaimable > 0, Errors.InvalidAmount());
+
+        // book claimed penalties
+        CLAIMED_PENALTY_FROM_VOTERS = ACCRUED_PENALTY_TO_VOTERS;
+        CLAIMED_PENALTY_FROM_TREASURY = ACCRUED_PENALTY_TO_TREASURY;
+
+        // transfer moca
+        _moca().safeTransfer(msg.sender, totalClaimable);
+        TOTAL_MOCA_ESCROWED -= totalClaimable;
+
+        emit Events.PenaltyClaimed(totalClaimable);
+    }
+
+
+    /**
+     * @notice ALlows caller to release their esMoca to moca instantly.
+     * @dev Only callable by EscrowedMocaAdmin.
+     * @param amount The amount of esMoca to release to the admin caller.
+     */
+    function releaseEscrowedMoca(uint256 amount) external whenNotPaused onlyAssetManager {
+        require(amount > 0, Errors.InvalidAmount());
+        
+        require(balanceOf(msg.sender) >= amount, Errors.InsufficientBalance());
+
+        // burn esMoca
+        _burn(msg.sender, amount);
+
+        // transfer moca
+        _moca().safeTransfer(msg.sender, amount);
+        TOTAL_MOCA_ESCROWED -= amount;
+
+        emit Events.EscrowedMocaReleased(msg.sender, amount);
+    }
+
+
+//-------------------------------Admin: update functions-----------------------------------------
 
 
     /**
@@ -247,6 +316,9 @@ contract EscrowedMoca is ERC20, Pausable {
         require(receivablePct > 0, Errors.InvalidPercentage());
         require(receivablePct <= 10_000, Errors.InvalidPercentage());
 
+        // sanity check: lock duration: ~2.46 years
+        require(lockDuration <= 888 days, Errors.InvalidLockDuration());
+
         redemptionOptions[redemptionOption] = DataTypes.RedemptionOption({
             lockDuration: lockDuration,
             receivablePct: receivablePct,
@@ -272,7 +344,6 @@ contract EscrowedMoca is ERC20, Pausable {
             
         } else {
             require(optionPtr.isEnabled, Errors.RedemptionOptionAlreadyDisabled());
-            optionPtr.receivablePct = 0;
             optionPtr.isEnabled = false;
             emit Events.RedemptionOptionDisabled(redemptionOption);
         }
@@ -296,51 +367,9 @@ contract EscrowedMoca is ERC20, Pausable {
         emit Events.AddressWhitelisted(addr, isWhitelisted);
     }
 
-
-//-------------------------------asset manager: release + claimPenalty function-----------------------------------------
-
-
-    // claim for voters and treasury
-    function claimPenalties() external whenNotPaused onlyAssetManager {
-        // is there anything to claim?
-        uint256 totalPenaltyAccrued = ACCRUED_PENALTY_TO_VOTERS + ACCRUED_PENALTY_TO_TREASURY;
-        uint256 totalClaimable = totalPenaltyAccrued - CLAIMED_PENALTY_FROM_VOTERS - CLAIMED_PENALTY_FROM_TREASURY;
-        require(totalClaimable > 0, Errors.InvalidAmount());
-
-        // book claimed penalties
-        CLAIMED_PENALTY_FROM_VOTERS += ACCRUED_PENALTY_TO_VOTERS;
-        CLAIMED_PENALTY_FROM_TREASURY += ACCRUED_PENALTY_TO_TREASURY;
-
-        // transfer moca
-        _moca().safeTransfer(msg.sender, totalClaimable);
-
-        emit Events.PenaltyClaimed(totalClaimable);
-    }
-
-
-    /**
-     * @notice ALlows caller to release their esMoca to moca instantly.
-     * @dev Only callable by EscrowedMocaAdmin.
-     * @param amount The amount of esMoca to release to the admin caller.
-     */
-    function releaseEscrowedMoca(uint256 amount) external whenNotPaused onlyAssetManager {
-        require(amount > 0, Errors.InvalidAmount());
-        
-        require(balanceOf(msg.sender) >= amount, Errors.InsufficientBalance());
-
-        // burn esMoca
-        _burn(msg.sender, amount);
-
-        // transfer moca
-        _moca().safeTransfer(msg.sender, amount);
-
-        emit Events.EscrowedMocaReleased(msg.sender, amount);
-    }
-
-
-
 //-------------------------------Internal functions---------------------------------------------------------------
 
+    // get moca token address
     function _moca() internal view returns (IERC20){
         return IERC20(_addressBook.getMoca());
     }
@@ -382,8 +411,9 @@ contract EscrowedMoca is ERC20, Pausable {
         _;
     }
 
-//-------------------------------Transfer Function Overrides-----------------------------------------
-
+//-------------------------------Transfer ERC20 Overrides-----------------------------------------
+    
+    // Note: Transfer restrictions only validate the sender, not recipient
     /**
      * @notice Override ERC20 transfer function to restrict transfers to whitelisted addresses only.
      * @dev Only addresses in the whitelist can transfer esMoca; all others are blocked.
@@ -396,6 +426,7 @@ contract EscrowedMoca is ERC20, Pausable {
         return super.transfer(recipient, amount);
     }
 
+    // Note: Transfer restrictions only validate the sender, not recipient
     /**
      * @notice Override the transferFrom function to restrict transfers to whitelisted addresses only.
      * @dev Only addresses in the whitelist can transfer esMoca; all others are blocked.
@@ -408,4 +439,60 @@ contract EscrowedMoca is ERC20, Pausable {
         require(whitelist[sender], Errors.OnlyCallableByWhitelistedAddress());
         return super.transferFrom(sender, recipient, amount);
     }
+
+//-------------------------------risk functions----------------------------------------------------------
+
+    /**
+     * @notice Pause the contract.
+     * @dev Only callable by the Monitor [bot script].
+     */
+    function pause() external whenNotPaused onlyMonitor {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _pause();
+    }
+
+    /**
+     * @notice Unpause the contract.
+     * @dev Only callable by the Global Admin [multi-sig].
+     */
+    function unpause() external whenPaused onlyGlobalAdmin {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _unpause();
+    }
+
+    /**
+     * @notice Freeze the contract.
+     * @dev Only callable by the Global Admin [multi-sig].
+     *      This is a kill switch function
+     */
+    function freeze() external whenPaused onlyGlobalAdmin {
+        if(isFrozen == 1) revert Errors.IsFrozen();
+        isFrozen = 1;
+        emit Events.ContractFrozen();
+    }
+
+    /**
+     * @notice Exfiltrate all contract-held assets (rewards + subsidies + registration fees) to the treasury.
+     * @dev Disregards all outstanding claims and does not update any contract state.
+     *      Intended for emergency use only when the contract is frozen.
+     *      Only callable by the Emergency Exit Handler [bot script].
+     *      This is a kill switch function
+     */
+    function emergencyExit() external onlyEmergencyExitHandler {
+        if(isFrozen == 0) revert Errors.NotFrozen();
+        
+        // get treasury address
+        address treasury = _addressBook.getTreasury();
+        require(treasury != address(0), Errors.InvalidAddress());
+
+        // exfil moca escrowed into contract
+        _moca().safeTransfer(treasury, _moca().balanceOf(address(this)));
+        TOTAL_MOCA_ESCROWED = 0;
+
+        emit Events.EmergencyExit(treasury);
+    }
+
+//-------------------------------view functions----------------------------------------------------------
+
+
 }

@@ -78,7 +78,7 @@ library Errors {
 
 // --------- EscrowedMoca.sol ---------
     error RedemptionNotAvailableYet();
-    error AlreadyClaimed();
+    error NothingToClaim();
     error RedemptionOptionAlreadyEnabled();
     error RedemptionOptionAlreadyDisabled();
     error WhitelistStatusUnchanged();
