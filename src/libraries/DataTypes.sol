@@ -175,20 +175,4 @@ library DataTypes {
         uint256 claimed;  
         uint256 penalty;   
     }
-
-   /* 
-    struct Redemption {
-        uint128 moca;
-        uint128 esMoca;
-        uint128 veMoca;
-        uint128 penalty;
-    }
-
-    struct RedemptionRequest {
-        uint128 moca;
-        uint128 esMoca;
-        uint128 veMoca;
-        uint128 penalty;
-    }*/
-
 }

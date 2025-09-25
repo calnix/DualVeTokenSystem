@@ -487,7 +487,7 @@ contract EscrowedMoca is ERC20, Pausable {
 
         // exfil moca escrowed into contract
         _moca().safeTransfer(treasury, _moca().balanceOf(address(this)));
-        TOTAL_MOCA_ESCROWED = 0;
+        delete TOTAL_MOCA_ESCROWED;
 
         emit Events.EmergencyExit(treasury);
     }
