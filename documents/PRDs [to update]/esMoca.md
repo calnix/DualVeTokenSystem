@@ -342,6 +342,35 @@ function transferFrom(address sender, address recipient, uint256 amount) public 
 - Whitelist mechanism enables this transfer while maintaining general restrictions
 - Voters receive penalty shares as additional rewards
 
+## Error Handling and Edge Cases
+
+### Precision Protection
+In `selectRedemptionOption()`:
+
+```solidity
+require(penaltyAmount > 0, Errors.InvalidAmount());
+```
+Prevents users from exploiting rounding to avoid penalties with small amounts.
+
+### Double-Claim Prevention
+
+In `claimRedemption()`:
+
+```solidity
+uint256 claimableAmount = redemptionPtr.mocaReceivable - redemptionPtr.claimed;
+require(claimableAmount > 0, Errors.NothingToClaim());
+```
+Ensures users cannot claim the same redemption multiple times.
+
+### Lock Duration Validation
+
+In `setRedemptionOption()`:
+
+```solidity
+require(lockDuration <= 888 days, Errors.InvalidLockDuration());
+```
+Prevents unreasonably long lock periods that could break the system.
+
 # Appendix
 
 ## selectRedemptionOption: Precision Loss Issue [minor]
