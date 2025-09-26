@@ -10,15 +10,15 @@ import "openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker, ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/SignatureChecker.sol";
 
 // libraries
-import {DataTypes} from "../libraries/DataTypes.sol";
-import {Events} from "../libraries/Events.sol";
-import {Errors} from "../libraries/Errors.sol";
-import {Constants} from "../libraries/Constants.sol";
-import {EpochMath} from "../libraries/EpochMath.sol";
+import {DataTypes} from "./libraries/DataTypes.sol";
+import {Events} from "./libraries/Events.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {Constants} from "./libraries/Constants.sol";
+import {EpochMath} from "./libraries/EpochMath.sol";
 
 // interfaces
-import {IAddressBook} from "../interfaces/IAddressBook.sol";
-import {IAccessController} from "../interfaces/IAccessController.sol";
+import {IAddressBook} from "./interfaces/IAddressBook.sol";
+import {IAccessController} from "./interfaces/IAccessController.sol";
 
 contract PaymentsController is EIP712, Pausable {
     using SafeERC20 for IERC20;

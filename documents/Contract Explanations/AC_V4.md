@@ -1,5 +1,7 @@
 # AccessController: Frequency-Based Role Architecture
 
+AccessController is the central authority for all roles and privileges across the system.
+
 ## Executive Summary
 
 The AccessController implements a **frequency-based role hierarchy** that aligns administrative authority with operational demands. This design eliminates bottlenecks in daily operations while maintaining executive oversight for strategic decisions.

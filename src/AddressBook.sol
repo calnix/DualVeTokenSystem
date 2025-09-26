@@ -64,6 +64,10 @@ contract AddressBook is Ownable2Step {
     }
 
 // ------------------------------ Getters --------------------------------
+    /**
+        zero address checks are not set here, and are expected to be handled by the caller contract
+        
+     */
 
     function getUSD8Token() external view returns (address) {   // forge-lint: disable-line(mixed-case-function)
         return addresses[USD8];
