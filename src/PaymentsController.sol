@@ -592,6 +592,16 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.SchemaVerified(schemaId);
     }
 
+    /**
+     * @notice Deducts a verifier's balance for a zero-fee schema verification, updating relevant counters.
+     * @dev Requires the schema to have zero fee. Verifies the signature for the operation.
+     *      Increments verification counters for the schema and issuer. Emits SchemaVerifiedZeroFee event.
+     * @param issuerId The unique identifier of the issuer.
+     * @param verifierId The unique identifier of the verifier.
+     * @param schemaId The unique identifier of the schema.
+     * @param expiry The timestamp after which the signature is invalid.
+     * @param signature The EIP-712 signature from the verifier's signer address.
+     */
     function deductBalanceZeroFee(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 expiry, bytes calldata signature) external whenNotPaused {
         require(expiry > block.timestamp, Errors.SignatureExpired());
         
