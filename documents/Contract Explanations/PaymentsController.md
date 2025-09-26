@@ -1,7 +1,9 @@
 # PaymentsController Overview
 
-
-
+PaymentsController.sol manages payment flows for credential verification, handling crediting and debiting verifiers and issuers accordingly. 
+- includes an expense accounting system to allocate subsidies for verifiers who stake MOCA tokens
+- issuers' gross verification fees subject to a haircut, which goes to voters, and the protocol. 
+The contract is designed for efficient, high-frequency transactions employing hybrid gas-optimized patterns.
 
 
 ## deductBalance Optimizations
