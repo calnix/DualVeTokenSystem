@@ -11,6 +11,7 @@ Given its high usage, we've implemented a hybrid storage-memory optimization pat
 
 **The Hybrid Approach**
 We employ a dual-reference pattern that optimizes for both read and write operations:
+
 ```solidity
 // Storage pointer for write operations
 DataTypes.Schema storage schemaStorage = _schemas[schemaId];
@@ -36,3 +37,13 @@ DataTypes.Schema memory schema = schemaStorage;
 - Read Frequency: Schema fields are read 8-10 times per execution
 - Calculation Needs: Multiple fields needed for fee calculations
 - Cost Multiplication: Each storage read adds 100 gas
+
+### Gas Savings Breakdown
+
+| **Optimization Technique**| **Gas Saved**  | **Impact**                              |
+|---------------------------|----------------|-----------------------------------------|
+| Schema memory caching     | ~800 gas       | Eliminates 8 storage reads              |
+| Verifier data caching     | ~200 gas       | Eliminates 2 storage reads              |
+| Batch storage updates     | ~100 gas       | Reduces storage operation overhead      |
+| Unchecked arithmetic      | ~80 gas        | Safe counters don't need overflow checks|
+| **Total Savings**         | **~1,180 gas** | **~40% reduction**                      |
