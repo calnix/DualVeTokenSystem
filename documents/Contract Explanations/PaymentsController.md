@@ -47,3 +47,20 @@ DataTypes.Schema memory schema = schemaStorage;
 | Batch storage updates     | ~100 gas       | Reduces storage operation overhead      |
 | Unchecked arithmetic      | ~80 gas        | Safe counters don't need overflow checks|
 | **Total Savings**         | **~1,180 gas** | **~40% reduction**                      |
+
+
+
+## deductBalanceZeroFee 
+
+`deductBalanceZeroFee` exists as a distinct function to handle credential verifications where the schema fee is set to zero. 
+
+This separation is intentional for several reasons, but primarily for gas optimization, since we do not expect zero-fee verifications be to be common:
+
+- **Gas Optimization:** By omitting fee-related logic and storage updates, the function minimizes execution cost for free credentials.
+- **Signature Simplicity:** Zero-fee verifications do not require the `amount` parameter in the EIP-712 signature, reducing signature complexity and potential for mismatches.
+- **Security and Clarity:** Isolating zero-fee logic prevents accidental fee deductions and clarifies intent, reducing the risk of subtle bugs or exploits.
+- **Auditability:** Having a dedicated code path for zero-fee operations makes it easier to review, test, and reason about the contract’s behavior in these scenarios.
+
+***TLDR:*** 
+- Chose to not add a zero-fee branch in `deductBalance` for a low-frequency event. This streamlines `deductBalance`, while allowing of exceptions.*
+- Zero-fee path creates unnecessary branching in the original with a large gas footprint
