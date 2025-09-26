@@ -2,14 +2,275 @@
 
 PaymentsController.sol manages payment flows for credential verification, handling crediting and debiting verifiers and issuers accordingly. 
 - includes an expense accounting system to allocate subsidies for verifiers who stake MOCA tokens
-- issuers' gross verification fees subject to a haircut, which goes to voters, and the protocol. 
-The contract is designed for efficient, high-frequency transactions employing hybrid gas-optimized patterns.
+- issuers' gross verification fees subject to a haircut, which goes to the protocol, and voters [VotingController]. 
 
+PaymentsController is architected for high-throughput, low-latency operations, with a focus on minimizing gas costs in core transaction flows. 
+- Gas optimization is prioritized in `deductBalance` and `deductBalanceZeroFee`, as these functions are invoked at scale—potentially millions of times.
+- The contract leverages hybrid memory-storage access patterns and selective updates to ensure efficiency under sustained, high-frequency usage.
 
-## deductBalance Optimizations
+## Key Features
+
+1. **Hybrid Storage-Memory Optimization for High-Frequency Functions**
+- `deductBalance()`, called on every credential verification, employs a dual-reference pattern that reduces gas consumption by ~40%.
+- Reads are performed from memory (3 gas) while writes use storage pointers (100 gas), optimizing for the common case of multiple reads per write.
+
+This pattern is critical for a function that may be called millions of times daily.
+
+2. **Three-Actor Economic Model**
+- `Verifiers`: Pay for credential verifications, can stake MOCA for subsidies
+- `Issuers`: Create credential schemas and earn fees from verifications
+- `Voters`: Receive a cut of verification fees for participating in governance
+- `Protocol`: Receives a cut of verification fees for treasury
+
+3. **Dynamic Fee System with Time-Delayed Increases**
+- Fee decreases apply immediately to benefit users
+- Fee increases are delayed by a configurable period (min: 1 epoch) to prevent sudden price hikes
+
+This protects verifiers from unexpected cost increases while allowing issuers flexibility in pricing.
+
+4. **Staking-Based Subsidy Tiers**
+- Verifiers have to stake exact MOCA amounts to unlock subsidy percentages
+- Subsidies are calculated on gross fees and tracked per epoch for distribution 
+- Subsidies are collected as USD8, as are fees. 
+
+Subsidies are distributed via `VotingController` contract on an epoch basis; in the form of `esMoca`.
+*Note: Subsidies are accrued in USD8 within PaymentsController, converted to esMOCA off-chain, then distributed via VotingController.*
+
+5. **Zero-Fee Credential Support**
+
+The `deductBalanceZeroFee` function is dedicated to handling free credential verifications. 
+- Removes unnecessary fee logic and signature parameters for zero-fee flows 
+- Streamlines execution and reduces gas costs for free credential use cases 
+- Simplifies logic for scenarios where is free
+
+This significantly helps reduce the gas footprint of `deductBalance` allowing for more throughput as well, while accommodating for a low-probability scenario for feature completeness.
+
+6. **Integration with Voting Pools**
+
+Schemas can be linked to voting pools to facilitate voter rewards. 
+- Pool associations are updatable mid-epoch, with explicit rules governing subsidy eligibility 
+- Supports dynamic governance participation incentives and flexible reward distribution
+
+7. **Emergency Risk Management**
+
+- Implements multi-tiered access control with specialized roles 
+- Provides pause/unpause functionality for operational contingencies 
+- Features a one-way freeze kill-switch and emergency exit procedures 
+- Ensures user funds remain recoverable under all circumstances
+
+------
+
+# 1. **Contract Overview**
+
+## Financial Tracking
+```solidity
+// Subsidy tracking for VotingController integration
+mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) _epochPoolSubsidies;
+mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256))) _epochPoolVerifierSubsidies;
+
+// Fee tracking for rewards distribution
+mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued)) _epochPoolFeesAccrued;
+mapping(uint256 epoch => DataTypes.FeesAccrued) _epochFeesAccrued;
+```
+
+**These mappings enable:**
+- Precise tracking of subsidies per verifier per pool per epoch
+- Accurate fee distribution to protocol and voters
+- Epoch-based accounting for clean financial reconciliation
+
+## Actor Data
+
+```solidity
+// Primary actor mappings
+mapping(bytes32 issuerId => DataTypes.Issuer) internal _issuers;
+mapping(bytes32 verifierId => DataTypes.Verifier) internal _verifiers;
+mapping(bytes32 schemaId => DataTypes.Schema) internal _schemas;
+```
+
+## Actor Workflows
+
+### Issuer Onboarding
+
+1. Create Profile: Call `createIssuer(assetAddress)` to receive unique `issuerId`
+2. Create Schemas: Call `createSchema(issuerId, fee)` for each credential type
+3. Manage Fees: Update schema fees as needed (decreases immediate, increases delayed)
+4. Claim Revenue: Periodically claim accumulated fees to asset address
+
+#### Issuer Structure
+
+`function createIssuer(address assetAddress) external returns (bytes32)`
+- returns `issuerId`, for integration with middleware translation layer.
+
+The following struct defines the on-chain attributes of an issuer:
+
+```solidity
+    struct Issuer {
+        bytes32 issuerId;
+        address adminAddress;       // for interacting w/ contract 
+        address assetAddress;       // for claiming fees 
+                
+        // credentials
+        uint128 totalVerified; // incremented on each verification
+        
+        // USD8 | 6dp precision
+        uint128 totalNetFeesAccrued;    // net of protocol and voter fees
+        uint128 totalClaimed;
+    }
+```
+
+- `issuerId`: Randomly generated unique `bytes32` identifier assigned at issuer creation.
+- `adminAddress`: Set to `msg.sender` at creation; serves as the issuer's control address for contract interactions (e.g., schema management, fee updates, address changes).
+- `assetAddress`: Provided at creation; acts as the designated wallet for claiming accrued fees.
+
+The `assetAddress` is dedicated solely to fee withdrawals, while the `adminAddress` is required for all issuer-initiated contract actions. This separation enables issuers to maintain distinct operational and treasury controls, supporting flexible security postures.
+
+**Rationale for assigning issuers an on-chain id:**
+- Enables independent updates of admin and asset addresses without recreating or migrating profiles.
+- Facilitates granular access control, allowing issuers to assign different addresses for configuration and asset management
+- Accommodates diverse organizational wallet setups (e.g., multisig, hardware wallets) without imposing a fixed pattern
+- Allows address rotation without profile migration
+
+*Without an on-chain issuer ID, issuers would be forced to use a **single address** for all actions, limiting flexibility and upgradability. This design ensures issuers can adapt their address management as their operational requirements evolve.*
+
+### Verifier Onboarding
+
+1. Create Profile: Call `createVerifier(signerAddress, assetAddress)` to receive unique `verifierId`
+2. Deposit Funds: Transfer USD8 via `deposit()` to fund verifications
+3. Operate: Sign verification requests that deduct from balance
+4. Optional Staking: Stake exact Moca amounts to unlock subsidy tiers
+
+#### Verifier Structure
+
+`function createVerifier(address signerAddress, address assetAddress) external returns (bytes32)`
+- returns `verifierId`, for integration with middleware translation layer
+
+The following struct defines the on-chain attributes of a verifier:
+
+```solidity
+    struct Verifier {
+        bytes32 verifierId;
+        address adminAddress;   // msg.sender
+        address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
+        address signerAddress;
+
+        // MOCA | 18 dp precision
+        uint128 mocaStaked;
+
+        // USD8 | 6dp precision
+        uint128 currentBalance;
+        uint128 totalExpenditure;  // count: never decremented
+    }
+```
+
+- `adminAddress`: Assigned at verifier creation (`msg.sender`); controls verifier configuration, key rotation, and operational actions.
+- `signerAddress`: Used exclusively for EIP-712 signature validation on verification payments; can be updated independently for key rotation.
+- `assetAddress`: Dedicated for deposit/withdrawal of USD8 balances and staking MOCA; enables separation of treasury and operational controls.
+
+Verifiers are assigned distinct `admin`, `signer`, and `asset` addresses, enabling independent management of operational permissions, signature authority, and treasury controls. 
+This modular approach supports secure key rotation and flexible access strategies.
+
+**Rationale for On-Chain Verifier ID:**
+- Independent admin, asset, and signer address management for robust key rotation
+- Enables updating of signer and asset addresses without recreating or migrating profiles.
+- Supports separation of signature and asset management roles for enhanced security
+- Facilitates granular access control and adaptable organizational wallet structures
+
+*Without an on-chain verifier ID, verifiers would be forced to use a **single address** for all actions, limiting flexibility and upgradability. This design ensures they can adapt their address management as their operational requirements evolve.*
+
+### Schemas: The Credential Blueprint
+
+A schema defines the structure and rules for a credential type. Think of it as a blueprint that specifies:
+
+**Off-chain components (not stored in contract):**
+- Public metadata: title, data source type, version, header information
+- Technical specifications: zk-proof requirements, encryption parameters
+- Private validation rules: allowed claims, data types, constraints
+
+**On-chain components (stored in PaymentsController):**
+- Financial parameters: current fee, pending fee updates
+- Usage metrics: verification counts, fees accumulated
+- Governance links: optional voting pool association
+
+#### Creating Schemas
+
+`function createSchema(bytes32 issuerId, uint128 fee) external returns (bytes32)`
+
+When an issuer calls `createSchema`, the contract:
+1. Generates a unique `bytes32` schemaId
+2. Links it to the issuer
+3. Sets the initial verification fee
+4. Initializes counters for tracking usage
+
+#### Schema Structure
+
+```solidity
+    struct Schema {
+        bytes32 schemaId;
+        bytes32 issuerId;
+        
+        // fees are expressed in USD8 terms | 6dp precision
+        uint128 currentFee;
+        uint128 nextFee;
+        uint128 nextFeeTimestamp;       
+
+        // counts: never decremented
+        uint128 totalVerified;
+        uint128 totalGrossFeesAccrued;            // disregards protocol and voting fees
+
+        // for VotingController
+        bytes32 poolId;
+    }
+```
+
+#### On-chain vs Off-chain Design
+
+The PaymentsController only stores schema financial data, not credential logic.
+- **On-chain**: Fees, metrics, pool associations
+- **Off-chain**: Credential logic, validation rules, metadata
+- **Middleware**: Maps schemaIds to off-chain definitions
+
+>Benefits: Gas efficiency, evolution without upgrades, and logic confidentiality.
+
+#### Schema Fee Management
+
+Issuers can update schema fees with built-in protections:
+- **Decreases**: Apply immediately to benefit verifiers
+- **Increases**: Subject to delay (minimum 1 epoch) to prevent price shocks
+
+#### Voting Pool Integration
+
+Schemas can be associated with voting pools to enable voter rewards:
+
+```solidity
+updatePoolId(bytes32 schemaId, bytes32 poolId)  // Admin function
+```
+
+**Pool Association Rules:**
+- Default: `poolId = bytes32(0)` (no voting pool)
+- Can be updated mid-epoch with clear subsidy implications
+- Pools are created in VotingController, referenced here
+
+**Important Timing Considerations:**
+- **Adding mid-epoch**: Prior verifications in that epoch won't qualify for subsidies
+- **Removing mid-epoch**: Weight excluded from pool calculations; prior verifications forfeit subsidies
+- **Best practice**: Update pool associations at epoch boundaries when possible
+
+This design enables dynamic governance participation while maintaining clear rules about subsidy eligibility.
+
+---
+
+# 2. **Design Choices**
+
+## The deductBalance Pattern 
 
 The `deductBalance` function is the most frequently called function in the PaymentsController, executed on every credential verification. 
-Given its high usage, we've implemented a hybrid storage-memory optimization pattern that reduces gas consumption by approximately 40% while maintaining code clarity and security.
+- in a high-throughput environment, even small gas inefficiencies compound into significant costs.
+- hence, we have implemented a hybrid storage-memory optimization pattern that reduces gas consumption by approximately 40%.
+
+**Traditional Approach Problem:**
+- Pure storage reads: Each field access costs ~100 gas
+- Schema has 8-10 fields accessed per verification
+- Total cost: 800-1000 gas just for reads
 
 **The Hybrid Approach**
 We employ a dual-reference pattern that optimizes for both read and write operations:
@@ -51,18 +312,247 @@ DataTypes.Schema memory schema = schemaStorage;
 | **Total Savings**         | **~1,180 gas** | **~40% reduction**                      |
 
 
+### Zero-Fee Credentials: Separate Function
 
-## deductBalanceZeroFee 
-
-`deductBalanceZeroFee` exists as a distinct function to handle credential verifications where the schema fee is set to zero. 
-
-This separation is intentional for several reasons, but primarily for gas optimization, since we do not expect zero-fee verifications be to be common:
-
-- **Gas Optimization:** By omitting fee-related logic and storage updates, the function minimizes execution cost for free credentials.
-- **Signature Simplicity:** Zero-fee verifications do not require the `amount` parameter in the EIP-712 signature, reducing signature complexity and potential for mismatches.
-- **Security and Clarity:** Isolating zero-fee logic prevents accidental fee deductions and clarifies intent, reducing the risk of subtle bugs or exploits.
-- **Auditability:** Having a dedicated code path for zero-fee operations makes it easier to review, test, and reason about the contract’s behavior in these scenarios.
+`deductBalanceZeroFee` exists as a distinct function to handle zero-fee verification transactions.
 
 ***TLDR:*** 
-- Chose to not add a zero-fee branch in `deductBalance` for a low-frequency event. This streamlines `deductBalance`, while allowing of exceptions.*
-- Zero-fee path creates unnecessary branching in the original with a large gas footprint
+- Adding zero-fee branching to `deductBalance` would increase gas costs for all standard (fee-bearing) verifications; the common case.
+- Separation is intentional, as we do not expect zero-fee verifications be to be common.
+- Additionally, prevents accidental fee deductions through explicit intent
+
+## Subsidy System: Exact Staking Amounts
+
+Verifiers must stake exact MOCA amounts (e.g., exactly 1000 MOCA for 10% subsidy), not ranges.
+
+```solidity
+mapping(uint256 mocaStaked => uint256 subsidyPercentage) _verifiersSubsidyPercentages;
+```
+
+- Predictability: Clear tiers without ambiguity
+- Simplicity: Single mapping lookup, no range checking
+- Anti-Gaming: Can't stake 999.99 to get benefits of 1000
+- Flexibility: Admin can add/modify tiers without complex logic
+
+# 3. **Contract Functions Walkthrough**
+
+## `deductBalance()`
+
+The `deductBalance()` function coordinates all payment and accounting steps for each credential verification.
+It is the heart of the system.
+
+1. **Signature Validation**
+- Validates EIP-712 signature from the verifier’s authorized signer.
+- Increments a nonce to prevent replay attacks.
+- Confirms the verifier’s explicit approval for the transaction.
+
+2. **Fee Management**
+- Checks for any pending schema fee increases and applies them if the delay period has elapsed.
+- Updates the current fee accordingly.
+- Emits events to record fee changes.
+
+3. **Balance Deduction & Distribution**
+- Confirms the verifier has sufficient balance.
+- Calculates protocol and voting fee portions.
+- Atomically updates all relevant balances (verifier, issuer, protocol, voters).
+
+4. **Subsidy Booking (Conditional)**
+- Checks if verifier has staked, and is subject to which subsidy tier.
+- Calculates subsidy based on gross fee, if eligible.
+- Books subsidy for distribution at epoch end. [via `VotingController`]
+
+5. **Global Accounting & Audit Trail**
+- Increments verification counters for schema and issuer.
+- Updates fee and subsidy records for each pool and epoch.
+- Emits events to maintain a comprehensive audit trail.
+
+---
+
+### Fee Distribution Model
+
+For each verification fee paid:
+- **Issuer receives:** `Fee - Protocol Fee - Voting Fee`
+- **Protocol receives:** `Fee × Protocol Fee Percentage`
+- **Voters receive:** `Fee × Voting Fee Percentage`
+- **Verifier may receive:** Subsidy based on staking tier (if eligible)
+
+## Administrative Functions
+
+### Fee Management
+
+1. **`updateSchemaFee`:** Issuers can adjust schema fees with protection against sudden increases
+  
+2. **`updateProtocolFeePercentage:`** Protocol can adjust its fee share
+
+3. **`updateVotingFeePercentage`:** Adjust voter reward percentage 
+  
+### Pool Integration
+
+**`updatePoolId`:** Associate schemas with voting pools
+- Enables voter rewards for specific credential types
+- Can be updated mid-epoch with clear subsidy rules
+
+---
+
+# 4. **Execution Flows**
+
+## Typical Verification Flow
+1. Verifier requests credential verification from user [`Initiated by user`]
+2. Verifier signs EIP-712 message authorizing payment
+3. Universal Verifier Contract calls PaymentsController.deductBalance()
+4. PaymentsController:
+    - Validates signature and amount
+    - Deducts from verifier balance
+    - Distributes fees to issuer/protocol/voters
+    - Books subsidies if applicable
+5. Verification proceeds with payment confirmed
+
+## Issuer: claiming fees 
+- Accumulated fees become claimable
+- No epoch-based restrictions on claims
+- Single transaction to claim all unclaimed fees
+
+### Protocol: withdraw protocolFees & withdraw VotersFees
+- Both fees withdrawable after epoch ends
+- Clean separation of fee types for transparency
+
+*However, protocol is allowed discretion when depositing into `VotingController`, hence `VotingController` does not integrate with `PaymentsController` to drive subsidy/reward claims.*
+
+---
+
+# 5. **Integration Points**
+
+## With Universal Verifier Contract
+- Primary caller of `deductBalance` and `deductBalanceZeroFee`
+- Should reference `PaymentsController` through `AddressBook` for upgradeability
+- Handles actual credential verification after payment confirmed
+
+## With VotingController
+- `PaymentsController` tracks subsidy & rewards accruals
+- `VotingController` handles subsidy & rewards distribution
+- Clean separation prevents circular dependencies
+- Enables independent contract upgrades
+
+## With AddressBook
+- Central registry for contract addresses
+- Enables seamless contract upgrades
+- `PaymentsController` reads token addresses dynamically
+
+---
+
+# 6. **Risk Management**
+
+## Access Control Hierarchy
+
+### Operational Roles
+- **Payments Admin**: Configure fees, pools, and tiers
+- **Asset Manager**: Withdraw protocol/voter fees
+- **Monitor**: Pause contract in emergencies
+- **Global Admin**: Unpause and freeze operations
+- **Emergency Exit Handler**: Recover funds when frozen
+
+### Security Features
+
+1. **Pausable Operations**
+   - All state-changing functions check pause status
+   - Monitor can pause, only Global Admin can unpause
+   - Prevents damage during active incidents
+
+2. **Freeze Mechanism**
+   - One-way operation requiring contract to be paused first
+   - Enables emergency exit procedures
+   - Cannot be reversed - kill-switch
+
+3. **Emergency Exit**
+   - Batch processing of verifier/issuer withdrawals
+   - Only accessible when contract is frozen
+   - Ensures users can always recover funds
+   - Only callable by EmergencyExitHandler role
+
+---
+
+# 7. **Upgrade Architecture**
+
+## Upgrade Process
+
+1. **Deploy** new PaymentsController version
+2. **Configure** new contract with existing actor data (optional migration functions)
+3. **Update** AddressBook to point to new contract
+4. **Notify** verifiers to migrate USD8 balances
+5. **Freeze** old contract once migration complete
+
+## Design for Upgradeability
+
+- No direct contract-to-contract calls (except through AddressBook)
+- Clean interfaces for external integrations
+- Financial data is segmented by epoch to enable straightforward migration and transition
+- Emergency exit ensures no funds locked during transition
+
+---
+
+# **Appendix: Technical Deep Dives**
+
+## Gas Optimization Detailed Analysis
+
+### Storage Access Patterns [`deductBalance()`]
+```solidity
+// Expensive: Multiple storage reads
+uint128 fee = _schemas[schemaId].currentFee;        // 100 gas
+uint128 nextFee = _schemas[schemaId].nextFee;       // 100 gas  
+uint128 totalVerified = _schemas[schemaId].totalVerified; // 100 gas
+
+// Optimized: Single storage read, multiple memory reads
+DataTypes.Schema memory schema = _schemas[schemaId]; // 100 gas once
+uint128 fee = schema.currentFee;                     // 3 gas
+uint128 nextFee = schema.nextFee;                    // 3 gas
+uint128 totalVerified = schema.totalVerified;        // 3 gas
+```
+
+### Unchecked Arithmetic
+Safe to use `unchecked` blocks for:
+- Counter increments (won't overflow in contract lifetime)
+- Fee calculations (percentages ensure result < input)
+- Balance deductions (already checked for sufficiency)
+
+## Precision and Rounding
+
+### Token Decimals
+- **USD8**: 6 decimals (1 USD8 = 1,000,000 units)
+- **MOCA**: 18 decimals (1 MOCA = 1,000,000,000,000,000,000 units)
+- **esMOCA**: 18 decimals (same as MOCA)
+
+### Fee Calculation Precision
+- Percentages are in expressed in 2 decimal precision (XX.yy)
+- range:[1–10_000] (100%: 10_000, 1%: 100, 0.1%: 10, 0.01%: 1)
+- All fee calculations round down (favor issuers over protocol)
+
+## Emergency Scenarios
+
+### Scenario 1: Critical Bug Discovery
+1. Monitor calls `pause()` - stops all operations
+2. Team investigates and determines fix timeline
+3. If fixable: Deploy fix, `unpause()` when safe
+4. If critical: `freeze()` and initiate emergency exit
+
+### Scenario 2: Malicious Issuer
+1. Cannot steal funds (only claim their earned fees)
+2. Can manipulate schema fees (but with delay protection)
+3. Verifiers protected by signature requirements
+4. Worst case: Verifiers stop using malicious schemas
+
+### Scenario 3: Contract Upgrade Failure  
+1. Old contract continues operating normally
+2. If new contract has issues: revert AddressBook update
+3. If migration fails: emergency exit from new problematic contract
+4. Users funds always recoverable through emergency procedures
+
+---
+
+# Others
+
+## Economic Security Considerations
+
+- **Fee Sanity Limits**: Schema fees capped at 10,000 USD8 per verification
+- **Atomic Updates**: All balance changes in single transaction
+
+@follow-up w/ Raynold + Kenneth

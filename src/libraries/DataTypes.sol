@@ -20,7 +20,7 @@ library DataTypes {
 
     struct Verifier {
         bytes32 verifierId;
-        address adminAddress;
+        address adminAddress;   // msg.sender   
         address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
         address signerAddress;
 
@@ -165,7 +165,7 @@ library DataTypes {
     struct RedemptionOption {
         uint128 lockDuration;    // Seconds until redemption is available; 0 for instant redemption
         uint128 receivablePct;   // Percentage of redemption amount user receives; cannot be 0
-        //2 decimals (XX.yy), 1–10_000 (100%: 10_000, 1%: 100, 0.1%: 10, 0.01%: 1)
+        //2 dp (XX.yy), 1–10_000 (100%: 10_000, 1%: 100, 0.1%: 10, 0.01%: 1)
 
         bool isEnabled;
     }
