@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 library Events {
     
-    // --------- Generic: Risk ---------
+// --------- Generic: Risk ---------
     event ContractFrozen();
 
 // --------- EscrowedMoca.sol ---------
@@ -56,7 +56,7 @@ library Events {
     // claimDelegateFees
     event RewardsClaimedFromDelegate(uint256 indexed epoch, address indexed caller, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
     // claimRewardsFromDelegate
-    event RewardsClaimedFromDelegateBatch(uint256 indexed epoch, address indexed caller, address[] delegateList, bytes32[][] poolIdsPerDelegate, uint256[] totalUserNetRewards);
+    event RewardsClaimedFromDelegateBatch(uint256 indexed epoch, address indexed caller, address[] delegateList, bytes32[][] poolIdsPerDelegate, uint256 userTotalNetRewards);
     event DelegateFeesClaimed(address indexed delegate, uint256 feesClaimed);
     // delegateClaimFeesFromDelegators
     event RewardsForceClaimedByDelegate(uint256 indexed epoch, address indexed delegator, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
@@ -142,25 +142,31 @@ library Events {
     event EscrowedMocaAdminRemoved(address indexed admin, address indexed removedBy);
 
 // --------- AccessController.sol ---------
-    //
+    // Monitor admin functions
+    event MonitorAdminRemoved(address indexed admin, address indexed removedBy);
+    event MonitorAdminAdded(address indexed admin, address indexed addedBy);
+    // Monitor role functions
     event MonitorAdded(address indexed monitor, address indexed addedBy);
     event MonitorRemoved(address indexed monitor, address indexed removedBy);
-    //
+    // CronJob role functions
     event CronJobAdded(address indexed cronJob, address indexed addedBy);
     event CronJobRemoved(address indexed cronJob, address indexed removedBy);
-    //
-    event MonitorAdminAdded(address indexed admin, address indexed addedBy);
+    // CronJob admin functions
     event CronJobAdminAdded(address indexed admin, address indexed addedBy);
-    //
+    event CronJobAdminRemoved(address indexed admin, address indexed removedBy);
+    // PaymentsController admin functions
     event PaymentsControllerAdminAdded(address indexed admin, address indexed addedBy);
     event PaymentsControllerAdminRemoved(address indexed admin, address indexed removedBy);
-    //
+    // VotingController admin functions
     event VotingControllerAdminAdded(address indexed admin, address indexed addedBy);
     event VotingControllerAdminRemoved(address indexed admin, address indexed removedBy);
-    //
+    // AssetManager role functions
     event AssetManagerAdded(address indexed manager, address indexed addedBy);
     event AssetManagerRemoved(address indexed manager, address indexed removedBy);
-    //
+    // EmergencyExitHandler role functions
     event EmergencyExitHandlerAdded(address indexed handler, address indexed addedBy);
     event EmergencyExitHandlerRemoved(address indexed handler, address indexed removedBy);
+    // Global admin functions
+    event GlobalAdminAdded(address indexed admin, address indexed addedBy);
+    event GlobalAdminRemoved(address indexed admin, address indexed removedBy);
 }

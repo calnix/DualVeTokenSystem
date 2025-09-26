@@ -7,6 +7,7 @@ library Errors {
     error InvalidId();
     error InvalidUser(); 
     error InvalidAmount();
+    error InvalidFeePct();
     error InvalidAddress();
     error InvalidExpiry();
     error InvalidEpoch();
@@ -37,6 +38,7 @@ library Errors {
 // --------- VotingController.sol ---------
     error EpochNotEnded();
     error EpochFinalized();
+    error EpochNotFinalized();
     error NoAvailableVotes();
     error ZeroVotes();
     error PoolDoesNotExist();
@@ -48,12 +50,12 @@ library Errors {
     error DelegateNotRegistered();
     error NoFeesToClaim();
     error CannotUnregisterWithActiveVotes();
-    //claimRewards
+    //voterClaimRewards
     error NoRewardsToClaim();
     //claimSubsidies
+    error NoSubsidiesToClaim();
     error FutureEpoch();
     error NoVotesInPool();
-    error NoSubsidiesToClaim();
     error NoSubsidiesForPool(); 
     error SubsidyAlreadyClaimed();
     // depositSubsidies

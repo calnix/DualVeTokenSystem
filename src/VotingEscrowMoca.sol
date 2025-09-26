@@ -40,7 +40,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         using SafeERC20 for IERC20;
 
         // protocol yellow pages
-        IAddressBook internal immutable ADDRESS_BOOK;
+        IAddressBook internal immutable _addressBook;
 
 
         // global principal
@@ -88,7 +88,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
     //-------------------------------constructor-------------------------------------------------
 
         constructor(address addressBook) ERC20("veMoca", "veMoca") {
-            ADDRESS_BOOK = IAddressBook(addressBook);
+            _addressBook = IAddressBook(addressBook);
 
             // note: has to be done on AddressBook contract after deployment
             //_addressBook.getAddress(Constants.VOTING_CONTROLLER);
@@ -820,39 +820,39 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
         function _mocaToken() internal view returns (IERC20){
-            return IERC20(ADDRESS_BOOK.getMocaToken());
+            return IERC20(_addressBook.getMoca());
         }
 
         function _esMocaToken() internal view returns (IERC20){
-            return IERC20(ADDRESS_BOOK.getEscrowedMoca());
+            return IERC20(_addressBook.getEscrowedMoca());
         }
 
     //-------------------------------Modifiers---------------------------------------------------------------
 
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyMonitorRole(){
-            IAccessController accessController = IAccessController(ADDRESS_BOOK.getAccessController());
+            IAccessController accessController = IAccessController(_addressBook.getAccessController());
             require(accessController.isMonitor(msg.sender), "Caller not monitor");
             _;
         }
 
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyCronJobRole() {
-            IAccessController accessController = IAccessController(ADDRESS_BOOK.getAccessController());
+            IAccessController accessController = IAccessController(_addressBook.getAccessController());
             require(accessController.isCronJob(msg.sender), "Caller not cron job");
             _;
         }
 
         // not using internal function: only 2 occurrences of this modifier
         modifier onlyGlobalAdminRole(){
-            IAccessController accessController = IAccessController(ADDRESS_BOOK.getAccessController());
+            IAccessController accessController = IAccessController(_addressBook.getAccessController());
             require(accessController.isGlobalAdmin(msg.sender), "Caller not global admin");
             _;
         }
         
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyEmergencyExitHandlerRole(){
-            IAccessController accessController = IAccessController(ADDRESS_BOOK.getAccessController());
+            IAccessController accessController = IAccessController(_addressBook.getAccessController());
             require(accessController.isEmergencyExitHandler(msg.sender), "Caller not emergency exit");
             _;
         }
@@ -862,7 +862,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // not using internal function: only 2 occurrences of this modifier
         // forge-lint: disable-next-item(all)
         modifier onlyVotingControllerContract() {
-            address votingController = ADDRESS_BOOK.getVotingController();
+            address votingController = _addressBook.getVotingController();
             require(msg.sender == votingController, "Caller not voting controller");
             _;
         }
@@ -1105,7 +1105,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // note: used by VotingController.claimRewardsFromDelegate()
         function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
             uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
-            return delegatedAggregationHistory[user][delegate][epochEndTime];
+            return delegatedAggregationHistory[user][delegate][epochEndTime].bias;
         }
 
 

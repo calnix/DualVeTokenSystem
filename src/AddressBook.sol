@@ -3,6 +3,9 @@ pragma solidity 0.8.27;
 
 // External: OZ
 import {Ownable2Step, Ownable} from "./../lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+
+import {Events} from "./libraries/Events.sol";
 
 /**
  * @title AddressBook
@@ -11,7 +14,7 @@ import {Ownable2Step, Ownable} from "./../lib/openzeppelin-contracts/contracts/a
  * @dev Owned by Governance multisig
  */
 
-contract AddressBook is Ownable2Step {
+contract AddressBook is Ownable2Step, Pausable {
 
     // ..... Main identifiers .....
 
@@ -42,7 +45,7 @@ contract AddressBook is Ownable2Step {
 
 // ------------------------------ Setters --------------------------------
 
-    function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner {
+    function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner whenNotPaused {
         // cannot set address for 0x00: DEFAULT_ADMIN_ROLE
         require(identifier != bytes32(0), "Invalid identifier");
 
@@ -50,14 +53,14 @@ contract AddressBook is Ownable2Step {
 
         addresses[identifier] = registeredAddress;
 
-        emit AddressSet(identifier, registeredAddress);
+        emit Events.AddressSet(identifier, registeredAddress);
     }
 
     // specific to updating global admin
-    function updateGlobalAdmin(address globalAdmin) external onlyOwner {
+    function updateGlobalAdmin(address globalAdmin) external onlyOwner whenNotPaused {
         require(globalAdmin != address(0), "Invalid address");
 
-        emit GlobalAdminUpdated(addresses[bytes32(0)], globalAdmin);
+        emit Events.GlobalAdminUpdated(addresses[bytes32(0)], globalAdmin);
         
         // update global admin
         addresses[bytes32(0)] = globalAdmin;
@@ -100,10 +103,4 @@ contract AddressBook is Ownable2Step {
     function getTreasury() external view returns (address) {
         return addresses[TREASURY];
     }
-
-    function getGlobalAdmin() external view returns (address) {
-        return addresses[DEFAULT_ADMIN_ROLE];
-    }
-
-
 }
