@@ -9,16 +9,25 @@ pragma solidity 0.8.27;
 
 interface IAccessController {
 
-    function isMonitor(address addr) external view returns (bool);
-    function isOperator(address addr) external view returns (bool);
-    function isCronJob(address addr) external view returns (bool);
-    function isEmergencyExitHandler(address addr) external view returns (bool);
+    // admin roles
     function isGlobalAdmin(address addr) external view returns (bool);
+    function isMonitorAdmin(address addr) external view returns (bool);
+    function isCronJobAdmin(address addr) external view returns (bool);
 
-    //function isTreasury(address addr) external view returns (bool);
+    // Operational roles [high frequency]
+    function isMonitor(address addr) external view returns (bool);
+    function isCronJob(address addr) external view returns (bool);
+    
+    // Asset manager roles [Medium frequency]
+    function isAssetManager(address addr) external view returns (bool);
 
-    //function isVerifier(address user) external view returns (bool);
-    //function isIssuer(address user) external view returns (bool);
+    // Contract admins [low frequency]
+    function isPaymentsControllerAdmin(address addr) external view returns (bool);
+    function isVotingControllerAdmin(address addr) external view returns (bool);
+    function isEscrowedMocaAdmin(address addr) external view returns (bool);
+
+    // Emergency exit handler role [very low frequency]
+    function isEmergencyExitHandler(address addr) external view returns (bool);
 
 
 }

@@ -2,81 +2,74 @@
 
 **Actors:**
 
-1. Us
+1. Protocol
 2. Issuers
 3. Verifiers
 
 ## Issuers
 
+All new issuers must create their on-chain profile on the contract to receive a unique identifying code: `issuerId`
+
 **Onboarding Flow:**
 
-1. New Issuer calls `setupIssuer`
-2. Subsequently, call `setupSchema`, defining verification fee
+1. New Issuer calls `createIssuer()`
+2. Subsequently, call `createSchema()`; [generates a unique id: `schemaId` and sets its verification fee] 
 3. Repeat step 2 as required
 
-**Explanation**
+### 1. `createIssuer()`
+
+`function createIssuer(address assetAddress) external returns (bytes32)`
+- returns `issuerId`, for better integration with middleware translation layer.
 
 The following struct defines the on-chain attributes of an issuer:
 
 ```solidity
     struct Issuer {
         bytes32 issuerId;
-        address configAddress;     // for interacting w/ contract 
-        address wallet;            // for claiming fees 
-        
-        //uint128 stakedMoca;
-        
+        address adminAddress;            // for interacting w/ contract 
+        address assetAddress;            // for claiming fees 
+                
         // credentials
-        uint128 totalIssuances; // incremented on each verification
+        uint128 totalVerified;          // incremented on each verification
         
-        // USD8
-        uint128 totalEarned;
+        // USD8 | 6dp precision
+        uint128 totalNetFeesAccrued;    // net of protocol and voter fees
         uint128 totalClaimed;
     }
 ```
 
-A new issuer is required to call `setupIssuer`, wherein which a random bytes32 id will be generated for them.
+- `issuerId` will be a random unique bytes32 id
+- `adminAddress` = `msg.sender`
+- `assetAddress` = `assetAddress`;
 
-```solidity
-function setupIssuer(address wallet) external returns (bytes32)
-```
-
-- expected to specify `wallet` - which is address to which fees will be claimable to.
-- `configAddress` will be set to `msg.sender`
+The `assetAddress` will be the designated "wallet", to which issuers would claim their accrued fees.
+The `adminAddress` will be the "owner" account through which the issuer will interact with the contract to createSchema, update fees, and update addresses.
 
 **The necessity for an issuer id on-chain:**
 
-- allows issuers to switch config addresses
+- allows issuers to switch admin addresses
 - allows issuers to switch fee claim wallet address
 - allows issuers to silo access control between an address that is used to handle configurations, and another for asset management
 
 Without an issuer id, issuers are beholden to use the same address for everything; have no ability to switch addresses.
 
-### Issuers: Schemas and Fees
+We cannot be sure how our issuing partners should have their addresses setup [multi-sig, etc]. 
+To avoid forcing them to use a specific pattern, hence this approach.
 
-Schema is a template defining the data points of a credential.
-Put differently, its the blueprint for issuing credentials.
+### 2. `createSchema()`
 
-Schema layout:
+A schema defines the structure and rules for a credential—essentially its template.
 
 ```
-Public inputs:
-1. Title
-2. Type of data source: E.g. self reported
-3. Version 
-4. Header/Metadata: Provides version, schema identifier (URL), title, and description
-5. Footer: type of zk algo and encryption used
-
-Private Inputs:
-1. Body: Specifies the main structure—listing allowed claims, data types, constraints, relationships, and validation rules for each field.
+Key schema fields:
+- Public: title, data source type, version, metadata (header), zk/encryption info (footer)
+- Private: body (allowed claims, data types, constraints, validation rules)
 ```
 
-Issuers are expected to setup schemas' and set associated verification fees on PaymentsController contract. 
-This is done by calling `setupSchema`.
-
-A schema's on-chain representation serves to account for fees and payment tracking; nothing more. 
-
-**Setting up schema & fees: `setupSchema`**
+**It is important to understand that the schema itself does not exist on-chain:**
+- On-chain schema IDs reference off-chain schema definitions.
+- Schemas on-chain are solely for fee and payment tracking.
+- Middleware maps contract schema IDs to their off-chain counterparts.
 
 The following struct defines the on-chain attributes of a schema:
 
@@ -85,19 +78,23 @@ The following struct defines the on-chain attributes of a schema:
         bytes32 schemaId;
         bytes32 issuerId;
         
-        // fees are expressed in USD8 terms
+        // fees are expressed in USD8 terms | 6dp precision
         uint128 currentFee;
         uint128 nextFee;
-        uint128 nextFeeTimestamp;       // could use epoch and epochMath?
+        uint128 nextFeeTimestamp;       
 
-        // counts
-        uint128 totalIssued;
-        uint128 totalFeesAccrued;
+        // counts: never decremented
+        uint128 totalVerified;
+        uint128 totalGrossFeesAccrued;            // disregards protocol and voting fees
 
         // for VotingController
         bytes32 poolId;
     }
 ```
+
+**Creating schemas & fees: `createSchema`**
+
+`function createSchema(bytes32 issuerId, uint128 fee) external returns (bytes32)`
 
 When `setupSchema` is called, it's purpose is two-fold:
 1. create a bytes32 `schemaId`
@@ -105,32 +102,44 @@ When `setupSchema` is called, it's purpose is two-fold:
 
 Thereafter, the `schemaId` is used to track fees accrued from verifications and number of issuances. 
 
-### Schemas and Voting
+### 3. Schemas and Voting [Overlap with VotingController.sol]
 
 The schema struct contains `bytes32 poolId`, to associate a schema with a voting pool.
-- by default this is `bytes32(0)`, indicating that is it not attached to a voting pool.
+- by default this is `bytes32(0)`, indicating that is it not associated to a voting pool.
 - to associate it with a voting pool, the admin function `updatePoolId(bytes32 schemaId, bytes32 poolId)` is called
 - use this function to add/update/remove voting pool association.
 
-> Pools are created on VotingController.sol, so poolId should be referenced from that contract.
+> Pools are created on VotingController.sol, so poolId must be referenced from that contract.
 > VotingController has no visibility of which schemas are associated to its pools. 
-> Voter rewards [cut of verification fees] will be checked on PaymentsController.sol, then deposited to their respective pools 
+> Voter rewards [VOTING_FEE_PERCENTAGE] will be checked on PaymentsController.sol, then deposited to their respective pools. 
 
-### Other issuer functions:
+**Important:** [REVIEW] 
+- Adding a schema to a voting pool partway through an epoch means any verifications made before the association will not be eligible for subsidies in that epoch.
+- Removing a schema from a voting pool mid-epoch allows its weight to be excluded from pool and subsidy calculations; verifications made before removal in the same epoch will not receive subsidies. [?!]
 
-- `updateFee`
-- `updateWalletAddress`
+
+### 4. Other issuer functions:
+
+- `updateSchemaFee`
+- `updateAssetAddress` [common to both issuers and verifiers]
 - `claimFees`
 
-*is functionality to allow issuers to deactivate a credential needed?*
+---
 
-## Verifier and related processes 
+## Verifiers 
 
 **Onboarding Flow:**
 
-1. New Verifier calls `setupVerifier`
-2. Subsequently, call `deposit`, to deposit USD8 for payments
+1. New Verifier calls `createVerifier`
+2. Subsequently, call `deposit`, to deposit `USD8` for verification payments
 3. Repeat step 2 as required
+
+### 1. `createVerifier`
+
+A new verifier is required to call `createVerifier`:
+`function createVerifier(address signerAddress, address assetAddress) external returns (bytes32) `
+- a unique random bytes32 `verifierId` will be generated for them.
+- expected to specify both a signer and asset address as inputs.
 
 **Explanation**
 
@@ -139,61 +148,167 @@ The following struct defines the on-chain attributes of a verifier:
 ```solidity
     struct Verifier {
         bytes32 verifierId;
-        address signerAddress;
-        address depositAddress;
+        address adminAddress;   // verifier's ownable address
+        address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
+        address signerAddress;  
 
-        uint128 balance;
-        uint128 totalExpenditure;
+        // MOCA | 18 dp precision
+        uint128 mocaStaked;
+
+        // USD8 | 6dp precision
+        uint128 currentBalance;
+        uint128 totalExpenditure;  // count: never decremented
     }
 ```
-
-A new verifier is required to call `setupVerifier`, wherein which a random bytes32 `verifierId` will be generated for them.
-They are expect to specify both a signer and deposit address as inputs.
-
-- signerAddress: for signature validation during verification payments 
-- depositAddress: address to which deposit/withdraw is handled
+- `adminAddress`: msg.sender;
+- `signerAddress`: for signature validation during verification payments 
+- `assetAddress`: address to which deposit/withdraw of USD8 balances + staking Moca
 
 Similar to the issuer, a separation of roles between signing and asset management is crucial.
 
 **The necessity for an verifier id on-chain:**
 
-- allows verifier to switch signing addresses
-- allows verifier to switch deposit/withdraw wallet address
+- allows verifier to change signing address
+- allows verifier to change asset address
 - allows verifier to silo access control between an address that is used to handle signature generation, and another for asset management
 
-### Other verifier functions:
+### 2. `deposit`
+
+Following id creation, verifiers must deposit some balance of USD8 into the contract.
+Verifier's verification txns' cost will be deducted against this balance.
+It is the verifier's responsibility to maintain a non-zero balance. 
+
+### 3. Verifier Subsidies: Staking Moca
+
+A verifier can opt to stake Moca to enjoy subsidies on their verification payments [*staking is optional*].
+The amount of Moca staked determines their subsidyPct, which is applied on each verification fee payment and booked.
+
+This mapping determines the subsidy a verifier might receive:
+
+```solidity
+    mapping(uint256 mocaStaked => uint256 subsidyPercentage) internal _verifiersSubsidyPercentages;
+```
+**It is important to note that the verifier must stake the exact amount; no more, no less. Else subsidyPercentage will be 0.**
+
+While the PaymentsController tracks subsidies accrued as per expenditure per epoch, the distribution of subsidies will be handled in VotingController.
+Please see the section below `Handling Subsidies` to understand how subsidies are calculated and distributed.
+
+### 4. Other verifier functions:
 
 - `withdraw`
 - `updateSignerAddress`
-- `deductBalance`
+- `updateAssetAddress` [common to both issuers and verifiers]
 
-## Integration with Universal verifier contract
+## `deductBalance`: Integration with Universal verifier contract
 
-Verifier contract should call `deductBalance()`, passing the following as input:
+Verifier contract will call `deductBalance()`, passing the following as inputs:
 
 ```solidity
-    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 amount, uint256 expiry, bytes calldata signature){...}
+    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature){...}
 ```
-- all ids are to be passed as assigned by the payments contract, for the correct storage referencing and calculations
-- amount is the fee deductible
-- expiry is the expiry of signature
+- `amount` is the fee deductible
+- `expiry` is the expiry of signature
 
-Also note that the signature expects a nonce as replay protection.
+### `deductBalance` execution flow:
 
+1. nextFee check: checks if the schema has an incoming fee increment; if so, updates `currentFee` to `nextFee`. `nextFee` will apply for this txn.
+2. verifies signature provided: to ensure that the verifier did indeed sign-off on this verification request.
+3. updates verifier nonce. 
+
+**4. If the schema fee is non-zero:**
+- check that `amount` matches exactly to schemaFee; else revert
+- check that verifier's `currentBalance` is >= `amount`; else revert
+- calc. protocol and voting fees
+
+*4.1. For VotingController: checks if schema has a non-zero `poolId` tag; if it does, `_bookSubsidy()` is executed:*
+- gets subsidyPct for the verifier, based on his MOCA staked 
+- calc. subsidy applicable
+- book subsidy accrued -> `_epochPoolSubsidies` & `_epochPoolVerifierSubsidies`
+- Increment protocol & voting fees, for the pool associated w/ this schema: `_epochPoolFeesAccrued:{feesAccruedToVoters,feesAccruedToProtocol}`
+    - `_epochPoolFeesAccrued` mapping is needed to track how much `USD8` was accrued to each pool
+    - referencing this value, to know how much `esMoca` to deposit per pool via `VotingController.depositRewards(uint256 epoch, bytes32[] calldata poolIds)`
+
+*4.2. Global Accounting: Increment/decrement the following values referencing `amount`:*
+- issuer: `.totalNetFeesAccrued++`, `.totalVerified++`
+- verifier: `.currentBalance--`, `totalExpenditure++`
+- schema:  `.totalGrossFeesAccrued++`
+    
+5. Increment `++_schemas[schemaId].totalVerified;`
+    - counter to track number of times a schema has been used in verification
+    
+> **Crucial to keep this function as lightweight as possible, to ensure sensible gas costs, esp. during high network usage**
 
 ---
+
+## Handling Subsidies
+
+**While distribution of subsidies are not handled on this contract, but instead on VotingController, we elaborate the process to highlight the requirements needed in PaymentsController to effectively support this. I.e.: what mappings and tracking are required.**
+
+- Each epoch, a verifier’s subsidy = `(verifierAccruedSubsidies / poolAccruedSubsidies) * poolAllocatedSubsidies`.
+- Protocol sets total epoch subsidies via `VotingController.setEpochSubsidies()`.
+- Subsidies are split among pools by vote weight (`VotingController.finalizeEpochRewardsSubsidies()`), then among verifiers in each pool by their share of accrued subsidies:
+    - `verifierAccruedSubsidies`: verifier’s total eligible verification fee spend in a pool.
+    - `poolAccruedSubsidies`: sum of all verifiers’ eligible spend in that pool (schema group).
+
+- `deductBalance` (see implementation) books weights per `{verifier, schema} -> poolId` for the current epoch:
+    - `epoch => poolId => totalWeight` (total pool weight per epoch)
+    - `epoch => poolId => verifierId => verifierTotalWeight`
+    - `epoch => poolId => schemaId => schemaTotalWeight`
+    - All weights increment as `fee * tier`.
+- At epoch end, VotingController deposits subsidies.
+- Verifiers claim: `verifierTotalWeightForPool / totalWeightPerPoolPerEpoch * poolSubsidy`.
+
+PaymentsController maintains:
+1. `_epochPoolSubsidies`
+2. `_epochPoolVerifierSubsidies`
+
+Both are updated in `deductBalance`.
+
+`VotingController.claimSubsidies()` uses `PaymentsController.getVerifierAndPoolAccruedSubsidies()` for payout calculation.
+
+Subsidies are paid to the verifier’s `assetAddress`, which must call `VotingController.claimSubsidies`.
+
+
+
+
+
+> **VotingController.claimSubsidies()` will handle the precision differential when calculating verifier weighted subsidies**
+> Subsidies are calculated on the gross amount; before protocol and voting fee are deducted.
+
+## Handling Voter Rewards [Voting Fee]
+
+- Voters receive rewards, financed by the `VOTING_FEE_PERCENTAGE` cut from total verification fees accrued for that epoch
+- Rewards are distributed to voters based on which pools they voted on, and what that pool accrued `feesAccruedToVoters`
+- `userVotes/PoolTotalVotes` * `feesAccruedToVoters`
+- Hence we need to track `feesAccruedToVoters` on a per pool basis in PaymentsController => `_epochPoolFeesAccrued` mapping
+
+**VotingController does not directly query PaymentsController for this mapping.**
+- This mapping tracks the total USD8 accrued; which needs to be converted to esMoca.
+- It determines the amount to deposit into VotingController after conversion, via `VotingController.depositRewardsForEpoch()`.
+
 ---
 
-# Questions
+## Integration with VotingController
 
-1. Block/blacklist issuer/verifiers?
+**Should PaymentsController call VotingController to update accrued rewards/subsidies/fees?**
+- No
+- do not want PaymentsController to have external call dependencies to other contracts.
+- may create problems when upgrading to new contracts. 
 
-2. are subsidies calculated on the base verification fee?
-- meaning, do not deduct protocol fee and voting rewards from it
+PaymentsController should be standalone, as much as possible.
 
-3. are rewards calculated on the base verification fee?
 
-**for points 2 and 3, they impact deductBalance():**
-- since the current process calcs. everything on the base verification fee
-- there could be a scenario where all the haircuts added up together is `> amount`
--> can we streamline by just charging a single protocol fee.
+## Upgradability [!]
+
+1. Deploy new `PaymentsControllerV2`
+2. Setup `PaymentsControllerV2` 
+    - either we expect issuers/verifiers to recreate their profiles
+    - or an owner function to populate the new contract with their profile data, referencing the old contract
+    - have verifiers partially migrate USD8 balances to new contract
+3. Update `AddressBook` to map to `PaymentsControllerV2` address.
+4. Here on out `UniversalVerifierContract` will reference the `PaymentsControllerV2`, through `AddressBook`. Old contract is defunct.
+4. Verifiers to migrate remaining USD8 balances to PaymentsControllerV2.
+5. Old contract will be frozen once all issuers have claimed fees and verifiers have migrated their balances.
+
+**UniversalVerifierContract should call PaymentsController through AddressBook.**
+- so that it can reference the latest contract seamlessly 

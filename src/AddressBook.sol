@@ -22,79 +22,88 @@ contract AddressBook is Ownable2Step {
     bytes32 private constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
     
     // Controllers
-    //bytes32 private constant EPOCH_CONTROLLER = 'EPOCH_CONTROLLER';
     bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
     bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
-    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER';   //OmPm.sol
+    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER'; 
+    bytes32 private constant ROUTER = 'ROUTER';
     
     // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
 
-    // TODO: Admin -> check for coherence against ACL
-    bytes32 private constant DEFAULT_ADMIN_ROLE = 0x00;
-
-
     // Map of registered addresses
-    mapping(bytes32 identifier => address registeredAddress) private _addresses;
+    mapping(bytes32 identifier => address registeredAddress) public addresses;
 
 
-    constructor(address globalAdmin_) Ownable(globalAdmin_) {
+    constructor(address globalAdmin) Ownable(globalAdmin) {
 
         // set global admin: DEFAULT_ADMIN_ROLE
-        _addresses[DEFAULT_ADMIN_ROLE] = globalAdmin_;
-    }
-
-
-// ------------------------------ Getters --------------------------------
-
-    function getAddress(bytes32 identifier) external view returns (address) {
-        return _addresses[identifier];
-    }
-
-
-    function getUSD8Token() external view returns (address) {   // forge-lint: disable-line(mixed-case-function)
-        return _addresses[USD8];
-    }
-
-    function getMoca() external view returns (address) {
-        return _addresses[MOCA];
-    }
-
-    function getEscrowedMoca() external view returns (address) {
-        return _addresses[ES_MOCA];
-    }
-
-    function getVotingEscrowMoca() external view returns (address) {
-        return _addresses[VOTING_ESCROW_MOCA];
-    }
-
-    function getAccessController() external view returns (address) {
-        return _addresses[ACCESS_CONTROLLER];
-    }
-
-    function getVotingController() external view returns (address) {
-        return _addresses[VOTING_CONTROLLER];
-    }
-
-    function getPaymentsController() external view returns (address) {
-        return _addresses[PAYMENTS_CONTROLLER];
-    }
-
-
-    function getTreasury() external view returns (address) {
-        return _addresses[TREASURY];
-    }
-
-    function getGlobalAdmin() external view returns (address) {
-        return _addresses[DEFAULT_ADMIN_ROLE];
+        addresses[bytes32(0)] = globalAdmin;
     }
 
 // ------------------------------ Setters --------------------------------
 
     function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner {
-        _addresses[identifier] = registeredAddress;
+        // cannot set address for 0x00: DEFAULT_ADMIN_ROLE
+        require(identifier != bytes32(0), "Invalid identifier");
 
-        // emit AddressSet(identifier, registeredAddress);
+        require(registeredAddress != address(0), "Invalid address");
+
+        addresses[identifier] = registeredAddress;
+
+        emit AddressSet(identifier, registeredAddress);
     }
+
+    // specific to updating global admin
+    function updateGlobalAdmin(address globalAdmin) external onlyOwner {
+        require(globalAdmin != address(0), "Invalid address");
+
+        emit GlobalAdminUpdated(addresses[bytes32(0)], globalAdmin);
+        
+        // update global admin
+        addresses[bytes32(0)] = globalAdmin;
+    }
+
+// ------------------------------ Getters --------------------------------
+    /**
+        zero address checks are not set here, and are expected to be handled by the caller contract
+        
+     */
+
+    function getUSD8Token() external view returns (address) {   // forge-lint: disable-line(mixed-case-function)
+        return addresses[USD8];
+    }
+
+    function getMoca() external view returns (address) {
+        return addresses[MOCA];
+    }
+
+    function getEscrowedMoca() external view returns (address) {
+        return addresses[ES_MOCA];
+    }
+
+    function getVotingEscrowMoca() external view returns (address) {
+        return addresses[VOTING_ESCROW_MOCA];
+    }
+
+    function getAccessController() external view returns (address) {
+        return addresses[ACCESS_CONTROLLER];
+    }
+
+    function getVotingController() external view returns (address) {
+        return addresses[VOTING_CONTROLLER];
+    }
+
+    function getPaymentsController() external view returns (address) {
+        return addresses[PAYMENTS_CONTROLLER];
+    }
+
+    function getTreasury() external view returns (address) {
+        return addresses[TREASURY];
+    }
+
+    function getGlobalAdmin() external view returns (address) {
+        return addresses[DEFAULT_ADMIN_ROLE];
+    }
+
 
 }
