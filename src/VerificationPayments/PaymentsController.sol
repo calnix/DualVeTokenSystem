@@ -1,22 +1,20 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
+// External: OZ
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-
-// sig.
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+// sig. checker + EIP712
 import "openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker, ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/SignatureChecker.sol";
 
-// risk management
-import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
-
 // libraries
+import {DataTypes} from "../libraries/DataTypes.sol";
 import {Events} from "../libraries/Events.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Constants} from "../libraries/Constants.sol";
 import {EpochMath} from "../libraries/EpochMath.sol";
-import {DataTypes} from "../libraries/DataTypes.sol";
 
 // interfaces
 import {IAddressBook} from "../interfaces/IAddressBook.sol";
@@ -30,20 +28,20 @@ contract PaymentsController is EIP712, Pausable {
     IAddressBook internal immutable _addressBook;
 
     // fees: 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
-    uint256 internal PROTOCOL_FEE_PERCENTAGE;    
-    uint256 internal VOTING_FEE_PERCENTAGE;   
+    uint256 public PROTOCOL_FEE_PERCENTAGE;    
+    uint256 public VOTING_FEE_PERCENTAGE;   
 
     // delay period before an issuer's fee increase becomes effective for a given schema
-    uint256 internal FEE_INCREASE_DELAY_PERIOD;            // in seconds
+    uint256 public FEE_INCREASE_DELAY_PERIOD;            // in seconds
 
     // total claimed by issuers | proxy for total verification fees accrued - to reduce storage updates in deductBalance()
-    uint256 internal TOTAL_CLAIMED_VERIFICATION_FEES;   // expressed in USD8 terms
+    uint256 public TOTAL_CLAIMED_VERIFICATION_FEES;   // expressed in USD8 terms
 
     // staked by verifiers
-    uint256 internal TOTAL_MOCA_STAKED;
+    uint256 public TOTAL_MOCA_STAKED;
 
     // risk management
-    uint256 internal _isFrozen;
+    uint256 public isFrozen;
 
 
 //-------------------------------mappings-----------------------------------------------------
@@ -106,7 +104,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param assetAddress The address where issuer fees will be claimed.
      * @return issuerId The unique identifier assigned to the new issuer.
      */
-    function createIssuer(address assetAddress) external returns (bytes32) {
+    function createIssuer(address assetAddress) external whenNotPaused returns (bytes32) {
         require(assetAddress != address(0), Errors.InvalidAddress());
 
         // generate issuerId
@@ -138,7 +136,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param fee The fee for the schema, expressed in USD8 (6 decimals).
      * @return schemaId The unique id assigned to the new schema.
      */
-    function createSchema(bytes32 issuerId, uint128 fee) external returns (bytes32) {
+    function createSchema(bytes32 issuerId, uint128 fee) external whenNotPaused returns (bytes32) {
         // check if issuerId matches msg.sender
         require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
 
@@ -167,7 +165,6 @@ contract PaymentsController is EIP712, Pausable {
         return schemaId;
     }
 
-
     /**
      * @notice Updates the fee for a given schema under a specific issuer.
      * @dev Only the issuer admin can call this function. Decreasing the fee applies immediately; increasing the fee is scheduled after a delay.
@@ -176,7 +173,7 @@ contract PaymentsController is EIP712, Pausable {
      * @param newFee The new fee to set, expressed in USD8 (6 decimals).
      * @return newFee The new fee that was set. Returns value for better middleware integration.
      */
-    function updateSchemaFee(bytes32 issuerId, bytes32 schemaId, uint128 newFee) external returns (uint256) {
+    function updateSchemaFee(bytes32 issuerId, bytes32 schemaId, uint128 newFee) external whenNotPaused returns (uint256) {
         // check if issuerId matches msg.sender
         require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
         // check if schemaId is valid
@@ -216,7 +213,7 @@ contract PaymentsController is EIP712, Pausable {
      * - There must be claimable fees available.
      * @param issuerId The unique identifier of the issuer to claim fees for.
      */
-    function claimFees(bytes32 issuerId) external {
+    function claimFees(bytes32 issuerId) external whenNotPaused {
         // check if issuerId matches msg.sender
         require(_issuers[issuerId].assetAddress == msg.sender, Errors.InvalidCaller());
 
@@ -234,7 +231,7 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.IssuerFeesClaimed(issuerId, claimableFees);
 
         // transfer fees to issuer
-        IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, claimableFees);
+        _usd8().safeTransfer(msg.sender, claimableFees);
     }
 
 
@@ -292,7 +289,7 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.VerifierDeposited(verifierId, assetAddress, amount);
 
         // transfer funds to verifier
-        IERC20(_addressBook.getUSD8Token()).safeTransferFrom(msg.sender, address(this), amount);
+        _usd8().safeTransferFrom(msg.sender, address(this), amount);
     }
 
 
@@ -320,7 +317,7 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.VerifierWithdrew(verifierId, assetAddress, amount);
 
         // transfer funds to verifier
-        IERC20(_addressBook.getUSD8Token()).safeTransfer(msg.sender, amount);
+        _usd8().safeTransfer(msg.sender, amount);
     }
 
     /**
@@ -331,15 +328,17 @@ contract PaymentsController is EIP712, Pausable {
      */
     function updateSignerAddress(bytes32 verifierId, address signerAddress) external whenNotPaused {
         require(signerAddress != address(0), Errors.InvalidAddress());
-        
+
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+
         // check msg.sender is verifierId's admin address
-        require(_verifiers[verifierId].adminAddress == msg.sender, Errors.InvalidCaller());
+        require(verifierPtr.adminAddress == msg.sender, Errors.InvalidCaller());
 
         // check if new signer address is different from current one
-        require(_verifiers[verifierId].signerAddress != signerAddress, Errors.InvalidAddress());
+        require(verifierPtr.signerAddress != signerAddress, Errors.InvalidAddress());
 
         // update signer address
-        _verifiers[verifierId].signerAddress = signerAddress;
+        verifierPtr.signerAddress = signerAddress;
 
         emit Events.VerifierSignerAddressUpdated(verifierId, signerAddress);
     }
@@ -363,7 +362,7 @@ contract PaymentsController is EIP712, Pausable {
         TOTAL_MOCA_STAKED += amount;
 
         // transfer Moca to verifier
-        IERC20(_addressBook.getMocaToken()).safeTransferFrom(msg.sender, address(this), amount);
+        _moca().safeTransferFrom(msg.sender, address(this), amount);
 
         emit Events.VerifierMocaStaked(verifierId, assetAddress, amount);
     }
@@ -390,7 +389,7 @@ contract PaymentsController is EIP712, Pausable {
         TOTAL_MOCA_STAKED -= amount;
 
         // transfer Moca to verifier
-        IERC20(_addressBook.getMocaToken()).safeTransfer(msg.sender, amount);
+        _moca().safeTransfer(msg.sender, amount);
 
         emit Events.VerifierMocaUnstaked(verifierId, assetAddress, amount);
     }
@@ -460,91 +459,126 @@ contract PaymentsController is EIP712, Pausable {
 
     // make this fn as gas optimized as possible
     function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
-        require(expiry > block.timestamp, Errors.SignatureExpired());
+        require(expiry > block.timestamp, Errors.SignatureExpired()); 
+        require(amount > 0, Errors.InvalidAmount());
 
-        // nextFee check
-        uint128 nextFee = _schemas[schemaId].nextFee;
-        // if nextFee is set, check if it's time to apply it
-        if(nextFee > 0) {
-            if(_schemas[schemaId].nextFeeTimestamp <= block.timestamp) {
-                // apply nextFee
-                uint128 currentFee = _schemas[schemaId].currentFee;
-                _schemas[schemaId].currentFee = nextFee;
-                // delete nextFee and nextFeeTimestamp
-                delete _schemas[schemaId].nextFee;
-                delete _schemas[schemaId].nextFeeTimestamp;
+        // cache schema in memory (saves ~800 gas)
+        DataTypes.Schema storage schemaStorage = _schemas[schemaId];
+        DataTypes.Schema memory schema = schemaStorage; // Load once into memory
 
-                emit Events.SchemaFeeIncreased(schemaId, currentFee, nextFee);
-            }
+        //----- NextFee check -----
+        uint128 currentFee = schema.currentFee;
+        if (schema.nextFee > 0 && schema.nextFeeTimestamp <= block.timestamp) {
+            // cache old fee + update currentFee
+            uint128 oldFee = currentFee;
+            currentFee = schema.nextFee;
+
+            // Batch storage updates
+            schemaStorage.currentFee = currentFee;
+            delete schemaStorage.nextFee;
+            delete schemaStorage.nextFeeTimestamp;
+            emit Events.SchemaFeeIncreased(schemaId, oldFee, currentFee);
         }
 
-        // ---- TODO:try: so that fee updates occur regardless of subsequent revert --- @follow-up check with R
+        // Cache verifier data
+        DataTypes.Verifier storage verifierStorage = _verifiers[verifierId];
+        address signerAddress = verifierStorage.signerAddress;
+        uint128 verifierBalance = verifierStorage.currentBalance;
 
-        // ----- Verify signature -----
-            address signerAddress = _verifiers[verifierId].signerAddress;
-            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
-            // handles both EOA and contract signatures | returns true if signature is valid
-            require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
-        
-        // ----- Update nonce -----
+
+        // ----- Verify signature + Update nonce -----
+        bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
+        // handles both EOA and contract signatures | returns true if signature is valid
+        require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature()); 
         ++_verifierNonces[signerAddress];
 
-        // amount must match latest schema fee [set by issuer] | could be 0
-        uint256 schemaFee = _schemas[schemaId].currentFee;
+        // check if amount matches latest schema fee
+        require(amount == currentFee, Errors.InvalidSchemaFee());
+        
+
+        // ----- Combined fee calculation -----
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
         uint128 protocolFee;
         uint128 votingFee;
-        if(schemaFee > 0) {
-            // check if amount matches schema fee + verifier has sufficient balance
-            require(amount == schemaFee, Errors.InvalidSchemaFee());
-            require(_verifiers[verifierId].currentBalance >= amount, Errors.InsufficientBalance());
+        uint128 netFee;
 
-            // ----- Calc. fee split ----- | downcasting to uint128 should be safe since 100% fee <= 2.56e18 (2^128)
-            protocolFee = uint128((PROTOCOL_FEE_PERCENTAGE > 0) ? (amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0);
-            votingFee = uint128((VOTING_FEE_PERCENTAGE > 0) ? (amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE : 0);
-        
-            // -----------------------For VotingController------------------------------------------
-            
-            // get current epoch
-            uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-
-            // ----- Book subsidy & fees (voting rewards) if poolId is set -----
-            bytes32 poolId = _schemas[schemaId].poolId;
-            if (poolId != bytes32(0)) {
-                // for VotingController.claimSubsidies(): which calls getVerifierAndPoolAccruedSubsidies() on this contract
-                _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
-
-                // track how much `USD8` was accrued to each pool 
-                // feesAccruedToVoters will be converted to esMoca off-chain and deposited to VotingController.depositRewards()
-                _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToProtocol += protocolFee;
-                _epochPoolFeesAccrued[currentEpoch][poolId].feesAccruedToVoters += votingFee;
-            }
-
-
-            // -----------------------Global Accounting------------------------------------------
-            // issuer: global accounting
-            _issuers[issuerId].totalNetFeesAccrued += (amount - protocolFee - votingFee);  // all uint128
-            ++_issuers[issuerId].totalVerified;
-
-            // verifier: global accounting
-            _verifiers[verifierId].currentBalance -= amount;
-            _verifiers[verifierId].totalExpenditure += amount;
-            
-            // schema: global accounting
-            _schemas[schemaId].totalGrossFeesAccrued += amount;     // disregards protocol and voting fees
-
-            // protocol + voting fees accounting | to enable withdrawal of fees at the end of an epoch
-            _epochFeesAccrued[currentEpoch].feesAccruedToProtocol += protocolFee;
-            _epochFeesAccrued[currentEpoch].feesAccruedToVoters += votingFee;  
-
-            emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
+        unchecked { // Safe because fees < 100%
+            protocolFee = uint128((amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE);
+            votingFee = uint128((amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE);
+            netFee = amount - protocolFee - votingFee;
         }
 
-        // -----------------------Increment counter------------------------------------------
+        //----- Batch storage updates -----
+        bytes32 poolId = schema.poolId;
 
-        // increment schema count
-        ++_schemas[schemaId].totalVerified;
+        // update verifier 
+        require(verifierBalance >= amount, Errors.InsufficientBalance());
+        verifierStorage.currentBalance = verifierBalance - amount;
+        verifierStorage.totalExpenditure += amount;
+        
+        // update issuer
+        DataTypes.Issuer storage issuerStorage = _issuers[issuerId];
+        issuerStorage.totalNetFeesAccrued += netFee;
+        unchecked { ++issuerStorage.totalVerified; }
+
+        // update schema counters
+        schemaStorage.totalGrossFeesAccrued += amount;
+
+        // Pool-specific updates [for VotingController]
+        if(poolId != bytes32(0)) {
+            // amount is uint128, but _bookSubsidy expects uint256 | acceptable since uint128 < uint256
+            _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
+            
+            // Batch pool fee updates
+            DataTypes.FeesAccrued storage poolFees = _epochPoolFeesAccrued[currentEpoch][poolId];
+            poolFees.feesAccruedToProtocol += protocolFee;
+            poolFees.feesAccruedToVoters += votingFee;
+        }
+
+        // Global epoch fees [for AssetManager]
+        DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[currentEpoch];
+        epochFees.feesAccruedToProtocol += protocolFee;
+        epochFees.feesAccruedToVoters += votingFee;
+
+        emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
+        
+        // ----- Increment verification count -----
+        unchecked { ++schemaStorage.totalVerified; }
         emit Events.SchemaVerified(schemaId);
+}
+
+    function deductBalanceZeroFee(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 expiry, bytes calldata signature) external whenNotPaused {
+        require(expiry > block.timestamp, Errors.SignatureExpired());
+        
+        // Verify schema has zero fee
+        require(_schemas[schemaId].currentFee == 0, Errors.InvalidSchemaFee());
+        
+        // Simplified signature verification: excludes amount/fee from signature check
+        address signerAddress = _verifiers[verifierId].signerAddress;
+        bytes32 hash = _hashTypedDataV4(
+            keccak256(abi.encode(
+                Constants.DEDUCT_BALANCE_ZERO_FEE_TYPEHASH,
+                issuerId, 
+                verifierId, 
+                schemaId, 
+                expiry, 
+                _verifierNonces[signerAddress]
+            ))
+        );
+        require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
+        
+        // Update counters
+        unchecked {
+            ++_verifierNonces[signerAddress];
+            ++_schemas[schemaId].totalVerified;
+            ++_issuers[issuerId].totalVerified;
+        }
+        
+        emit Events.SchemaVerifiedZeroFee(schemaId);
     }
+
+ 
+//-------------------------------internal functions---------------------------------------------
 
     // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
     // expectation: amount is non-zero
@@ -565,8 +599,6 @@ contract PaymentsController is EIP712, Pausable {
             }
         }
     }
- 
-//-------------------------------internal functions---------------------------------------------
 
     ///@dev Generate a issuer or verifier id. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
     // adminAddress: msg.sender
@@ -579,18 +611,25 @@ contract PaymentsController is EIP712, Pausable {
         return bytes32(keccak256(abi.encode(issuerId, block.timestamp, salt)));
     }
 
+    function _usd8() internal view returns (IERC20) {
+        return IERC20(_addressBook.getUSD8Token());
+    }
+    
+    function _moca() internal view returns (IERC20){
+        return IERC20(_addressBook.getMoca());
+    }
 
 //-------------------------------admin: update functions-----------------------------------------
 
     // add/update/remove | can be 0 
-    function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin {
+    function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin whenNotPaused {
         require(_schemas[schemaId].schemaId != bytes32(0), "Schema does not exist");
         _schemas[schemaId].poolId = poolId;
 
         emit Events.PoolIdUpdated(schemaId, poolId);
     }
 
-    function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyPaymentsAdmin {
+    function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyPaymentsAdmin whenNotPaused {
         require(newDelayPeriod > 0, "Invalid delay period");
         require(newDelayPeriod % EpochMath.EPOCH_DURATION == 0, "Delay period must be a multiple of epoch duration");
 
@@ -600,7 +639,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     // protocol fee can be 0
-    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyPaymentsAdmin {
+    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyPaymentsAdmin whenNotPaused {
         // protocol fee cannot be greater than 100%
         require(protocolFeePercentage < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
         // total fee percentage cannot be greater than 100%
@@ -612,7 +651,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     // voter fee can be 0
-    function updateVotingFeePercentage(uint256 votingFeePercentage) external onlyPaymentsAdmin {
+    function updateVotingFeePercentage(uint256 votingFeePercentage) external onlyPaymentsAdmin whenNotPaused {
         // voter fee cannot be greater than 100%
         require(votingFeePercentage < Constants.PRECISION_BASE, "Invalid voting fee percentage");
         // total fee percentage cannot be greater than 100%
@@ -624,7 +663,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     // used to set/overwrite/update
-    function updateVerifierSubsidyPercentages(uint256 mocaStaked, uint256 subsidyPercentage) external onlyPaymentsAdmin {
+    function updateVerifierSubsidyPercentages(uint256 mocaStaked, uint256 subsidyPercentage) external onlyPaymentsAdmin whenNotPaused {
         require(mocaStaked > 0, "Invalid moca staked");
         require(subsidyPercentage < Constants.PRECISION_BASE, "Invalid subsidy percentage");
 
@@ -646,7 +685,7 @@ contract PaymentsController is EIP712, Pausable {
         // transfer protocol fees to treasury
         address treasury = _addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
-        IERC20(usd8).safeTransfer(treasury, protocolFees);
+        _usd8().safeTransfer(treasury, protocolFees);
 
         _epochFeesAccrued[epoch].isProtocolFeeWithdrawn = true;
 
@@ -663,7 +702,7 @@ contract PaymentsController is EIP712, Pausable {
         // transfer voters fees to treasury
         address treasury = _addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
-        IERC20(usd8).safeTransfer(treasury, votersFees);
+        _usd8().safeTransfer(treasury, votersFees);
 
         _epochFeesAccrued[epoch].isVotersFeeWithdrawn = true;
 
@@ -675,16 +714,16 @@ contract PaymentsController is EIP712, Pausable {
     /**
      * @notice Pause contract. Cannot pause once frozen
      */
-    function pause() external whenNotPaused onlyMonitor {
-        if(_isFrozen == 1) revert Errors.IsFrozen(); 
+    function pause() external onlyMonitor whenNotPaused {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
         _pause();
     }
 
     /**
      * @notice Unpause pool. Cannot unpause once frozen
      */
-    function unpause() external whenPaused onlyGlobalAdmin {
-        if(_isFrozen == 1) revert Errors.IsFrozen(); 
+    function unpause() external onlyGlobalAdmin whenPaused {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
         _unpause();
     }
 
@@ -694,21 +733,18 @@ contract PaymentsController is EIP712, Pausable {
      *      Nothing to be updated. Freeze as is.
      *      Enables emergencyExit() to be called.
      */
-    function freeze() external whenPaused onlyGlobalAdmin {
-        if(_isFrozen == 1) revert Errors.IsFrozen();
-        _isFrozen = 1;
+    function freeze() external onlyGlobalAdmin whenPaused {
+        if(isFrozen == 1) revert Errors.IsFrozen();
+        isFrozen = 1;
         emit Events.ContractFrozen();
     }  
 
 
     // exfil verifiers' balance to their stored addresses
-    function emergencyExitVerifiers(bytes32[] calldata verifierIds) external onlyEmergencyExitHandler whenPaused {
-        //if(isFrozen == 0) revert Errors.NotFrozen();
-        //if(verifierIds.length == 0) revert Errors.InvalidInput();
-
-        // get USD8 address from AddressBook
-        address usd8 = _addressBook.getUSD8Token();
-    
+    function emergencyExitVerifiers(bytes32[] calldata verifierIds) external onlyEmergencyExitHandler {
+        if(isFrozen == 0) revert Errors.NotFrozen();
+        if(verifierIds.length == 0) revert Errors.InvalidArray();
+   
         // if issuerId is given, will retrieve either empty or wrong struct
         for(uint256 i; i < verifierIds.length; ++i) {
             
@@ -720,19 +756,16 @@ contract PaymentsController is EIP712, Pausable {
             address verifierAssetAddress = _verifiers[verifierIds[i]].assetAddress;
 
             // transfer balance to verifier
-            IERC20(usd8).safeTransfer(verifierAssetAddress, verifierBalance);
+            _usd8().safeTransfer(verifierAssetAddress, verifierBalance);
         }
 
         emit Events.EmergencyExitVerifiers(verifierIds);
     }
 
     // exfil issuers' unclaimed fees to their stored addresses
-    function emergencyExitIssuers(bytes32[] calldata issuerIds) external onlyEmergencyExitHandler whenPaused {
-        //if(isFrozen == 0) revert Errors.NotFrozen();
-        //if(issuerIds.length == 0) revert Errors.InvalidInput();
-
-        // get USD8 address from AddressBook
-        address usd8 = _addressBook.getUSD8Token();
+    function emergencyExitIssuers(bytes32[] calldata issuerIds) external onlyEmergencyExitHandler {
+        if(isFrozen == 0) revert Errors.NotFrozen();
+        if(issuerIds.length == 0) revert Errors.InvalidArray();
 
         // if verifierId is given, will retrieve either empty or wrong struct
         for(uint256 i; i < issuerIds.length; ++i) {
@@ -745,7 +778,7 @@ contract PaymentsController is EIP712, Pausable {
             address issuerAssetAddress = _issuers[issuerIds[i]].assetAddress;
 
             // transfer balance to issuer
-            IERC20(usd8).safeTransfer(issuerAssetAddress, issuerBalance);
+            _usd8().safeTransfer(issuerAssetAddress, issuerBalance);
         }
 
         emit Events.EmergencyExitIssuers(issuerIds);
@@ -800,44 +833,6 @@ contract PaymentsController is EIP712, Pausable {
     function getAddressBook() external view returns (IAddressBook) {
         return _addressBook;
     }
-    
-    /**
-     * @notice Returns the protocol fee percentage.
-     * @return protocolFeePercentage The protocol fee percentage.
-     */
-    function getProtocolFeePercentage() external view returns (uint256) {
-        return PROTOCOL_FEE_PERCENTAGE;
-    }
-
-    /**
-     * @notice Returns the voting fee percentage.
-     * @return votingFeePercentage The voting fee percentage.
-     */
-    function getVoterFeePercentage() external view returns (uint256) {
-        return VOTING_FEE_PERCENTAGE;
-    }
-    
-    /**
-     * @notice Returns the fee increase delay period.
-     * @return feeIncreaseDelayPeriod The fee increase delay period.
-     */
-    function getFeeIncreaseDelayPeriod() external view returns (uint256) {
-        return FEE_INCREASE_DELAY_PERIOD;
-    }
-
-    function getTotalClaimedVerificationFees() external view returns (uint256) {
-        return TOTAL_CLAIMED_VERIFICATION_FEES;
-    }
-
-    function getTotalMocaStaked() external view returns (uint256) {
-        return TOTAL_MOCA_STAKED;
-    }
-
-    function getIsFrozen() external view returns (uint256) {
-        return _isFrozen;
-    }
-
-
 
     /**
      * @notice Returns the Issuer struct for a given issuerId.

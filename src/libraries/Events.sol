@@ -117,6 +117,7 @@ library Events {
     event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
     event BalanceDeducted(bytes32 indexed verifierId, bytes32 indexed schemaId, bytes32 indexed issuerId, uint256 amount);
     event SchemaVerified(bytes32 indexed schemaId);
+    event SchemaVerifiedZeroFee(bytes32 indexed schemaId);
 
     // admin update fns
     event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);
