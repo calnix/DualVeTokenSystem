@@ -440,7 +440,67 @@ For each verification fee paid:
 
 ---
 
-# 6. **Risk Management**
+# 6. **Timing and Epoch Considerations**
+
+## Epoch Framework
+
+PaymentsController operates on an epoch-based timeline that synchronizes with VotingController:
+- **Epoch Duration**: Defined in EpochMath library (`14 days`)
+- **Current Epoch**: Determined by `EpochMath.getCurrentEpochNumber()`
+- **Epoch Boundaries**: Critical for subsidy calculations and fee withdrawals
+
+## Time-Dependent Operations
+
+### 1. Fee Increase Delays
+
+**Minimum Delay**: 1 epoch (configurable via `FEE_INCREASE_DELAY_PERIOD`)
+
+**Timeline Example:**
+- Epoch N, Day 2: Issuer requests fee increase from 100 → 150 USD8
+- System sets: nextFee = 150, nextFeeTimestamp = currentTime + DELAY
+- Epoch N+1, Day 2: Fee automatically updates to 150 USD8
+- All verifications from this point use new fee
+
+**Key Points**:
+- Delay must be in epoch intervals 
+- Fee decreases bypass delay (immediate effect)
+- Pending increases can be overridden by new updates
+
+### 2. Pool Association Timing
+
+Schemas can be associated with voting pools at any time, but timing affects subsidy eligibility:
+
+**2.1: Adding Pool Association Mid-Epoch**:
+
+Epoch N Timeline:
+├─ Day 1-3: Schema has no pool (`poolId = 0`)
+│ → Verifications accrue NO subsidies
+├─ Day 4: Admin calls updatePoolId(schemaId, poolId)
+│ → Association active
+└─ Day 4-7: New verifications accrue subsidies
+
+*Day 1-3 verifications are ineligible for subsidies.*
+
+**2.2: Removing Pool Association Mid-Epoch**:
+
+Epoch N Timeline:
+├─ Day 1-3: Schema associated with poolId
+│ → Verifications accrue subsidies
+├─ Day 4: Admin sets poolId = 0
+│ → Association removed
+└─ Day 4-7: New verifications accrue NO subsidies
+
+*Only day 1-3 subsidies are claimable.*
+*Day 4-7 subsidies are FORFEITED.*
+
+
+**Best Practice**: Update pool associations at epoch boundaries to avoid confusion.
+
+### 3. Subsidy Distribution Timeline
+
+Subsidies follow a multi-step process across epochs:
+
+# 7. **Risk Management**
 
 ## Access Control Hierarchy
 
@@ -471,7 +531,7 @@ For each verification fee paid:
 
 ---
 
-# 7. **Upgrade Architecture**
+# 8. **Upgrade Architecture**
 
 ## Upgrade Process
 
