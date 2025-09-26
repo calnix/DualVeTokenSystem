@@ -492,7 +492,17 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------UniversalVerificationContract functions-----------------------------------------
 
-    // make this fn as gas optimized as possible
+    /**
+     * @notice Deducts the verifier's balance for a verification, distributing protocol and voting fees.
+     * @dev Gas optimized: minimizes storage reads/writes, by employing a hybrid storage-memory optimization pattern, and unchecked math where safe.
+     *      Validates signature, updates schema fee if needed, and increments verifier nonce.
+     * @param issuerId The unique identifier of the issuer.
+     * @param verifierId The unique identifier of the verifier.
+     * @param schemaId The unique identifier of the schema.
+     * @param amount The fee amount to deduct (must match current schema fee).
+     * @param expiry The signature expiry timestamp.
+     * @param signature The EIP-712 signature from the verifier's signer address.
+     */
     function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
         require(expiry > block.timestamp, Errors.SignatureExpired()); 
         require(amount > 0, Errors.InvalidAmount());
