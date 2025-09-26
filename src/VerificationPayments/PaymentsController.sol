@@ -119,9 +119,10 @@ contract PaymentsController is EIP712, Pausable {
         }
 
         // STORAGE: setup issuer
-        _issuers[issuerId].issuerId = issuerId;
-        _issuers[issuerId].adminAddress = msg.sender;
-        _issuers[issuerId].assetAddress = assetAddress;
+        DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
+        issuerPtr.issuerId = issuerId;
+        issuerPtr.adminAddress = msg.sender;
+        issuerPtr.assetAddress = assetAddress;
         
         emit Events.IssuerCreated(issuerId, msg.sender, assetAddress);
 
@@ -137,8 +138,14 @@ contract PaymentsController is EIP712, Pausable {
      * @return schemaId The unique id assigned to the new schema.
      */
     function createSchema(bytes32 issuerId, uint128 fee) external whenNotPaused returns (bytes32) {
+
+        // cache pointers
+        DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
+        DataTypes.Verifier storage verifierPtr = _verifiers[issuerId];
+        DataTypes.Schema storage schemaPtr = _schemas[issuerId];
+
         // check if issuerId matches msg.sender
-        require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
+        require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
 
         // sanity check: fee cannot be greater than 1000 USD8
         // fee is an absolute value expressed in USD8 terms | free credentials are allowed
@@ -150,15 +157,15 @@ contract PaymentsController is EIP712, Pausable {
             uint256 salt = block.number; 
             schemaId = _generateSchemaId(salt, issuerId);
             // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
-            while (_schemas[schemaId].schemaId != bytes32(0) || _verifiers[schemaId].verifierId != bytes32(0) || _issuers[schemaId].issuerId != bytes32(0)) {
+            while (schemaPtr.schemaId != bytes32(0) || verifierPtr.verifierId != bytes32(0) || issuerPtr.issuerId != bytes32(0)) {
                 schemaId = _generateSchemaId(++salt, issuerId);
             }
         }
 
         // STORAGE: create schema
-        _schemas[schemaId].schemaId = schemaId;
-        _schemas[schemaId].issuerId = issuerId;
-        _schemas[schemaId].currentFee = fee;
+        schemaPtr.schemaId = schemaId;
+        schemaPtr.issuerId = issuerId;
+        schemaPtr.currentFee = fee;
 
         emit Events.SchemaCreated(schemaId, issuerId, fee);
 
@@ -173,31 +180,34 @@ contract PaymentsController is EIP712, Pausable {
      * @param newFee The new fee to set, expressed in USD8 (6 decimals).
      * @return newFee The new fee that was set. Returns value for better middleware integration.
      */
-    function updateSchemaFee(bytes32 issuerId, bytes32 schemaId, uint128 newFee) external whenNotPaused returns (uint256) {
+    function updateSchemaFee(bytes32 issuerId, bytes32 schemaId, uint128 newFee) external whenNotPaused returns (uint256) {        
+        // cache pointers
+        DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
+        DataTypes.Schema storage schemaPtr = _schemas[schemaId];
+
         // check if issuerId matches msg.sender
-        require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
+        require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+
         // check if schemaId is valid
-        require(_schemas[schemaId].schemaId != bytes32(0), Errors.InvalidId());
+        require(schemaPtr.schemaId != bytes32(0), Errors.InvalidId());
 
-
-        // sanity check: fee cannot be greater than 10,000 USD8
-        // fee is an absolute value expressed in USD8 terms | free credentials are allowed
+        // sanity check: fee cannot be greater than 10,000 USD8 | free credentials are allowed
         require(newFee < 10_000 * Constants.USD8_PRECISION, Errors.InvalidAmount());
 
         // decrementing fee is applied immediately
-        uint256 currentFee = _schemas[schemaId].currentFee;
+        uint256 currentFee = schemaPtr.currentFee;
         if(newFee < currentFee) {
-            _schemas[schemaId].currentFee = newFee;
+            schemaPtr.currentFee = newFee;
 
             emit Events.SchemaFeeReduced(schemaId, newFee, currentFee);
 
         } else {
             // increment nextFee 
-            _schemas[schemaId].nextFee = newFee;
+            schemaPtr.nextFee = newFee;
             
             // set next fee timestamp
             uint128 nextFeeTimestamp = uint128(block.timestamp + FEE_INCREASE_DELAY_PERIOD);
-            _schemas[schemaId].nextFeeTimestamp = nextFeeTimestamp;
+            schemaPtr.nextFeeTimestamp = nextFeeTimestamp;
 
             emit Events.SchemaNextFeeSet(schemaId, newFee, nextFeeTimestamp, currentFee);
         }
@@ -214,16 +224,19 @@ contract PaymentsController is EIP712, Pausable {
      * @param issuerId The unique identifier of the issuer to claim fees for.
      */
     function claimFees(bytes32 issuerId) external whenNotPaused {
-        // check if issuerId matches msg.sender
-        require(_issuers[issuerId].assetAddress == msg.sender, Errors.InvalidCaller());
+        // cache pointers
+        DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
 
-        uint256 claimableFees = _issuers[issuerId].totalNetFeesAccrued - _issuers[issuerId].totalClaimed;
+        // check if issuerId matches msg.sender
+        require(issuerPtr.assetAddress == msg.sender, Errors.InvalidCaller());
+
+        uint256 claimableFees = issuerPtr.totalNetFeesAccrued - issuerPtr.totalClaimed;
 
         // check if issuer has claimable fees
         require(claimableFees > 0, Errors.NoClaimableFees());
 
         // overwrite .totalClaimed with .totalNetFeesAccrued
-        _issuers[issuerId].totalClaimed = _issuers[issuerId].totalNetFeesAccrued;
+        issuerPtr.totalClaimed = issuerPtr.totalNetFeesAccrued;
 
         // update global counter
         TOTAL_CLAIMED_VERIFICATION_FEES += claimableFees;
@@ -260,10 +273,11 @@ contract PaymentsController is EIP712, Pausable {
         }
 
         // STORAGE: create verifier
-        _verifiers[verifierId].verifierId = verifierId;
-        _verifiers[verifierId].adminAddress = msg.sender;
-        _verifiers[verifierId].signerAddress = signerAddress;
-        _verifiers[verifierId].assetAddress = assetAddress;
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+        verifierPtr.verifierId = verifierId;
+        verifierPtr.adminAddress = msg.sender;
+        verifierPtr.signerAddress = signerAddress;
+        verifierPtr.assetAddress = assetAddress;
 
         emit Events.VerifierCreated(verifierId, msg.sender, signerAddress, assetAddress);
 
@@ -279,12 +293,15 @@ contract PaymentsController is EIP712, Pausable {
      * @param amount The amount of USD8 to deposit.
      */
     function deposit(bytes32 verifierId, uint128 amount) external whenNotPaused {
+        // cache pointer
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+
         // check msg.sender is verifierId's asset address
-        address assetAddress = _verifiers[verifierId].assetAddress;
+        address assetAddress = verifierPtr.assetAddress;
         require(assetAddress == msg.sender, Errors.InvalidCaller());
 
         // STORAGE: update balance
-        _verifiers[verifierId].currentBalance += amount;
+        verifierPtr.currentBalance += amount;
 
         emit Events.VerifierDeposited(verifierId, assetAddress, amount);
 
@@ -303,16 +320,19 @@ contract PaymentsController is EIP712, Pausable {
     function withdraw(bytes32 verifierId, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
+        // cache pointer
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+
         // check msg.sender is verifierId's asset address
-        address assetAddress = _verifiers[verifierId].assetAddress;
+        address assetAddress = verifierPtr.assetAddress;
         require(assetAddress == msg.sender, Errors.InvalidCaller());
 
         // check if verifier has enough balance
-        uint128 balance = _verifiers[verifierId].currentBalance;
+        uint128 balance = verifierPtr.currentBalance;
         require(balance >= amount, Errors.InvalidAmount());
 
         // STORAGE: update balance
-        _verifiers[verifierId].currentBalance -= amount;
+        verifierPtr.currentBalance -= amount;
 
         emit Events.VerifierWithdrew(verifierId, assetAddress, amount);
 
@@ -329,6 +349,7 @@ contract PaymentsController is EIP712, Pausable {
     function updateSignerAddress(bytes32 verifierId, address signerAddress) external whenNotPaused {
         require(signerAddress != address(0), Errors.InvalidAddress());
 
+        // cache pointer
         DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
 
         // check msg.sender is verifierId's admin address
@@ -352,13 +373,16 @@ contract PaymentsController is EIP712, Pausable {
      */
     function stakeMoca(bytes32 verifierId, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
+
+        // cache pointer
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
         
         // check msg.sender is verifierId's asset address
-        address assetAddress = _verifiers[verifierId].assetAddress;
+        address assetAddress = verifierPtr.assetAddress;
         require(assetAddress == msg.sender, Errors.InvalidCaller());
 
         // STORAGE: update moca staked
-        _verifiers[verifierId].mocaStaked += amount;
+        verifierPtr.mocaStaked += amount;
         TOTAL_MOCA_STAKED += amount;
 
         // transfer Moca to verifier
@@ -377,15 +401,18 @@ contract PaymentsController is EIP712, Pausable {
     function unstakeMoca(bytes32 verifierId, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
+        // cache pointer
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+
         // check msg.sender is verifierId's asset address
-        address assetAddress = _verifiers[verifierId].assetAddress;
+        address assetAddress = verifierPtr.assetAddress;
         require(assetAddress == msg.sender, Errors.InvalidCaller());
 
         // check if verifier has enough moca staked
-        require(_verifiers[verifierId].mocaStaked >= amount, Errors.InvalidAmount());
+        require(verifierPtr.mocaStaked >= amount, Errors.InvalidAmount());
 
         // STORAGE: update moca staked
-        _verifiers[verifierId].mocaStaked -= amount;
+        verifierPtr.mocaStaked -= amount;
         TOTAL_MOCA_STAKED -= amount;
 
         // transfer Moca to verifier
@@ -406,17 +433,21 @@ contract PaymentsController is EIP712, Pausable {
     function updateAssetAddress(bytes32 id, address newAssetAddress) external whenNotPaused returns (address) {
         require(newAssetAddress != address(0), Errors.InvalidAddress());
 
-        if (_issuers[id].issuerId != bytes32(0)) {
+        // cache pointer
+        DataTypes.Issuer storage issuerPtr = _issuers[id];
+        DataTypes.Verifier storage verifierPtr = _verifiers[id];
+
+        if (issuerPtr.issuerId != bytes32(0)) {
             
             // Issuer update
-            require(_issuers[id].adminAddress == msg.sender, Errors.InvalidCaller());
-            _issuers[id].assetAddress = newAssetAddress;
+            require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+            issuerPtr.assetAddress = newAssetAddress;
 
-        } else if (_verifiers[id].verifierId != bytes32(0)) {
+        } else if (verifierPtr.verifierId != bytes32(0)) {
 
             // Verifier update
-            require(_verifiers[id].adminAddress == msg.sender, Errors.InvalidCaller());
-            _verifiers[id].assetAddress = newAssetAddress;
+            require(verifierPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+            verifierPtr.assetAddress = newAssetAddress;
             
         } else {
             revert Errors.InvalidId();
@@ -436,15 +467,19 @@ contract PaymentsController is EIP712, Pausable {
     function updateAdminAddress(bytes32 id, address newAdminAddress) external whenNotPaused returns (address) {
         require(newAdminAddress != address(0), Errors.InvalidAddress());
 
-        if (_issuers[id].issuerId != bytes32(0)) {
+        // cache pointer
+        DataTypes.Issuer storage issuerPtr = _issuers[id];
+        DataTypes.Verifier storage verifierPtr = _verifiers[id];
+
+        if (issuerPtr.issuerId != bytes32(0)) {
             // Issuer admin update
-            require(_issuers[id].adminAddress == msg.sender, Errors.InvalidCaller());
+            require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
             _issuers[id].adminAddress = newAdminAddress;
             
-        } else if (_verifiers[id].verifierId != bytes32(0)) {
+        } else if (verifierPtr.verifierId != bytes32(0)) {
             // Verifier admin update
-            require(_verifiers[id].adminAddress == msg.sender, Errors.InvalidCaller());
-            _verifiers[id].adminAddress = newAdminAddress;
+            require(verifierPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+            verifierPtr.adminAddress = newAdminAddress;
             
         } else {
             revert Errors.InvalidId();
@@ -545,7 +580,7 @@ contract PaymentsController is EIP712, Pausable {
         // ----- Increment verification count -----
         unchecked { ++schemaStorage.totalVerified; }
         emit Events.SchemaVerified(schemaId);
-}
+    }
 
     function deductBalanceZeroFee(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 expiry, bytes calldata signature) external whenNotPaused {
         require(expiry > block.timestamp, Errors.SignatureExpired());
@@ -674,12 +709,20 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------admin: withdraw functions----------------------------------------
 
-    //note: can only withdraw protocol fees after epoch ended
+    /**
+     * @notice Allows withdrawal of protocol fees only after the specified epoch has ended.
+     * @dev Protocol fees for a given epoch can be withdrawn once per epoch, after the epoch is finalized.
+     * @param epoch The epoch number for which to withdraw protocol fees.
+     */
     function withdrawProtocolFees(uint256 epoch) external onlyAssetManager whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
-        require(!_epochFeesAccrued[epoch].isProtocolFeeWithdrawn, Errors.ProtocolFeeAlreadyWithdrawn());
 
-        uint256 protocolFees = _epochFeesAccrued[epoch].feesAccruedToProtocol;
+        // cache pointer
+        DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[epoch];
+
+        require(!epochFees.isProtocolFeeWithdrawn, Errors.ProtocolFeeAlreadyWithdrawn());
+
+        uint256 protocolFees = epochFees.feesAccruedToProtocol;
         require(protocolFees > 0, Errors.ZeroProtocolFee());
 
         // transfer protocol fees to treasury
@@ -687,16 +730,25 @@ contract PaymentsController is EIP712, Pausable {
         require(treasury != address(0), Errors.InvalidAddress());
         _usd8().safeTransfer(treasury, protocolFees);
 
-        _epochFeesAccrued[epoch].isProtocolFeeWithdrawn = true;
+        epochFees.isProtocolFeeWithdrawn = true;
 
         emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
     }
 
+    /**
+     * @notice Allows withdrawal of voters fees only after the specified epoch has ended.
+     * @dev Voters fees for a given epoch can be withdrawn once per epoch, after the epoch is finalized.
+     * @param epoch The epoch number for which to withdraw voters fees.
+     */
     function withdrawVotersFees(uint256 epoch) external onlyAssetManager whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
-        require(!_epochFeesAccrued[epoch].isVotersFeeWithdrawn, Errors.VotersFeeAlreadyWithdrawn());
 
-        uint256 votersFees = _epochFeesAccrued[epoch].feesAccruedToVoters;
+        // cache pointer
+        DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[epoch];
+
+        require(!epochFees.isVotersFeeWithdrawn, Errors.VotersFeeAlreadyWithdrawn());
+
+        uint256 votersFees = epochFees.feesAccruedToVoters;
         require(votersFees > 0, Errors.ZeroVotersFee());
 
         // transfer voters fees to treasury
@@ -704,7 +756,7 @@ contract PaymentsController is EIP712, Pausable {
         require(treasury != address(0), Errors.InvalidAddress());
         _usd8().safeTransfer(treasury, votersFees);
 
-        _epochFeesAccrued[epoch].isVotersFeeWithdrawn = true;
+        epochFees.isVotersFeeWithdrawn = true;
 
         emit Events.VotersFeesWithdrawn(epoch, votersFees);
     }
@@ -740,7 +792,13 @@ contract PaymentsController is EIP712, Pausable {
     }  
 
 
-    // exfil verifiers' balance to their stored addresses
+    /**
+     * @notice Transfers all verifiers' remaining balances to their registered asset addresses during emergency exit.
+     * @dev Callable only by the emergency exit handler when the contract is frozen.
+     *      Iterates through the provided verifierIds, transferring each non-zero balance to the corresponding asset address.
+     *      Skips verifiers with zero balance.
+     * @param verifierIds Array of verifier identifiers whose balances will be exfil'd.
+     */
     function emergencyExitVerifiers(bytes32[] calldata verifierIds) external onlyEmergencyExitHandler {
         if(isFrozen == 0) revert Errors.NotFrozen();
         if(verifierIds.length == 0) revert Errors.InvalidArray();
@@ -748,12 +806,15 @@ contract PaymentsController is EIP712, Pausable {
         // if issuerId is given, will retrieve either empty or wrong struct
         for(uint256 i; i < verifierIds.length; ++i) {
             
+            // cache pointer
+            DataTypes.Verifier storage verifierPtr = _verifiers[verifierIds[i]];
+
             // get balance: if 0, skip
-            uint256 verifierBalance = _verifiers[verifierIds[i]].currentBalance;
+            uint256 verifierBalance = verifierPtr.currentBalance;
             if(verifierBalance == 0) continue;
 
             // get asset address
-            address verifierAssetAddress = _verifiers[verifierIds[i]].assetAddress;
+            address verifierAssetAddress = verifierPtr.assetAddress;
 
             // transfer balance to verifier
             _usd8().safeTransfer(verifierAssetAddress, verifierBalance);
@@ -762,20 +823,29 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.EmergencyExitVerifiers(verifierIds);
     }
 
-    // exfil issuers' unclaimed fees to their stored addresses
+    /**
+     * @notice Transfers all issuers' unclaimed fees to their registered asset addresses during emergency exit.
+     * @dev Callable only by the emergency exit handler when the contract is frozen.
+     *      Iterates through the provided issuerIds, transferring each non-zero balance to the corresponding asset address.
+     *      Skips issuers with zero balance.
+     * @param issuerIds Array of issuer identifiers whose balances will be exfil'd.
+     */
     function emergencyExitIssuers(bytes32[] calldata issuerIds) external onlyEmergencyExitHandler {
         if(isFrozen == 0) revert Errors.NotFrozen();
         if(issuerIds.length == 0) revert Errors.InvalidArray();
 
-        // if verifierId is given, will retrieve either empty or wrong struct
+        // if issuerId is given, will retrieve either empty or wrong struct
         for(uint256 i; i < issuerIds.length; ++i) {
+            
+            // cache pointer
+            DataTypes.Issuer storage issuerPtr = _issuers[issuerIds[i]];
 
             // get unclaimed fees: if 0, skip
-            uint256 issuerBalance = _issuers[issuerIds[i]].totalNetFeesAccrued - _issuers[issuerIds[i]].totalClaimed;
+            uint256 issuerBalance = issuerPtr.totalNetFeesAccrued - issuerPtr.totalClaimed;
             if(issuerBalance == 0) continue;
 
             // get asset address
-            address issuerAssetAddress = _issuers[issuerIds[i]].assetAddress;
+            address issuerAssetAddress = issuerPtr.assetAddress;
 
             // transfer balance to issuer
             _usd8().safeTransfer(issuerAssetAddress, issuerBalance);
