@@ -569,7 +569,7 @@ contract VotingController is Pausable {
 
     //TODO: subsidies claimable based off their expenditure accrued for a pool-epoch
     //REVIEW: Subsidies are paid out to the `assetAddress` of the verifier, so it is required that, `assetAddress` calls `VotingController.claimSubsidies`
-    function claimSubsidies(uint128 epoch, bytes32 verifierId, bytes32[] calldata poolIds) external whenNotPaused {
+    function claimSubsidies(uint256 epoch, bytes32 verifierId, bytes32[] calldata poolIds) external whenNotPaused {
         require(poolIds.length > 0, Errors.InvalidArray());
         
         // epoch must be finalized
@@ -880,12 +880,27 @@ contract VotingController is Pausable {
 //-------------------------------onlyVotingControllerAdmin: pool functions----------------------------------------------------
 
     /**
-     * @notice Creates a new pool with a unique poolId.
-     * @dev Only callable by VotingController admin. The poolId is generated to be unique.
-     * @return poolId The unique identifier assigned to the new pool.
+     * @notice Creates a new voting pool and returns its unique identifier.
+     * @dev Callable only by VotingController admin (cron job role). Ensures poolId uniqueness by regenerating if a collision is detected.
+     *      Pool creation is blocked during active end-of-epoch operations to maintain protocol consistency.
+     *      Increments the global pool counter on successful creation.
+     * @return poolId The unique identifier assigned to the newly created pool.
      */
     function createPool() external onlyCronJob whenNotPaused returns (bytes32) {
-           
+        // prevent pool creation during active epoch finalization
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        require(!epochs[currentEpoch].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
+
+        // ensure for previous epoch, subsidies are set or epoch is finalized
+        if (currentEpoch > 0) {
+            uint256 previousEpoch = currentEpoch - 1;
+            require(
+                epochs[previousEpoch].isFullyFinalized || 
+                epochs[previousEpoch].isSubsidiesSet,
+                Errors.EndOfEpochOpsUnderway()
+            );
+        }
+
         // generate issuerId
         bytes32 poolId;
         {
@@ -908,25 +923,37 @@ contract VotingController is Pausable {
     }
 
     /**
-     * @notice Removes a pool from the protocol.
-     * @dev Only callable by VotingController admin.
+     * @notice Removes a voting pool from the protocol.
+     * @dev Callable only by cron job role.
      *
-     * Pool removal is only permitted before `depositSubsidies()` is called for the current epoch.
-     * 
-     * This restriction prevents race conditions with `TOTAL_NUMBER_OF_POOLS` during end-of-epoch operations.
-     * If a pool is removed while `finalizeEpoch` is running, the check `poolsFinalized == TOTAL_NUMBER_OF_POOLS` could fail,
-     * potentially leaving the epoch in an unfinalizable state.
+     * Pool removal is restricted to periods before `depositEpochSubsidies()` is called for the current epoch.
+     * This prevents inconsistencies in `TOTAL_NUMBER_OF_POOLS` during end-of-epoch operations.
+     * Removing a pool after subsidies are deposited could cause the epoch finalization check
+     * (`poolsFinalized == TOTAL_NUMBER_OF_POOLS`) to fail, blocking epoch finalization.
      *
-     * To ensure protocol safety, pool removal is blocked once subsidies are deposited, signaling that end-of-epoch
-     * operations are underway and pool set must remain static.
+     * Once subsidies are deposited for the current epoch, pool removal is blocked to maintain a static pool set
+     * during end-of-epoch processing.
      *
-     * @param poolId The unique identifier of the pool to remove.
+     * @param poolId Unique identifier of the pool to be removed.
      */
     function removePool(bytes32 poolId) external onlyCronJob whenNotPaused {
         require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-        
-        // pool removal not allowed before finalizeEpochRewardsSubsidies() - else, TOTAL_NUMBER_OF_POOLS will be off and epoch will be never finalized
-        require(!epochs[EpochMath.getCurrentEpochNumber()].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
+
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+
+        // pool removal not allowed before finalizeEpochRewardsSubsidies() is called
+        // else, TOTAL_NUMBER_OF_POOLS will be off and epoch will be never finalized
+        require(!epochs[currentEpoch].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
+
+        // ensure for previous epoch, subsidies are set or epoch is finalized
+        if (currentEpoch > 0) {
+            uint256 previousEpoch = currentEpoch - 1;
+            require(
+                epochs[previousEpoch].isFullyFinalized || 
+                epochs[previousEpoch].isSubsidiesSet,
+                Errors.EndOfEpochOpsUnderway()
+            );
+        }
 
         pools[poolId].isRemoved = true;
 
