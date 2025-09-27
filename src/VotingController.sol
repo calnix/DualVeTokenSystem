@@ -300,8 +300,8 @@ contract VotingController is Pausable {
         // collect registration fee & increment global counter
         uint256 registrationFee = REGISTRATION_FEE;
         if(registrationFee > 0) {
-            _moca().safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
             TOTAL_REGISTRATION_FEES += registrationFee;
+            _moca().safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
         }
 
         // register on VotingEscrowMoca | if delegate is already registered on VotingEscrowMoca -> reverts
