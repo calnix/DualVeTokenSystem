@@ -772,7 +772,7 @@ contract VotingController is Pausable {
      */
     function withdrawUnclaimedRewards(uint256 epoch) external onlyAssetManager whenNotPaused {
         // sanity check: withdraw delay must have passed
-        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
+        require(epoch > EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
         
         // sanity check: epoch must be finalized [pool exists implicitly]
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
@@ -799,7 +799,7 @@ contract VotingController is Pausable {
      */
     function withdrawUnclaimedSubsidies(uint256 epoch) external onlyAssetManager whenNotPaused {
         // sanity check: withdraw delay must have passed
-        require(epoch >= EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
+        require(epoch > EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
 
         // sanity check: epoch must be finalized
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
