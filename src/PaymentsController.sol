@@ -24,8 +24,7 @@ contract PaymentsController is EIP712, Pausable {
     using SafeERC20 for IERC20;
     using SignatureChecker for address;
 
-    // immutable
-    IAddressBook internal immutable _addressBook;
+    IAddressBook public immutable addressBook;
 
     // fees: 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint256 public PROTOCOL_FEE_PERCENTAGE;    
@@ -73,12 +72,12 @@ contract PaymentsController is EIP712, Pausable {
 
     // name: PaymentsController, version: 1
     constructor(
-        address addressBook, uint256 protocolFeePercentage, uint256 voterFeePercentage, uint256 delayPeriod, 
+        address addressBook_, uint256 protocolFeePercentage, uint256 voterFeePercentage, uint256 delayPeriod, 
         string memory name, string memory version) EIP712(name, version) {
 
         // check if addressBook is valid
-        require(addressBook != address(0), Errors.InvalidAddress());
-        _addressBook = IAddressBook(addressBook);
+        require(addressBook_ != address(0), Errors.InvalidAddress());
+        addressBook = IAddressBook(addressBook_);
       
         // check if protocol fee percentage is valid
         require(protocolFeePercentage < Constants.PRECISION_BASE, Errors.InvalidPercentage());
@@ -667,11 +666,11 @@ contract PaymentsController is EIP712, Pausable {
     }
 
     function _usd8() internal view returns (IERC20) {
-        return IERC20(_addressBook.getUSD8Token());
+        return IERC20(addressBook.getUSD8Token());
     }
     
     function _moca() internal view returns (IERC20){
-        return IERC20(_addressBook.getMoca());
+        return IERC20(addressBook.getMoca());
     }
 
 //-------------------------------admin: update functions-----------------------------------------
@@ -746,7 +745,7 @@ contract PaymentsController is EIP712, Pausable {
         require(protocolFees > 0, Errors.ZeroProtocolFee());
 
         // get treasury address
-        address treasury = _addressBook.getTreasury();
+        address treasury = addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
 
         // update flag
@@ -773,7 +772,7 @@ contract PaymentsController is EIP712, Pausable {
         require(votersFees > 0, Errors.ZeroVotersFee());
 
         // get treasury address
-        address treasury = _addressBook.getTreasury();
+        address treasury = addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
 
         // update flag
@@ -880,34 +879,35 @@ contract PaymentsController is EIP712, Pausable {
 //------------------------------- modifiers -------------------------------------------------------
 
     modifier onlyMonitor() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isMonitor(msg.sender), "Only callable by Monitor");
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
+        require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
         _;
     }
 
     modifier onlyPaymentsAdmin() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isPaymentsControllerAdmin(msg.sender), "Only callable by Payments Admin");
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
+        require(accessController.isPaymentsControllerAdmin(msg.sender), Errors.OnlyCallableByPaymentsControllerAdmin());
         _;
     }
 
     modifier onlyGlobalAdmin() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isGlobalAdmin(msg.sender), "Only callable by Global Admin");
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
+        require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
         _;
     }   
 
     modifier onlyAssetManager() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isAssetManager(msg.sender), "Only callable by Asset Manager");
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
+        require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
         _;
     }
 
     modifier onlyEmergencyExitHandler() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
-        require(accessController.isEmergencyExitHandler(msg.sender), "Only callable by Emergency Exit Handler");
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
+        require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
         _;
     }
+
 
 //-------------------------------view functions---------------------------------------------
    
@@ -916,14 +916,6 @@ contract PaymentsController is EIP712, Pausable {
         // verifiers's asset address must be the caller of VotingController.claimSubsidies
         require(caller == _verifiers[verifierId].assetAddress, Errors.InvalidCaller());
         return (_epochPoolVerifierSubsidies[epoch][poolId][verifierId], _epochPoolSubsidies[epoch][poolId]);
-    }
-
-    /**
-     * @notice Returns the address book.
-     * @return addressBook The address book.
-     */
-    function getAddressBook() external view returns (IAddressBook) {
-        return _addressBook;
     }
 
     /**

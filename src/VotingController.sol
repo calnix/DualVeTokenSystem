@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
 // External: OZ
@@ -18,13 +18,20 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
 import {IPaymentsController} from "./interfaces/IPaymentsController.sol";
 import {IVotingEscrowMoca} from "./interfaces/IVotingEscrowMoca.sol";
 
-//TODO: standardize naming conventions: {subsidy,incentive}
+/**
+ * @title VotingController
+ * @author Calnix [@cal_nix]
+ * @notice Central contract managing voting, delegation, and related reward distribution.
+ * @dev Coordinates voting, delegation, pool management, and reward/subsidy flows. 
+ *      Integrates with external controllers and enforces protocol-level access and safety checks.
+ */
+
 
 contract VotingController is Pausable {
     using SafeERC20 for IERC20;
 
     // protocol yellow pages
-    IAddressBook internal immutable _addressBook;
+    IAddressBook public immutable addressBook;
     
     // safety check
     uint256 public TOTAL_NUMBER_OF_POOLS;
@@ -83,11 +90,11 @@ contract VotingController is Pausable {
 
 //-------------------------------constructor------------------------------------------
 
-    constructor(address addressBook, uint256 registrationFee, uint256 maxDelegateFeePct, uint256 delayDuration) {
-        require(addressBook != address(0), Errors.InvalidAddress());
+    constructor(address addressBook_, uint256 registrationFee, uint256 maxDelegateFeePct, uint256 delayDuration) {
+        require(addressBook_ != address(0), Errors.InvalidAddress());
         require(registrationFee > 0, Errors.InvalidAmount());
         
-        _addressBook = IAddressBook(addressBook);
+        addressBook = IAddressBook(addressBook_);
 
         // initial unclaimed delay & fee increase delay
         require(delayDuration > 0, Errors.InvalidDelayPeriod());
@@ -590,7 +597,7 @@ contract VotingController is Pausable {
             // get verifier's accrued subsidies for {pool, epoch} & pool's total accrued subsidies for the epoch
             (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) // these are in USD8, 1e6 precision
                 // reverts if msg.sender is not the verifierId's asset address
-                = IPaymentsController(_addressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifierId, msg.sender);
+                = IPaymentsController(addressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifierId, msg.sender);
 
             // poolAccruedSubsidies == 0 will revert on division; verifierAccruedSubsidies == 0 will be skipped | no need for checks
 
@@ -781,7 +788,7 @@ contract VotingController is Pausable {
         uint256 unclaimed = epochs[epoch].totalRewardsAllocated - epochs[epoch].totalRewardsClaimed;
         require(unclaimed > 0, Errors.NoUnclaimedRewardsToWithdraw());
 
-        address treasury = _addressBook.getTreasury();
+        address treasury = addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
         
         _esMoca().safeTransfer(treasury, unclaimed);
@@ -808,7 +815,7 @@ contract VotingController is Pausable {
         uint256 unclaimedSubsidies = epochs[epoch].totalSubsidiesDeposited - epochs[epoch].totalSubsidiesClaimed;
         require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
 
-        address treasury = _addressBook.getTreasury();
+        address treasury = addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
 
         // transfer esMoca to admin/deposit(?)
@@ -824,7 +831,7 @@ contract VotingController is Pausable {
         uint256 claimable = TOTAL_REGISTRATION_FEES - REGISTRATION_FEES_CLAIMED;
         require(claimable > 0, Errors.InvalidAmount());
 
-        address treasury = _addressBook.getTreasury();
+        address treasury = addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
 
         _moca().safeTransfer(treasury, claimable);
@@ -1023,7 +1030,7 @@ contract VotingController is Pausable {
             delegatesEpochPoolData[epoch][poolId][delegate].totalRewards = delegatePoolRewards;
 
             // fetch: number of votes user delegated, to this delegate & the total votes managed by the delegate
-            uint128 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(_addressBook.getVotingEscrowMoca()).getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
+            uint128 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(addressBook.getVotingEscrowMoca()).getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
             uint128 delegateTotalVotesForEpoch = delegateEpochData[epoch][delegate].totalVotesSpent;
 
             // calc. user's gross rewards for the pool
@@ -1077,61 +1084,68 @@ contract VotingController is Pausable {
     }
 
 
-    function _veMoca() internal view returns (IVotingEscrowMoca){
-        return IVotingEscrowMoca(_addressBook.getVotingEscrowMoca());
+    function _veMoca() internal view returns (IVotingEscrowMoca) {
+        address veMoca = addressBook.getVotingEscrowMoca();
+        require(veMoca != address(0), Errors.InvalidAddress());
+        return IVotingEscrowMoca(veMoca);
     }
 
-    function _esMoca() internal view returns (IERC20){
-        return IERC20(_addressBook.getEscrowedMoca());
+    function _esMoca() internal view returns (IERC20) {
+        address esMoca = addressBook.getEscrowedMoca();
+        require(esMoca != address(0), Errors.InvalidAddress());
+        return IERC20(esMoca);
     }
 
-    function _moca() internal view returns (IERC20){
-        return IERC20(_addressBook.getMoca());
+    function _moca() internal view returns (IERC20) {
+        address moca = addressBook.getMoca();
+        require(moca != address(0), Errors.InvalidAddress());
+        return IERC20(moca);
     }
 
 //-------------------------------Modifiers---------------------------------------------------------------
     
     // creating pools, removing pools
     modifier onlyCronJob() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
         _;
     }
 
     // for setting contract params
     modifier onlyVotingControllerAdmin() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isVotingControllerAdmin(msg.sender), Errors.OnlyCallableByVotingControllerAdmin());
         _;
     }
 
     // for depositing/withdrawing assets [depositSubsidies(), finalizeEpoch(), withdrawUnclaimedX()]
     modifier onlyAssetManager() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
         _;
     }
 
     // pause
     modifier onlyMonitor() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
         _;
     }
 
     // for unpause + freeze 
     modifier onlyGlobalAdmin() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
         _;
     }   
     
     // to exfil assets, when frozen
     modifier onlyEmergencyExitHandler() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
         _;
     }
+
 
 //-------------------------------risk functions----------------------------------------------------------
 
@@ -1175,7 +1189,7 @@ contract VotingController is Pausable {
         if(isFrozen == 0) revert Errors.NotFrozen();
 
         // get treasury address
-        address treasury = _addressBook.getTreasury();
+        address treasury = addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
 
         // exfil esMoca [rewards + subsidies]
@@ -1191,10 +1205,6 @@ contract VotingController is Pausable {
 
 
 //-------------------------------view functions-----------------------------------------------------------
-
-    function getAddressBook() external view returns (IAddressBook) {
-        return _addressBook;
-    }
 
     /**
      * @notice Returns the gross rewards mapping for a user-delegate pair for a given epoch.

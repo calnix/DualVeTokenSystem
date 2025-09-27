@@ -9,7 +9,6 @@ import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 // libraries
 import {DataTypes} from "./libraries/DataTypes.sol";
 import {Constants} from "./libraries/Constants.sol";
-
 import {Errors} from "./libraries/Errors.sol";
 import {Events} from "./libraries/Events.sol";
 
@@ -28,8 +27,7 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
 contract EscrowedMoca is ERC20, Pausable {
     using SafeERC20 for IERC20;
 
-    // immutable
-    IAddressBook public immutable _addressBook;
+    IAddressBook public immutable addressBook;
 
     uint256 public TOTAL_MOCA_ESCROWED;
 
@@ -60,10 +58,10 @@ contract EscrowedMoca is ERC20, Pausable {
 
 //-------------------------------Constructor------------------------------------------
 
-    constructor(address addressBook, uint256 votersPenaltySplit) ERC20("esMoca", "esMoca") {    
+    constructor(address addressBook_, uint256 votersPenaltySplit) ERC20("esMoca", "esMoca") {    
         
-        require(addressBook != address(0), Errors.InvalidAddress());
-        _addressBook = IAddressBook(addressBook);
+        require(addressBook_ != address(0), Errors.InvalidAddress());
+        addressBook = IAddressBook(addressBook_);
         
         require(votersPenaltySplit > 0, Errors.InvalidPercentage());
         require(votersPenaltySplit <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
@@ -371,45 +369,46 @@ contract EscrowedMoca is ERC20, Pausable {
 
     // get moca token address
     function _moca() internal view returns (IERC20){
-        return IERC20(_addressBook.getMoca());
+        return IERC20(addressBook.getMoca());
     }
 
 //-------------------------------Modifiers---------------------------------------------------------------
     
     // for setting contract params
     modifier onlyEscrowedMocaAdmin() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isEscrowedMocaAdmin(msg.sender), Errors.OnlyCallableByEscrowedMocaAdmin());
         _;
     }
 
     // for depositing/withdrawing assets [stakeOnBehalf(), ]
     modifier onlyAssetManager() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
         _;
     }
 
     // pause
     modifier onlyMonitor() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
         _;
     }
 
     // for unpause + freeze 
     modifier onlyGlobalAdmin() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
         _;
     }   
     
     // to exfil assets, when frozen
     modifier onlyEmergencyExitHandler() {
-        IAccessController accessController = IAccessController(_addressBook.getAccessController());
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
         _;
     }
+
 
 //-------------------------------Transfer ERC20 Overrides-----------------------------------------
     
@@ -482,7 +481,7 @@ contract EscrowedMoca is ERC20, Pausable {
         if(isFrozen == 0) revert Errors.NotFrozen();
         
         // get treasury address
-        address treasury = _addressBook.getTreasury();
+        address treasury = addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
 
         // exfil moca escrowed into contract

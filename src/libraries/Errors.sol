@@ -32,7 +32,7 @@ library Errors {
 
 // --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();
-    
+    error IsNonTransferable();
 
 
 // --------- VotingController.sol ---------
@@ -90,11 +90,15 @@ library Errors {
 
 // --------- AccessController.sol ---------
     error CallerNotRiskOrPoolAdmin();
-    error OnlyCallableByVotingControllerAdmin();
     error OnlyCallableByAssetManager();
     error OnlyCallableByMonitor();
     error OnlyCallableByCronJob();
     error OnlyCallableByGlobalAdmin();
     error OnlyCallableByEmergencyExitHandler();
     error OnlyCallableByEscrowedMocaAdmin();
+    error OnlyCallableByVotingControllerAdmin();
+    error OnlyCallableByPaymentsControllerAdmin();
+
+    error OnlyCallableByVotingControllerContract();
+
 }

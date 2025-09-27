@@ -45,8 +45,9 @@ contract AddressBook is Ownable2Step, Pausable {
 
 // ------------------------------ Setters --------------------------------
 
+    //REVIEW
     function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner whenNotPaused {
-        // cannot set address for 0x00: DEFAULT_ADMIN_ROLE
+        // cannot change address for 0x00: DEFAULT_ADMIN_ROLE
         require(identifier != bytes32(0), "Invalid identifier");
 
         require(registeredAddress != address(0), "Invalid address");
@@ -55,6 +56,7 @@ contract AddressBook is Ownable2Step, Pausable {
 
         emit Events.AddressSet(identifier, registeredAddress);
     }
+
 
     // specific to updating global admin
     function updateGlobalAdmin(address globalAdmin) external onlyOwner whenNotPaused {

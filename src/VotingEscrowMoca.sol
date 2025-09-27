@@ -2,9 +2,9 @@
 pragma solidity 0.8.27;
 
 // External: OZ
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
+import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
 import {EpochMath} from "./libraries/EpochMath.sol";
@@ -22,12 +22,11 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
  * @title VotingEscrowMoca
  * @author Calnix [@cal_nix]
  * @notice VotingEscrowMoca is a dual-token, quad-accounting type veToken system.
- * @dev
- *      - VotingEscrowMoca is a non-transferable token representing voting power.
- *      - The amount of veMOCA received increases with both the amount of MOCA locked and the length of the lock period, and decays linearly as the lock approaches expiry.
- *      - This contract supports delegation, historical checkpointing, and integration with protocol governance.
-*/
-
+ * @dev    Users lock MOCA or esMOCA to receive veMOCA, with voting power scaling by amount and lock duration.
+ *        The amount of veMOCA received increases with both the amount of MOCA locked and the length of the lock period, and decays linearly as the lock approaches expiry.
+ *        Implements quad-accounting for user, delegate, and global balances.
+ *        Integrates with external controllers and enforces protocol-level access and safety checks.
+*/  
 
 /** NOTE
     - operates on eTime as timestamp
@@ -36,22 +35,21 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
  */
 
 contract VotingEscrowMoca is ERC20, Pausable {
-        using SafeERC20 for IERC20;
+    using SafeERC20 for IERC20;
 
-        // protocol yellow pages
-        IAddressBook internal immutable _addressBook;
+    IAddressBook public immutable addressBook;
 
-        // global principal
-        uint256 public totalLockedMoca;
-        uint256 public totalLockedEsMoca;
+    // global principal
+    uint256 public totalLockedMoca;
+    uint256 public totalLockedEsMoca;
 
-        // global veBalance
-        DataTypes.VeBalance public veGlobal;
-        uint256 public lastUpdatedTimestamp;  
-        
-        uint256 public isFrozen;
+    // global veBalance
+    DataTypes.VeBalance public veGlobal;
+    uint256 public lastUpdatedTimestamp;  
+    
+    uint256 public isFrozen;
 
-//-------------------------------mapping-----------------------------------------------------
+//-------------------------------Mappings-----------------------------------------------------
 
         // lock
         mapping(bytes32 lockId => DataTypes.Lock lock) public locks;
@@ -83,16 +81,16 @@ contract VotingEscrowMoca is ERC20, Pausable {
         mapping(address user => mapping(address delegate => mapping(uint256 eTime => DataTypes.VeBalance veBalance))) public delegatedAggregationHistory; 
 
 
-//-------------------------------constructor-------------------------------------------------
+//-------------------------------Constructor-------------------------------------------------
 
-        constructor(address addressBook) ERC20("veMoca", "veMoca") {
-            _addressBook = IAddressBook(addressBook);
+        constructor(address addressBook_) ERC20("veMoca", "veMoca") {
+            addressBook = IAddressBook(addressBook_);
 
             // note: has to be done on AddressBook contract after deployment
-            //_addressBook.getAddress(Constants.VOTING_CONTROLLER);
+            //addressBook.getAddress(Constants.VOTING_CONTROLLER);
         }
 
-//-------------------------------user functions---------------------------------------------
+//-------------------------------User functions---------------------------------------------
 
         // note: locks are booked to currentEpochStart
         /**
@@ -259,7 +257,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             if(lock.esMoca > 0) _esMocaToken().safeTransfer(lock.owner, lock.esMoca);        
         }
 
-//-------------------------------user delegate functions-------------------------------------
+//-------------------------------User Delegate functions-------------------------------------
 
         /** note: consider creating _updateAccount(). then can streamline w/ _updateGlobal, _updateAccount(user), _updateAccount(delegate) | 
             but there must be a strong case for need to have _updateAccount as a standalone beyond delegate
@@ -832,40 +830,40 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
         function _mocaToken() internal view returns (IERC20){
-            return IERC20(_addressBook.getMoca());
+            return IERC20(addressBook.getMoca());
         }
 
         function _esMocaToken() internal view returns (IERC20){
-            return IERC20(_addressBook.getEscrowedMoca());
+            return IERC20(addressBook.getEscrowedMoca());
         }
 
 //-------------------------------Modifiers---------------------------------------------------------------
 
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyMonitorRole(){
-            IAccessController accessController = IAccessController(_addressBook.getAccessController());
-            require(accessController.isMonitor(msg.sender), "Caller not monitor");
+            IAccessController accessController = IAccessController(addressBook.getAccessController());
+            require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
             _;
         }
 
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyCronJobRole() {
-            IAccessController accessController = IAccessController(_addressBook.getAccessController());
-            require(accessController.isCronJob(msg.sender), "Caller not cron job");
+            IAccessController accessController = IAccessController(addressBook.getAccessController());
+            require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
             _;
         }
 
         // not using internal function: only 2 occurrences of this modifier
         modifier onlyGlobalAdminRole(){
-            IAccessController accessController = IAccessController(_addressBook.getAccessController());
-            require(accessController.isGlobalAdmin(msg.sender), "Caller not global admin");
+            IAccessController accessController = IAccessController(addressBook.getAccessController());
+            require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
             _;
         }
         
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyEmergencyExitHandlerRole(){
-            IAccessController accessController = IAccessController(_addressBook.getAccessController());
-            require(accessController.isEmergencyExitHandler(msg.sender), "Caller not emergency exit");
+            IAccessController accessController = IAccessController(addressBook.getAccessController());
+            require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
             _;
         }
 
@@ -874,8 +872,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // not using internal function: only 2 occurrences of this modifier
         // forge-lint: disable-next-item(all)
         modifier onlyVotingControllerContract() {
-            address votingController = _addressBook.getVotingController();
-            require(msg.sender == votingController, "Caller not voting controller");
+            address votingController = addressBook.getVotingController();
+            require(msg.sender == votingController, Errors.OnlyCallableByVotingControllerContract());
             _;
         }
 
@@ -884,16 +882,12 @@ contract VotingEscrowMoca is ERC20, Pausable {
         //TODO: white-list transfers? || incorporate ACL / or new layer for token transfers
 
         function transfer(address, uint256) public pure override returns (bool) {
-            revert("veMOCA is non-transferable");
+            revert Errors.IsNonTransferable();
         }
 
         function transferFrom(address, address, uint256) public pure override returns (bool) {
-            revert("veMOCA is non-transferable");
+            revert Errors.IsNonTransferable();
         }
-
-//-------------------------------Kill-switch override funtions-----------------------------------------------
-
-
 
 //-------------------------------Risk management--------------------------------------------------------
 
