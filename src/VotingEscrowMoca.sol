@@ -509,8 +509,11 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // lock must last for at least 2 Epochs: to meaningfully vote for the next epoch [we are sure] 
         function _createLockFor(address user, uint128 expiry, uint256 moca, uint256 esMoca, address delegate) internal returns (bytes32) {
             require(user != address(0), Errors.InvalidUser());
-            require(moca > 0 || esMoca > 0, Errors.InvalidAmount());
             require(EpochMath.isValidEpochTime(expiry), Errors.InvalidExpiry());
+
+            // minimum total amount to avoid flooring to zero
+            uint256 totalAmount = moca + esMoca;
+            require(totalAmount >= Constants.MIN_LOCK_AMOUNT, Errors.InvalidAmount());
 
             require(expiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, Errors.InvalidLockDuration());
             require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, Errors.InvalidLockDuration());
@@ -540,7 +543,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 DataTypes.Lock memory newLock;
                     newLock.lockId = lockId; 
                     newLock.owner = user;
-                    newLock.delegate = delegate;                //note: we might be setting this to zero; but no point doing if(delegate != address(0))
+                    newLock.delegate = delegate;                //note: might be setting this to zero; but no point doing if(delegate != address(0))
                     newLock.moca = uint128(moca);
                     newLock.esMoca = uint128(esMoca);
                     newLock.expiry = expiry;
