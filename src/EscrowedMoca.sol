@@ -413,7 +413,6 @@ contract EscrowedMoca is ERC20, Pausable {
 
 //-------------------------------Transfer ERC20 Overrides-----------------------------------------
     
-    // Note: Transfer restrictions only validate the sender, not recipient
     /**
      * @notice Override ERC20 transfer function to restrict transfers to whitelisted addresses only.
      * @dev Only addresses in the whitelist can transfer esMoca; all others are blocked.
@@ -423,10 +422,10 @@ contract EscrowedMoca is ERC20, Pausable {
      */
     function transfer(address recipient, uint256 amount) public override whenNotPaused returns (bool) {
         require(whitelist[msg.sender], Errors.OnlyCallableByWhitelistedAddress());
+        require(whitelist[recipient], Errors.OnlyCallableByWhitelistedAddress()); 
         return super.transfer(recipient, amount);
     }
 
-    // Note: Transfer restrictions only validate the sender, not recipient
     /**
      * @notice Override the transferFrom function to restrict transfers to whitelisted addresses only.
      * @dev Only addresses in the whitelist can transfer esMoca; all others are blocked.
@@ -437,6 +436,7 @@ contract EscrowedMoca is ERC20, Pausable {
      */
     function transferFrom(address sender, address recipient, uint256 amount) public override whenNotPaused returns (bool) {
         require(whitelist[sender], Errors.OnlyCallableByWhitelistedAddress());
+        require(whitelist[recipient], Errors.OnlyCallableByWhitelistedAddress());
         return super.transferFrom(sender, recipient, amount);
     }
 
