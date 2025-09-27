@@ -9,10 +9,9 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 // libraries
 import {EpochMath} from "./libraries/EpochMath.sol";
 import {DataTypes} from "./libraries/DataTypes.sol";
-
 import {Errors} from "./libraries/Errors.sol";
 import {Events} from "./libraries/Events.sol";
-
+import {Constants} from "./libraries/Constants.sol";
 
 // interfaces
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
@@ -42,7 +41,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // protocol yellow pages
         IAddressBook internal immutable _addressBook;
 
-
         // global principal
         uint256 public totalLockedMoca;
         uint256 public totalLockedEsMoca;
@@ -51,9 +49,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
         DataTypes.VeBalance public veGlobal;
         uint256 public lastUpdatedTimestamp;  
         
-        uint256 internal _isFrozen;
+        uint256 public isFrozen;
 
-    //-------------------------------mapping-----------------------------------------------------
+//-------------------------------mapping-----------------------------------------------------
 
         // lock
         mapping(bytes32 lockId => DataTypes.Lock lock) public locks;
@@ -85,7 +83,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         mapping(address user => mapping(address delegate => mapping(uint256 eTime => DataTypes.VeBalance veBalance))) public delegatedAggregationHistory; 
 
 
-    //-------------------------------constructor-------------------------------------------------
+//-------------------------------constructor-------------------------------------------------
 
         constructor(address addressBook) ERC20("veMoca", "veMoca") {
             _addressBook = IAddressBook(addressBook);
@@ -94,7 +92,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             //_addressBook.getAddress(Constants.VOTING_CONTROLLER);
         }
 
-    //-------------------------------user functions---------------------------------------------
+//-------------------------------user functions---------------------------------------------
 
         // note: locks are booked to currentEpochStart
         /**
@@ -261,7 +259,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             if(lock.esMoca > 0) _esMocaToken().safeTransfer(lock.owner, lock.esMoca);        
         }
 
-    //-------------------------------user delegate functions-------------------------------------
+//-------------------------------user delegate functions-------------------------------------
 
         /** note: consider creating _updateAccount(). then can streamline w/ _updateGlobal, _updateAccount(user), _updateAccount(delegate) | 
             but there must be a strong case for need to have _updateAccount as a standalone beyond delegate
@@ -474,14 +472,14 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
 
-    //-------------------------------Admin function: createLockFor()---------------------------------------------
+//-------------------------------Admin function: createLockFor()---------------------------------------------
 
         // when creating lock onBehalfOf - we will not delegate for the user
         function createLockFor(address user, uint128 expiry, uint256 moca, uint256 esMoca) external onlyCronJobRole whenNotPaused returns (bytes32) { 
             return _createLockFor(user, expiry, moca, esMoca, address(0));
         }
 
-    //-------------------------------VotingController.sol functions------------------------------------------
+//-------------------------------VotingController.sol functions------------------------------------------
     
         // note: registration fees were collected by VotingController
         // require(delegate != address(0) not needed since external contract call
@@ -503,7 +501,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             emit Events.DelegateUnregistered(delegate);
         }
 
-    //-------------------------------Internal: update functions----------------------------------------------       
+//-------------------------------Internal: update functions----------------------------------------------       
         
         // delegate can be address(0)
         // lock must last for at least 2 Epochs: to meaningfully vote for the next epoch [we are sure] 
@@ -762,7 +760,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return newVeBalance;
         }
 
-    //-------------------------------Internal: library functions--------------------------------------------
+//-------------------------------Internal: library functions--------------------------------------------
 
         /**
          * @notice Removes expired lock contributions from a veBalance.
@@ -776,7 +774,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
          */
         function _subtractExpired(DataTypes.VeBalance memory a, uint256 expiringSlope, uint256 expiry) internal pure returns (DataTypes.VeBalance memory) {
             uint256 biasReduction = expiringSlope * expiry;
-            
+
             // defensive: to prevent underflow [should not be possible in practice]
             a.bias = a.bias > biasReduction ? a.bias - uint128(biasReduction) : 0;      // remove decayed ve
             a.slope = a.slope > expiringSlope ? a.slope - uint128(expiringSlope) : 0; // remove expiring slopes
@@ -841,7 +839,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return IERC20(_addressBook.getEscrowedMoca());
         }
 
-    //-------------------------------Modifiers---------------------------------------------------------------
+//-------------------------------Modifiers---------------------------------------------------------------
 
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyMonitorRole(){
@@ -881,7 +879,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             _;
         }
 
-    //-------------------------------Block: transfer/transferFrom -----------------------------------------
+//-------------------------------Block: transfer/transferFrom -----------------------------------------
 
         //TODO: white-list transfers? || incorporate ACL / or new layer for token transfers
 
@@ -893,14 +891,17 @@ contract VotingEscrowMoca is ERC20, Pausable {
             revert("veMOCA is non-transferable");
         }
 
+//-------------------------------Kill-switch override funtions-----------------------------------------------
 
-    //-------------------------------Risk management--------------------------------------------------------
+
+
+//-------------------------------Risk management--------------------------------------------------------
 
         /**
         * @notice Pause contract. Cannot pause once frozen
         */
         function pause() external whenNotPaused onlyMonitorRole {
-            if(_isFrozen == 1) revert Errors.IsFrozen(); 
+            if(isFrozen == 1) revert Errors.IsFrozen(); 
             _pause();
         }
 
@@ -908,7 +909,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         * @notice Unpause pool. Cannot unpause once frozen
         */
         function unpause() external whenPaused onlyGlobalAdminRole {
-            if(_isFrozen == 1) revert Errors.IsFrozen(); 
+            if(isFrozen == 1) revert Errors.IsFrozen(); 
             _unpause();
         }
 
@@ -919,24 +920,27 @@ contract VotingEscrowMoca is ERC20, Pausable {
         *      Enables emergencyExit() to be called.
         */
         function freeze() external whenPaused onlyGlobalAdminRole {
-            if(_isFrozen == 1) revert Errors.IsFrozen();
+            if(isFrozen == 1) revert Errors.IsFrozen();
 
-            _isFrozen = 1;
+            isFrozen = 1;
             emit Events.ContractFrozen();
         }  
 
-        // return principals{esMoca,Moca} to users
-        // not callable by anyone: calling this fn arbitrarily on the basis of "frozen" is not a good idea
-        // only callable by emergency exit handler: timing of calling exit could be critical
-        // disregard making updates to the contract: no need to update anything; system has failed. leave it as is.
-        // focus purely on returning principals
+        /**
+         * @notice Returns principal tokens (esMoca, Moca) to users for specified locks during emergency exit.
+         * @dev Only callable by the Emergency Exit Handler when the contract is frozen.
+         *      Ignores all contract state updates except returning principals; assumes system failure.
+         *      NOTE: Expectation is that VotingController is paused or undergoing emergencyExit(), to prevent phantom votes.
+                      Phantom votes since we do not update state when returning principals; too complicated and not worth the effort.
+         * @param lockIds Array of lock IDs for which principals should be returned.
+         * @custom:security No state updates except principal return; system is assumed failed.
+         */
         function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole {
-            require(_isFrozen == 1, "Contract is not frozen");
+            require(isFrozen == 1, "Contract is not frozen");
             require(lockIds.length > 0, "No locks provided");
 
             // get user's veBalance for each lock
             for(uint256 i; i < lockIds.length; ++i) {
-                // get lock
                 DataTypes.Lock memory lock = locks[lockIds[i]];
 
                 //sanity: lock exists + principals not returned
@@ -947,12 +951,12 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 _burn(lock.owner, uint256(_convertToVeBalance(lock).bias)); 
 
                 // transfer all tokens to the users
-                if(lock.moca > 0) _mocaToken().safeTransfer(lock.owner, uint256(lock.moca));
-                if(lock.esMoca > 0) _esMocaToken().safeTransfer(lock.owner, uint256(lock.esMoca));
+                if(lock.moca > 0) _mocaToken().safeTransfer(lock.owner, lock.moca);
+                if(lock.esMoca > 0) _esMocaToken().safeTransfer(lock.owner, lock.esMoca);
 
                 // mark exited 
-                //delete lock.moca;   --> @follow-up do we want to keep this for record?
-                //delete lock.esMoca; --> @follow-up point-in-time value when exit occurred; how much was repatriated
+                delete lock.moca; 
+                delete lock.esMoca;
                 lock.isUnlocked = true;
     
                 locks[lockIds[i]] = lock;
@@ -962,7 +966,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             emit Events.EmergencyExit(lockIds);
         }
 
-    //-------------------------------Internal: view-----------------------------------------------------
+//-------------------------------Internal: view-----------------------------------------------------
 
         // _updateGlobal, but w/o the storage changes
         function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint256 lastUpdatedAt, uint256 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {       
@@ -1030,15 +1034,18 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return veBalance;
         }
 
-    //-------------------------------view functions-----------------------------------------
+//-------------------------------View functions-----------------------------------------
         
         /**
-         * @notice Returns current total supply of voting escrowed tokens (veTokens), up to date with the latest epoch
-         * @dev Overrides the ERC20 `totalSupply()` 
-         * @dev Updates global veBalance to the current epoch before returning value
-         * @return Updated current total supply of veTokens
+         * @notice Returns the current total supply of voting escrowed tokens (veTokens), reflecting all decay and scheduled changes up to the latest epoch.
+         * @dev Overrides ERC20 `totalSupply()`. 
+         *      Ensures the global veBalance is updated to the current epoch before returning the value.
+         *      Returns zero if the contract is frozen.
+         * @return totalSupply_ The up-to-date total supply of veTokens at the current block timestamp.
          */
         function totalSupply() public view override returns (uint256) {
+            if (isFrozen == 1) return 0;
+
             // update global veBalance to current epoch
             DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, EpochMath.getCurrentEpochStart());
             // return value at current timestamp
@@ -1059,25 +1066,29 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _getValueAt(veGlobal_, time);
         }
 
-        //-------------------------------user: balanceOf, balanceOfAt -----------------------------------------
+//-------------------------------user: balanceOf, balanceOfAt -----------------------------------------
 
         /**
          * @notice Returns the current personal voting power (veBalance) of a user.
          * @dev Overrides the ERC20 `balanceOf()` function selector; therefore forced to return personal voting power.
+         *      Returns zero if the contract is frozen.
          * @param user The address of the user whose veBalance is being queried.
          * @return The current personal veBalance of the user.
          */
         function balanceOf(address user) public view override returns (uint256) {
+            if (isFrozen == 1) return 0;
             return balanceOf(user, false);  // Only personal voting power (non-delegated locks)
         }
 
         /**
          * @notice Returns the current voting power (veBalance) of a user
+         * @dev Returns zero if the contract is frozen.
          * @param user The address of the user whose veBalance is being queried.
          * @param forDelegated If true: delegated veBalance; if false: personal veBalance
          * @return The current veBalance of the user.
          */
         function balanceOf(address user, bool forDelegated) public view returns (uint256) {
+            if (isFrozen == 1) return 0;
             DataTypes.VeBalance memory veBalance = _viewAccount(user, forDelegated);
             return _getValueAt(veBalance, uint128(block.timestamp));
         }
@@ -1087,12 +1098,14 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @notice Historical search of a user's voting escrowed balance (veBalance) at a specific timestamp.
          * @dev veBalances are checkpointed per epoch. This function locates the closest epoch boundary to the input timestamp,
          *      then interpolates the veBalance from that checkpoint to the exact timestamp.
+         *      Returns zero if the contract is frozen.
          * @param user The address of the user whose veBalance is being queried.
          * @param time The historical timestamp for which the veBalance is requested.
          * @param forDelegated If true: delegated veBalance; if false: personal veBalance
          * @return The user's veBalance at the specified timestamp.
          */
         function balanceOfAt(address user, uint256 time, bool forDelegated) external view returns (uint256) {
+            if (isFrozen == 1) return 0;
             require(time <= block.timestamp, "Timestamp is in the future");
 
             // find the closest epoch boundary (eTime) that is not larger than the input time
@@ -1105,8 +1118,17 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _getValueAt(veBalance, time);
         }
 
-        // epoch: epoch Number
+        /**
+         * @notice Returns the user's voting power (veBalance) at the end of a specific epoch.
+         * @dev Useful for historical queries and reward calculations. Returns zero if the contract is frozen.
+         *      Returns zero if the contract is frozen.
+         * @param user The address of the user whose veBalance is being queried.
+         * @param epoch The epoch number for which the veBalance is requested.
+         * @param forDelegated If true: returns delegated veBalance; if false: returns personal veBalance.
+         * @return The user's veBalance at the end of the specified epoch.
+         */
         function balanceAtEpochEnd(address user, uint256 epoch, bool forDelegated) external view returns (uint256) {
+            if (isFrozen == 1) return 0;
             uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
             
             // get the appropriate veBalance at that epoch boundary | note: is epochEndTime inclusive?
@@ -1116,16 +1138,28 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _getValueAt(veBalance, epochEndTime);
         }
 
-        // note: used by VotingController.claimRewardsFromDelegate()
+        /**
+         * @notice Retrieves the delegated veBalance for a user and delegate at the end of a specific epoch.
+         * @dev Used by VotingController.claimRewardsFromDelegate() to determine the user's delegated voting power for reward calculations.
+         * @param user The address of the user whose delegated veBalance is being queried.
+         * @param delegate The address of the delegate to whom voting power was delegated.
+         * @param epoch The epoch number for which the delegated veBalance is requested.
+         * @return The delegated veBalance (bias) at the end of the specified epoch.
+         */
         function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint128) {
+            if (isFrozen == 1) return 0;
             uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
             return delegatedAggregationHistory[user][delegate][epochEndTime].bias;
         }
 
 
-    // ------ lock: getLockHistoryLength, getLockCurrentVeBalance, getLockCurrentVotingPower, getLockVeBalanceAt ---------
+//-------------------------------lock: getLockHistoryLength, getLockCurrentVeBalance, getLockCurrentVotingPower, getLockVeBalanceAt ---------
 
-        /// @notice Returns the number of checkpoints in the lock's history
+        /**
+         * @notice Returns the number of checkpoints in the lock's history.
+         * @param lockId The ID of the lock whose history length is being queried.
+         * @return The number of checkpoints in the lock's history.
+         */
         function getLockHistoryLength(bytes32 lockId) external view returns (uint256) {
             return lockHistory[lockId].length;
         }
@@ -1187,7 +1221,4 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _getValueAt(history[min].veBalance, timestamp);
         }
 
-        function isFrozen() external view returns (uint256) {
-            return _isFrozen;
-        }
-    }
+}

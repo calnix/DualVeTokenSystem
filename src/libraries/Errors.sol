@@ -59,6 +59,7 @@ library Errors {
     error NoVotesInPool();
     error NoSubsidiesForPool(); 
     error SubsidyAlreadyClaimed();
+    error RebaseOverflow();
     // depositSubsidies
     error CannotSetSubsidiesForFutureEpochs();
     error SubsidiesAlreadySet();
