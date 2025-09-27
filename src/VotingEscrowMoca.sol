@@ -1056,10 +1056,12 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @notice Returns the projected total supply of voting escrowed tokens (veTokens) at a future timestamp.
          * @dev Forward-looking calculation; does not perform a historical search.
          *      For historical queries, use the totalSupplyAt[] mapping, which is limited to epoch boundaries.
+         *      Returns zero if the contract is frozen.
          * @param time The future timestamp for which the total supply is projected.
          * @return The projected total supply of veTokens at the specified future timestamp.
          */
         function totalSupplyInFuture(uint128 time) public view returns (uint256) {
+            if (isFrozen == 1) return 0;
             require(time > block.timestamp, "Timestamp is in the past");
 
             DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, EpochMath.getEpochStartForTimestamp(time));
