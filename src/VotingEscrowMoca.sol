@@ -764,11 +764,22 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
     //-------------------------------Internal: library functions--------------------------------------------
 
-        // removed expired locks from veBalance | does not set lastUpdatedAt
-        // todo: do i really need safe cast? -> only removing what was added
+        /**
+         * @notice Removes expired lock contributions from a veBalance.
+         * @dev Overflow is only possible if 100% of MOCA is locked at the same expiry, which is infeasible in practice.
+         *      No SafeCast required as only previously added values are subtracted; 8.89B MOCA supply ensures overflow is impossible.
+         *      Does not update parameter: lastUpdatedAt.
+         * @param a The veBalance to update.
+         * @param expiringSlope The slope value expiring at the given expiry.
+         * @param expiry The timestamp at which the slope expires.
+         * @return The updated veBalance with expired values removed.
+         */
         function _subtractExpired(DataTypes.VeBalance memory a, uint256 expiringSlope, uint256 expiry) internal pure returns (DataTypes.VeBalance memory) {
-            a.bias -= uint128(expiringSlope * expiry);       // remove decayed ve
-            a.slope -= uint128(expiringSlope);                // remove expiring slopes
+            uint256 biasReduction = expiringSlope * expiry;
+            
+            // defensive: to prevent underflow [should not be possible in practice]
+            a.bias = a.bias > biasReduction ? a.bias - uint128(biasReduction) : 0;      // remove decayed ve
+            a.slope = a.slope > expiringSlope ? a.slope - uint128(expiringSlope) : 0; // remove expiring slopes
             return a;
         }
 
