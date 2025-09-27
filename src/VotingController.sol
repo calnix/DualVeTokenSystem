@@ -575,8 +575,6 @@ contract VotingController is Pausable {
         // epoch must be finalized
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
 
-        //TODO[maybe]: epoch: calculate subsidies if not already done; so can front-run/incorporate finalizeEpoch()
-
         uint128 totalSubsidiesClaimed;  
         for (uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
@@ -590,14 +588,24 @@ contract VotingController is Pausable {
             require(verifierEpochPoolData[epoch][poolId][msg.sender] == 0, Errors.SubsidyAlreadyClaimed());
 
             // get verifier's accrued subsidies for {pool, epoch} & pool's total accrued subsidies for the epoch
-            (uint128 verifierAccruedSubsidies, uint128 poolAccruedSubsidies) 
+            (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) // these are in USD8, 1e6 precision
                 // reverts if msg.sender is not the verifierId's asset address
                 = IPaymentsController(_addressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifierId, msg.sender);
-            
-            // calculate subsidy receivable 
-            // verifierAccruedSubsidies & poolAccruedSubsidies (USD8), 1e6 precision | poolAllocatedSubsidies (esMOCA), 1e18 precision
-            // subsidyReceivable (esMOCA), 1e18 precision
-            uint128 subsidyReceivable = (verifierAccruedSubsidies * poolAllocatedSubsidies) / poolAccruedSubsidies; 
+
+            // poolAccruedSubsidies == 0 will revert on division; verifierAccruedSubsidies == 0 will be skipped | no need for checks
+
+            // rebase USD8 (6dp) to match esMOCA (18dp) | * 1e12 to match precision
+            uint256 verifierAccruedSubsidies_18dp = verifierAccruedSubsidies * Constants.USD8_TO_18DP_SCALE;
+            uint256 poolAccruedSubsidies_18dp = poolAccruedSubsidies * Constants.USD8_TO_18DP_SCALE;
+
+            // sanity checks @follow-up : R has a pattern for this? check w/ him
+            require(verifierAccruedSubsidies_18dp <= type(uint128).max, Errors.RebaseOverflow());
+            require(poolAccruedSubsidies_18dp <= type(uint128).max, Errors.RebaseOverflow());
+
+            // calculate subsidy receivable (all in 18dp)
+            uint256 subsidyReceivable_256 = (verifierAccruedSubsidies_18dp * poolAllocatedSubsidies) / poolAccruedSubsidies_18dp;
+
+            uint128 subsidyReceivable = uint128(subsidyReceivable_256);
             if(subsidyReceivable == 0) continue;  // skip if floored to 0
 
             totalSubsidiesClaimed += subsidyReceivable;
