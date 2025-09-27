@@ -891,14 +891,10 @@ contract VotingController is Pausable {
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
         require(!epochs[currentEpoch].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
 
-        // ensure for previous epoch, subsidies are set or epoch is finalized
+        // ensure for previous epoch, epoch is finalized
         if (currentEpoch > 0) {
             uint256 previousEpoch = currentEpoch - 1;
-            require(
-                epochs[previousEpoch].isFullyFinalized || 
-                epochs[previousEpoch].isSubsidiesSet,
-                Errors.EndOfEpochOpsUnderway()
-            );
+            require(epochs[previousEpoch].isFullyFinalized, Errors.EndOfEpochOpsUnderway());
         }
 
         // generate issuerId
@@ -945,14 +941,10 @@ contract VotingController is Pausable {
         // else, TOTAL_NUMBER_OF_POOLS will be off and epoch will be never finalized
         require(!epochs[currentEpoch].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
 
-        // ensure for previous epoch, subsidies are set or epoch is finalized
+        // ensure for previous epoch, epoch is finalized
         if (currentEpoch > 0) {
             uint256 previousEpoch = currentEpoch - 1;
-            require(
-                epochs[previousEpoch].isFullyFinalized || 
-                epochs[previousEpoch].isSubsidiesSet,
-                Errors.EndOfEpochOpsUnderway()
-            );
+            require(epochs[previousEpoch].isFullyFinalized, Errors.EndOfEpochOpsUnderway());
         }
 
         pools[poolId].isRemoved = true;
