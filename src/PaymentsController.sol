@@ -745,14 +745,15 @@ contract PaymentsController is EIP712, Pausable {
         uint256 protocolFees = epochFees.feesAccruedToProtocol;
         require(protocolFees > 0, Errors.ZeroProtocolFee());
 
-        // transfer protocol fees to treasury
+        // get treasury address
         address treasury = _addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
-        _usd8().safeTransfer(treasury, protocolFees);
 
+        // update flag
         epochFees.isProtocolFeeWithdrawn = true;
-
         emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
+
+        _usd8().safeTransfer(treasury, protocolFees);
     }
 
     /**
@@ -771,14 +772,15 @@ contract PaymentsController is EIP712, Pausable {
         uint256 votersFees = epochFees.feesAccruedToVoters;
         require(votersFees > 0, Errors.ZeroVotersFee());
 
-        // transfer voters fees to treasury
+        // get treasury address
         address treasury = _addressBook.getTreasury();
         require(treasury != address(0), Errors.InvalidAddress());
-        _usd8().safeTransfer(treasury, votersFees);
 
+        // update flag
         epochFees.isVotersFeeWithdrawn = true;
-
         emit Events.VotersFeesWithdrawn(epoch, votersFees);
+
+        _usd8().safeTransfer(treasury, votersFees);
     }
 
 //------------------------------- risk ----------------------------------------------------------
