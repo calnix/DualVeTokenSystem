@@ -12,7 +12,7 @@ import {IAddressBook} from "./IAddressBook.sol";
 
 interface IPaymentsController {
 
-    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint256, uint256);
+    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint128, uint128);
     function getAddressBook() external view returns (IAddressBook);
     function getIssuer(bytes32 issuerId) external view returns (DataTypes.Issuer memory);
     function getSchema(bytes32 schemaId) external view returns (DataTypes.Schema memory);

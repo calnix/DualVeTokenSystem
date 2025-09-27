@@ -910,10 +910,10 @@ contract PaymentsController is EIP712, Pausable {
 //-------------------------------view functions---------------------------------------------
    
     // note: called by VotingController.claimSubsidies | no need for zero address check on the caller
-    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint256, uint256) {
+    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint128, uint128) {
         // verifiers's asset address must be the caller of VotingController.claimSubsidies
         require(caller == _verifiers[verifierId].assetAddress, Errors.InvalidCaller());
-        return (_epochPoolVerifierSubsidies[epoch][poolId][verifierId], _epochPoolSubsidies[epoch][poolId]);
+        return (uint128(_epochPoolVerifierSubsidies[epoch][poolId][verifierId]), uint128(_epochPoolSubsidies[epoch][poolId]));
     }
 
     /**

@@ -1103,7 +1103,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
         // note: used by VotingController.claimRewardsFromDelegate()
-        function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
+        function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint128) {
             uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
             return delegatedAggregationHistory[user][delegate][epochEndTime].bias;
         }

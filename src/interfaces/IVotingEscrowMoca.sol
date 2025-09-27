@@ -164,7 +164,7 @@ interface IVotingEscrowMoca {
      * @param epoch The epoch number for which the delegated balance is requested.
      * @return The user's specific delegated balance to the delegate at the end of the specified epoch.
      */
-    function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256);
+    function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint128);
 
     // =============================== Lock View Functions ===============================
 

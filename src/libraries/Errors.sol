@@ -44,6 +44,7 @@ library Errors {
     error PoolDoesNotExist();
     error PoolRemoved();
     error InsufficientVotes();
+    error InvalidPoolPair();
 
     // delegation
     error DelegateAlreadyRegistered();

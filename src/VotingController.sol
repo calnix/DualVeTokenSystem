@@ -72,7 +72,7 @@ contract VotingController is Pausable {
     // Delegate registration data + fee data
     mapping(address delegateAddr => DataTypes.Delegate delegate) public delegates;     
     // if 0: fee not set for that epoch      
-    mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFeePcts;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    mapping(address delegate => mapping(uint256 epoch => uint128 currentFeePct)) public delegateHistoricalFeePcts;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
 
     // REVIEW: only verifierEpochPoolData is mandatory. optional: drop verifierData & verifierEpochData, if we want to streamline storage. 
     // are there creative ways to have the optional mappings without the extra storage writes?
@@ -119,7 +119,7 @@ contract VotingController is Pausable {
         require(poolIds.length > 0, Errors.InvalidArray());
         require(poolIds.length == poolVotes.length, Errors.MismatchedArrayLengths());
 
-        // Cache epoch pointer
+        // get current epoch & cache epoch pointer
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();          
         DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
 
@@ -127,36 +127,34 @@ contract VotingController is Pausable {
         require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
-        mapping(uint256 epochNum => mapping(address user => DataTypes.Account accountEpochData)) storage accountEpochData;
-        mapping(uint256 epochNum => mapping(bytes32 poolId => mapping(address user => DataTypes.Account accountEpochPoolData))) storage accountEpochPoolData;
+        ( mapping(uint256 => mapping(address => DataTypes.Account)) storage accountEpochData,
+          mapping(uint256 => mapping(bytes32 => mapping(address => DataTypes.Account))) storage accountEpochPoolData 
+        ) 
+        = isDelegated ? (delegateEpochData, delegatesEpochPoolData) : (usersEpochData, usersEpochPoolData);
 
         // assign mappings
         if (isDelegated) {
             // sanity check: delegate must be registered [msg.sender is delegate]
             require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());
-            accountEpochData = delegateEpochData;
-            accountEpochPoolData = delegatesEpochPoolData;
 
             // fee check: if not set, set to current fee
             if(delegateHistoricalFeePcts[msg.sender][currentEpoch] == 0) {
                 bool pendingFeeApplied = _applyPendingFeeIfNeeded(msg.sender, currentEpoch);
+                
+                // if pending fee not applied, set to current fee
                 if(!pendingFeeApplied) {
                     delegateHistoricalFeePcts[msg.sender][currentEpoch] = delegates[msg.sender].currentFeePct;
                 }
             }
-
-        } else {
-            accountEpochData = usersEpochData;
-            accountEpochPoolData = usersEpochPoolData;
         }
 
         // votingPower: benchmarked to end of epoch [forward-decay]
         // get account's voting power[personal, delegated] and used votes
-        uint128 totalVotes = _veMoca().balanceAtEpochEnd(msg.sender, currentEpoch, isDelegated);
-        uint128 spentVotes = accountEpochData[currentEpoch][msg.sender].totalVotesSpent;
+        uint256 totalVotes = _veMoca().balanceAtEpochEnd(msg.sender, currentEpoch, isDelegated);
+        uint256 spentVotes = accountEpochData[currentEpoch][msg.sender].totalVotesSpent; // spentVotes is natively uint128, although expressed as uint256 here for ease of arithmetic
 
-        // check if account has available votes
-        uint128 availableVotes = totalVotes - spentVotes;
+        // check if account has available votes 
+        uint256 availableVotes = totalVotes - spentVotes;
         require(availableVotes > 0, Errors.NoAvailableVotes());
 
         // update votes at a pool+epoch level | account:{personal,delegate}
@@ -168,9 +166,12 @@ contract VotingController is Pausable {
             // sanity check: do not skip on 0 vote, as it indicates incorrect array inputs
             require(votes > 0, Errors.ZeroVotes()); 
             
+            // cache pool pointer
+            DataTypes.Pool storage poolPtr = pools[poolId];
+
             // sanity checks: pool exists, is active
-            require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            require(!pools[poolId].isRemoved, Errors.PoolRemoved());
+            require(poolPtr.poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(!poolPtr.isRemoved, Errors.PoolRemoved());
             
             // sanity check: available votes should not be exceeded
             totalNewVotes += votes;
@@ -181,15 +182,12 @@ contract VotingController is Pausable {
             epochPools[currentEpoch][poolId].totalVotes += votes;
 
             //increment pool votes at a global level
-            pools[poolId].totalVotes += votes;       
+            poolPtr.totalVotes += votes;       
         }
 
-        // increment epoch totalVotes
+        // increment epoch totalVotes | account:{personal,delegate}
         epochPtr.totalVotes += totalNewVotes;
-
-        // update account's epoch totalVotesSpent counter
         accountEpochData[currentEpoch][msg.sender].totalVotesSpent += totalNewVotes;
-        
         
         emit Events.Voted(currentEpoch, msg.sender, poolIds, poolVotes, isDelegated);
     }
@@ -212,32 +210,31 @@ contract VotingController is Pausable {
         require(length == dstPoolIds.length, Errors.MismatchedArrayLengths());
         require(length == poolVotes.length, Errors.MismatchedArrayLengths());
 
-        // epoch should not be finalized
+        // get current epoch & cache epoch pointer
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();          
-        require(!epochs[currentEpoch].isFullyFinalized, Errors.EpochFinalized());
+        DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
+
+        // epoch should not be finalized
+        require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
-        mapping(uint256 epoch => mapping(address user => DataTypes.Account accountEpochData)) storage accountEpochData;
-        mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address user => DataTypes.Account accountEpochPoolData))) storage accountEpochPoolData;
+        mapping(uint256 => mapping(bytes32 => mapping(address => DataTypes.Account))) storage accountEpochPoolData  
+        = isDelegated ? delegatesEpochPoolData : usersEpochPoolData;
 
         // assign mappings
         if (isDelegated) {
             // sanity check: delegate must be registered [msg.sender is delegate]
             require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());
-            accountEpochData = delegateEpochData;
-            accountEpochPoolData = delegatesEpochPoolData;
 
             // fee check: if not set, set to current fee
             if(delegateHistoricalFeePcts[msg.sender][currentEpoch] == 0) {
                 bool pendingFeeApplied = _applyPendingFeeIfNeeded(msg.sender, currentEpoch);
+                
+                // if pending fee not applied, set to current fee
                 if(!pendingFeeApplied) {
                     delegateHistoricalFeePcts[msg.sender][currentEpoch] = delegates[msg.sender].currentFeePct;
                 }
             }
-
-        } else {
-            accountEpochData = usersEpochData;
-            accountEpochPoolData = usersEpochPoolData;
         }
 
         // can migrate votes from inactive pool to active pool; but not vice versa
@@ -246,6 +243,10 @@ contract VotingController is Pausable {
             bytes32 srcPoolId = srcPoolIds[i];
             bytes32 dstPoolId = dstPoolIds[i];
             uint128 votesToMigrate = poolVotes[i];
+
+            // sanity check: do not skip on 0 vote, as it indicates incorrect array inputs
+            require(votesToMigrate > 0, Errors.ZeroVotes());
+            require(srcPoolId != dstPoolId, Errors.InvalidPoolPair());
 
             // Cache storage pointers
             DataTypes.Pool storage srcPoolPtr = pools[srcPoolId];
@@ -413,7 +414,7 @@ contract VotingController is Pausable {
         // epoch must be finalized
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
 
-        uint256 userTotalRewards;
+        uint128 userTotalRewards;
         for(uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
             
@@ -424,15 +425,15 @@ contract VotingController is Pausable {
             // Pool may be inactive but still have unclaimed prior rewards
 
             // Get user's pool votes and pool totals
-            uint256 userPoolVotes = usersEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent;
-            uint256 poolTotalVotes = epochPools[epoch][poolId].totalVotes;
-            uint256 totalRewards = epochPools[epoch][poolId].totalRewardsAllocated;
+            uint128 userPoolVotes = usersEpochPoolData[epoch][poolId][msg.sender].totalVotesSpent;
+            uint128 poolTotalVotes = epochPools[epoch][poolId].totalVotes;
+            uint128 totalRewards = epochPools[epoch][poolId].totalRewardsAllocated;
             
             // Skip pools with zero rewards or zero user votes
             if(totalRewards == 0 || userPoolVotes == 0) continue;
 
             // Calculate user's rewards for the pool (pro-rata)
-            uint256 userRewards = (userPoolVotes * totalRewards) / poolTotalVotes;
+            uint128 userRewards = (userPoolVotes * totalRewards) / poolTotalVotes;
             if(userRewards == 0) continue;
             
             // Set user's totalRewards for this pool
@@ -576,27 +577,27 @@ contract VotingController is Pausable {
 
         //TODO[maybe]: epoch: calculate subsidies if not already done; so can front-run/incorporate finalizeEpoch()
 
-        uint256 totalSubsidiesClaimed;  
+        uint128 totalSubsidiesClaimed;  
         for (uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
 
             // check if pool exists and has subsidies allocated
             require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            uint256 poolAllocatedSubsidies = epochPools[epoch][poolId].totalRewardsAllocated;
+            uint128 poolAllocatedSubsidies = epochPools[epoch][poolId].totalRewardsAllocated;
             require(poolAllocatedSubsidies > 0, Errors.NoSubsidiesForPool());
 
             // check if already claimed
             require(verifierEpochPoolData[epoch][poolId][msg.sender] == 0, Errors.SubsidyAlreadyClaimed());
 
             // get verifier's accrued subsidies for {pool, epoch} & pool's total accrued subsidies for the epoch
-            (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) 
+            (uint128 verifierAccruedSubsidies, uint128 poolAccruedSubsidies) 
                 // reverts if msg.sender is not the verifierId's asset address
                 = IPaymentsController(_addressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifierId, msg.sender);
             
             // calculate subsidy receivable 
             // verifierAccruedSubsidies & poolAccruedSubsidies (USD8), 1e6 precision | poolAllocatedSubsidies (esMOCA), 1e18 precision
             // subsidyReceivable (esMOCA), 1e18 precision
-            uint256 subsidyReceivable = (verifierAccruedSubsidies * poolAllocatedSubsidies) / poolAccruedSubsidies; 
+            uint128 subsidyReceivable = (verifierAccruedSubsidies * poolAllocatedSubsidies) / poolAccruedSubsidies; 
             if(subsidyReceivable == 0) continue;  // skip if floored to 0
 
             totalSubsidiesClaimed += subsidyReceivable;
@@ -636,7 +637,7 @@ contract VotingController is Pausable {
      * @param epoch The epoch number for which to deposit subsidies.
      * @param subsidies The total amount of esMOCA subsidies to deposit (1e18 precision).
      */
-    function depositEpochSubsidies(uint256 epoch, uint256 subsidies) external onlyCronJob whenNotPaused {
+    function depositEpochSubsidies(uint256 epoch, uint128 subsidies) external onlyCronJob whenNotPaused {
         //require(subsidies > 0, Errors.InvalidAmount()); --> subsidies can be 0
         require(epoch <= EpochMath.getCurrentEpochNumber(), Errors.CannotSetSubsidiesForFutureEpochs());
         
@@ -671,7 +672,7 @@ contract VotingController is Pausable {
     //Note: only callable once for each pool | rewards are referenced from PaymentsController | subsidies are referenced from PaymentsController
     //Review: str vs mem | uint128 vs uint256
     //note: only deposits rewards that can be claimed[poolRewards > 0 & poolVotes > 0]. therefore, sum of input rewards could be lesser than totalRewardsAllocated
-    function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint256[] calldata rewards) external onlyCronJob whenNotPaused {
+    function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint128[] calldata rewards) external onlyCronJob whenNotPaused {
         require(poolIds.length > 0, Errors.InvalidArray());
         require(poolIds.length == rewards.length, Errors.MismatchedArrayLengths());
 
@@ -689,10 +690,10 @@ contract VotingController is Pausable {
 
         // iterate through pools
         uint256 totalSubsidies;
-        uint256 totalRewards;
+        uint128 totalRewards;
         for (uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
-            uint256 poolRewards = rewards[i];       // can be 0  @follow-up why can it be 0?  so it can be marked processed
+            uint128 poolRewards = rewards[i];       // can be 0  @follow-up why can it be 0?  so it can be marked processed
 
             // cache: Pool storage pointers
             DataTypes.Pool storage poolPtr = pools[poolId];
@@ -703,16 +704,16 @@ contract VotingController is Pausable {
             require(!epochPoolPtr.isProcessed, Errors.PoolAlreadyProcessed());
             require(!poolPtr.isRemoved, Errors.PoolRemoved());
 
-            uint256 poolVotes = epochPoolPtr.totalVotes;
+            uint128 poolVotes = epochPoolPtr.totalVotes;
             
             // Calc. subsidies for each pool | if there are subsidies for epoch + pool has votes
             if(epochTotalSubsidiesDeposited > 0 && poolVotes > 0) {
                 
-                uint256 poolSubsidies = (poolVotes * epochPtr.totalSubsidiesDeposited) / epochPtr.totalVotes;
+                uint128 poolSubsidies = (poolVotes * epochPtr.totalSubsidiesDeposited) / epochPtr.totalVotes;
                 
                 // sanity check: poolSubsidies > 0; skip if floored to 0
                 if(poolSubsidies > 0) { 
-                    epochPoolPtr.totalSubsidiesAllocated = uint128(poolSubsidies);
+                    epochPoolPtr.totalSubsidiesAllocated = poolSubsidies;
                     poolPtr.totalSubsidiesAllocated += poolSubsidies;
 
                     totalSubsidies += poolSubsidies;
@@ -972,8 +973,8 @@ contract VotingController is Pausable {
 
     // Internal function for shared claim logic (handles one delegator) | delegator==user
     function _claimDelegateRewards(uint256 epoch, address delegator, address delegate, bytes32[] calldata poolIds) internal returns (uint256, uint256) {
-        uint256 userTotalGrossRewards;
-        uint256 delegateTotalPoolRewards;
+        uint128 userTotalGrossRewards;
+        uint128 delegateTotalPoolRewards;
         for (uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
 
@@ -982,24 +983,24 @@ contract VotingController is Pausable {
             require(userDelegateAccounting[epoch][delegator][delegate].userPoolGrossRewards[poolId] == 0, Errors.NoRewardsToClaim());
 
             // calculations: delegate's votes for this pool + pool totals
-            uint256 delegatePoolVotes = delegatesEpochPoolData[epoch][poolId][delegate].totalVotesSpent;
-            uint256 totalPoolVotes = epochPools[epoch][poolId].totalVotes;
-            uint256 totalPoolRewards = epochPools[epoch][poolId].totalRewardsAllocated;
+            uint128 delegatePoolVotes = delegatesEpochPoolData[epoch][poolId][delegate].totalVotesSpent;
+            uint128 totalPoolVotes = epochPools[epoch][poolId].totalVotes;
+            uint128 totalPoolRewards = epochPools[epoch][poolId].totalRewardsAllocated;
 
             if (totalPoolRewards == 0 || totalPoolVotes == 0) continue;  // skip if pool has no rewards or votes
 
-            uint256 delegatePoolRewards = (delegatePoolVotes * totalPoolRewards) / totalPoolVotes;
+            uint128 delegatePoolRewards = (delegatePoolVotes * totalPoolRewards) / totalPoolVotes;
             if (delegatePoolRewards == 0) continue;  // skip if floored to 0
 
             // book delegate's rewards for this pool & epoch
             delegatesEpochPoolData[epoch][poolId][delegate].totalRewards = delegatePoolRewards;
 
             // fetch: number of votes user delegated, to this delegate & the total votes managed by the delegate
-            uint256 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(_addressBook.getVotingEscrowMoca()).getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
-            uint256 delegateTotalVotesForEpoch = delegateEpochData[epoch][delegate].totalVotesSpent;
+            uint128 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(_addressBook.getVotingEscrowMoca()).getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
+            uint128 delegateTotalVotesForEpoch = delegateEpochData[epoch][delegate].totalVotesSpent;
 
             // calc. user's gross rewards for the pool
-            uint256 userGrossRewards = (userVotesAllocatedToDelegateForEpoch * delegatePoolRewards) / delegateTotalVotesForEpoch;
+            uint128 userGrossRewards = (userVotesAllocatedToDelegateForEpoch * delegatePoolRewards) / delegateTotalVotesForEpoch;
             if (userGrossRewards == 0) continue;  // skip if floored to 0
 
             // book user's gross rewards for this pool & epoch
@@ -1017,14 +1018,14 @@ contract VotingController is Pausable {
         if (userTotalGrossRewards == 0) return (0, 0);  // Early return if nothing to claim
 
         // calc. delegate fee + net rewards on total gross rewards, so as to not lose precision
-        uint256 delegateFeePct = delegateHistoricalFeePcts[delegate][epoch];           
-        uint256 delegateFee = userTotalGrossRewards * delegateFeePct / Constants.PRECISION_BASE;
-        uint256 userTotalNetRewards = userTotalGrossRewards - delegateFee;
+        uint128 delegateFeePct = delegateHistoricalFeePcts[delegate][epoch];           
+        uint128 delegateFee = userTotalGrossRewards * delegateFeePct / uint128(Constants.PRECISION_BASE);
+        uint128 userTotalNetRewards = userTotalGrossRewards - delegateFee;
 
         // ---- Accounting updates ----
         
         // increment user's net rewards earned via delegated votes
-        userDelegateAccounting[epoch][delegator][delegate].totalNetRewards += uint128(userTotalNetRewards);
+        userDelegateAccounting[epoch][delegator][delegate].totalNetRewards += userTotalNetRewards;
 
         // update delegate's captured (non-claimable) rewards for this epoch
         delegateEpochData[epoch][delegate].totalRewards = delegateTotalPoolRewards;         
