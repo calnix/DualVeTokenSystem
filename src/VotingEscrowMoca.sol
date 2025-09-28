@@ -882,8 +882,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
 //-------------------------------Block: transfer/transferFrom -----------------------------------------
 
-        //TODO: white-list transfers? || incorporate ACL / or new layer for token transfers
-
         function transfer(address, uint256) public pure override returns (bool) {
             revert Errors.IsNonTransferable();
         }

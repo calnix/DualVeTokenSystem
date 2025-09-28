@@ -8,10 +8,6 @@
 can the `totalRewards` in usersEpochData be diff. from sum of usersEpochPoolData? 
 i.e. inconsistency in calculation
 
-
-2. ids can be bytes32(0), via generateId()
-- check if any fns are blocked cos  bytes32(0) is passed as id
-
 -----
 
 ## on optimal dataType structs

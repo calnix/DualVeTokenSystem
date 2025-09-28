@@ -201,7 +201,7 @@ contract EscrowedMoca is ERC20, Pausable {
 
 //-------------------------------Asset manager functions-----------------------------------------
 
-
+    //Note: Executor's responsibility to ensure there are no duplicate users in the array
     /**
      * @notice Escrows Moca on behalf of multiple users.
      * @dev Transfers Moca from the caller to the contract and mints esMoca to each user.

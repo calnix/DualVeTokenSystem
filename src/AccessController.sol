@@ -77,6 +77,7 @@ contract AccessController is AccessControl {
      * @dev By default the admin role for all roles is `DEFAULT_ADMIN_ROLE`.
      * @param role The role whose administrator is being updated
      * @param adminRole The new administrator role for the specified role
+     * Emits a {RoleAdminChanged} event
     */
     function setRoleAdmin(bytes32 role, bytes32 adminRole) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRoleAdmin(role, adminRole);
