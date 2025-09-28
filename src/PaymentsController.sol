@@ -20,6 +20,16 @@ import {EpochMath} from "./libraries/EpochMath.sol";
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
 import {IAccessController} from "./interfaces/IAccessController.sol";
 
+
+/**
+ * @title PaymentsController
+ * @author Calnix [@cal_nix]
+ * @notice Central contract managing verification fees, and related distribution.
+ * @dev Integrates with external controllers and enforces protocol-level access and safety checks. 
+ */
+
+
+
 contract PaymentsController is EIP712, Pausable {
     using SafeERC20 for IERC20;
     using SignatureChecker for address;

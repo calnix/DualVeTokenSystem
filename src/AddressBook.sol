@@ -9,7 +9,7 @@ import {Events} from "./libraries/Events.sol";
 
 /**
  * @title AddressBook
- * @author Calnix
+ * @author Calnix [@cal_nix]
  * @notice Centralized address book for all system addresses [Main registry of addresses part of or connected to the protocol]
  * @dev Owned by Governance multisig
  */

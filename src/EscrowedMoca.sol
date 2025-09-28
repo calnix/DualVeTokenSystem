@@ -21,7 +21,8 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
  * @title EscrowedMoca
  * @author Calnix [@cal_nix]
  * @notice EscrowedMoca is a non-transferable token representing the escrowed MOCA tokens.
- * @dev EscrowedMoca represents MOCA tokens held in escrow, which can be redeemed under various options—similar to early bond redemption—with penalties applied based on the chosen redemption method.
+ * @dev EscrowedMoca represents MOCA tokens held in escrow, 
+ *      which can be redeemed under various options—similar to early bond redemption—with penalties applied based on the chosen redemption method.
 */
 
 contract EscrowedMoca is ERC20, Pausable {

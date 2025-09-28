@@ -13,7 +13,7 @@ import {IAddressBook} from "./interfaces/IAddressBook.sol";
 
 /**
  * @title AccessControlLayer
- * @author Calnix
+ * @author Calnix [@cal_nix]
  * @notice Centralized access control layer managing all system roles and permissions.
  */
 
