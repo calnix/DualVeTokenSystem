@@ -1,0 +1,383 @@
+# AddressBook Contract Documentation
+
+The AddressBook contract is the single source for all key addresses in the Moca ecosystem.
+- It centralizes address management under governance, making upgrades and integrations straightforward and secure.
+- Developers should always use AddressBook to fetch system addresses for reliable, future-proof integrations.
+
+The contract is intentionally simple, focusing solely on address management as the core registry for the protocol.
+
+> **Quick Facts**
+> - **Purpose**: Central address registry for all protocol contracts
+> - **Owner**: Governance multisig
+> - **Upgrade Pattern**: Update addresses here after deploying contracts
+
+## What Problem Does AddressBook Solve?
+
+Without a central registry, each contract would need to hardcode addresses of other contracts, making upgrades difficult. 
+AddressBook enables:
+
+- **Seamless Upgrades**: When a contract is upgraded, only the AddressBook needs updating
+- **Modular Architecture**: Contracts remain loosely coupled through the address registry
+- **Single Source of Truth**: Eliminates address inconsistencies across the system
+- **Governance Control**: All address changes require governance approval
+
+## Core Architecture
+
+```
+                            AddressBook
+                                │
+                        AccessController
+                                │
+        ┌───────────────────────┼─────────────────────┐
+        │                       │                     │
+     Tokens                Controllers             Treasury
+        │                       │                     │
+    ┌───┴───┐                   │                     │
+    │       │      ┌────────────┼───────────┐         │
+  MOCA    USD8     │            │           │      TREASURY
+    │        VotingController   │   PaymentsController
+    ├─esMOCA              VotingEscrowedMoca
+    │
+    └─veMOCA
+```
+
+### Address Categories
+
+The system organizes addresses into logical categories:
+
+**Tokens**
+- `MOCA`: The main protocol token (18 decimals)
+- `ES_MOCA`: Escrowed MOCA tokens for rewards (18 decimals)
+- `VOTING_ESCROW_MOCA`: Vote-locked MOCA with decay mechanics (non-transferable)
+- `USD8`: Stablecoin used for payments (6 decimal precision)
+  
+**Controllers** 
+- `ACCESS_CONTROLLER`: Manages permissions across the protocol
+- `VOTING_CONTROLLER`: Handles governance voting and reward distribution
+- `PAYMENTS_CONTROLLER`: Processes verification fees and payments
+*- `ROUTER`: Routes transactions between different protocol components [not implemented atm]*
+
+**Treasury**
+- `TREASURY`: Protocol-owned treasury for ecosystem funding
+
+### Special Identifier: Global Admin
+
+The protocol reserves identifier `bytes32(0)` for the Global Admin address, the highest privilege level in the system. 
+- this address cannot be changed through `setAddress()` and requires the dedicated `updateGlobalAdmin()` function.
+- separation is to prevent fat-fingering and ensuring updates are intentional.
+
+## Key Design Features
+
+### 1. **Immutable Identifiers, Mutable Addresses**
+
+```solidity
+// These identifiers are hardcoded and never change
+bytes32 private constant MOCA = 'MOCA';              
+bytes32 private constant TREASURY = 'TREASURY';      
+bytes32 private constant USD8 = 'USD8';              
+
+// But the addresses they point to can be updated
+mapping(bytes32 identifier => address registeredAddress) public addresses;
+```
+
+This design ensures consistent naming while allowing address updates for upgrades.
+
+### 2. **Governance-Controlled Updates**
+
+All address changes require owner approval (multisig), ensuring:
+- No unauthorized address modifications
+- Transparent upgrade processes
+
+### 3. **Pausable Operations**
+
+The contract inherits OpenZeppelin's Pausable pattern, allowing emergency suspension of address updates during security incidents while preserving read access for existing integrations.
+
+### 4. **Type-Safe Address Retrieval**
+
+Instead of generic lookups, AddressBook provides dedicated getter functions:
+
+```solidity
+function getMoca() external view returns (address)
+function getAccessController() external view returns (address)  
+function getTreasury() external view returns (address)
+....
+```
+This approach provides clearer interfaces for contract integration, and typos in the identifier strings.
+
+## Contract Initialization
+
+### Constructor
+
+The AddressBook is initialized with a single parameter:
+
+```solidity
+constructor(address globalAdmin) Ownable(globalAdmin) {
+    // Set global admin at DEFAULT_ADMIN_ROLE (bytes32(0))
+    addresses[bytes32(0)] = globalAdmin;
+}
+```
+
+**Key Points**:
+- The deployer must provide the initial Global Admin address
+- This address receives ownership through OpenZeppelin's Ownable
+- The Global Admin is stored at the special identifier `bytes32(0)` *[matching AccessControl's pattern]*
+
+No other addresses are set during deployment; they must be set post-deployment.
+
+## Contract Functions Walkthrough
+
+### Administrative Functions
+
+#### `setAddress(bytes32 identifier, address registeredAddress)`
+
+**Purpose**: Updates the address for any existing contracts, and allows additions of new contracts to the registry.
+**Access**: Only contract owner 
+**Restrictions**: 
+- Cannot modify the global admin - reverts with `Invalid identifier`
+- Cannot set zero address - reverts with `Invalid address`
+- Only callable when not paused
+
+**Example Usage**: When upgrading the VotingController, governance calls:
+```solidity
+// Convert string to bytes32 identifier
+addressBook.setAddress(bytes32('VOTING_CONTROLLER'), newVotingControllerAddress);
+```
+
+**Error Cases**:
+```solidity
+// ❌ Trying to change global admin through setAddress
+addressBook.setAddress(bytes32(0), newAdmin); // Reverts: "Invalid identifier"
+
+// ❌ Setting zero address
+addressBook.setAddress('MOCA', address(0)); // Reverts: "Invalid address"
+```
+
+#### `updateGlobalAdmin(address globalAdmin)`
+
+**Purpose**: Specifically handles Global Admin address changes 
+**Access**: Only contract owner 
+
+### Address Retrieval Functions
+
+Each system component has a dedicated getter function that returns its current address:
+
+```bash
+// Token addresses
+getUSD8() → returns USD8 stablecoin address
+getMoca() → returns main MOCA token address  
+getEscrowedMoca() → returns escrowed MOCA address
+getVotingEscrowMoca() → returns vote-locked MOCA address
+
+// Controller addresses
+getAccessController() → returns permission manager address
+getVotingController() → returns governance system address
+getPaymentsController() → returns fee processing address
+
+// Treasury address
+getTreasury() → returns protocol treasury address
+
+// Router [for future use]
+getRouter() → returns router address
+```
+
+**Note**: 
+- These functions do not validate returned addresses against zero. Calling contracts are expected to handle zero address checks according to their specific requirements.
+- ALL getter functions require `whenNotPaused` - even view functions are blocked during emergency pauses
+
+>Why: Deprecation: AddressBook might legitimately return zero for deprecated contracts.
+
+## Integration Patterns
+
+### For Contract Developers
+
+When building contracts that interact with the Moca ecosystem:
+
+1. **Store AddressBook reference**:
+```solidity
+IAddressBook immutable ADDRESS_BOOK;
+```
+
+2. **Fetch addresses dynamically**:
+```solidity
+address votingController = ADDRESS_BOOK.getVotingController();
+require(votingController != address(0), "VotingController not set");
+```
+
+3. **Never cache addresses** - always fetch fresh to get latest updates
+
+### For Frontend Developers
+
+AddressBook serves as the single source for all contract addresses:
+
+```javascript
+const addressBook = new Contract(ADDRESS_BOOK_ADDRESS, abi, provider);
+const mocaAddress = await addressBook.getMoca();
+const treasuryAddress = await addressBook.getTreasury();
+```
+
+## Security Considerations
+
+### Access Control Model
+
+- **Owner**: Governance multisig with full control over address updates & risk functions [`pause`, `unpause`, `freeze`]
+- **Users**: Read-only access to address information
+
+### Risk Management Architecture
+
+The contract implements a three-tier risk management system:
+
+1. **Pause/Unpause**: Temporary suspension of all operations
+   - `pause()`: Stops all address updates (owner only, when not frozen)
+   - `unpause()`: Resumes operations (owner only, when not frozen)
+   - **Important**: Even view functions are blocked when paused, preventing address reads during emergencies
+
+2. **Freeze**: Permanent kill switch
+   - `freeze()`: One-way operation that permanently disables the contract
+   - Can only be called when already paused (two-step safety)
+   - Once frozen, contract cannot be unfrozen or unpaused
+   - Emits `ContractFrozen` event
+
+3. **State Variable**: `isFrozen`
+   - `0` = Normal operation
+   - `1` = Permanently frozen
+
+### Risks and Mitigations
+
+**Risk**: Frontend applications using stale addresses  
+**Mitigation**: Always query AddressBook for latest addresses rather than caching
+
+**Risk**: Circular dependencies between contracts  
+**Mitigation**: Careful architecture review and initialization/deployment ordering
+
+## Events and Monitoring
+
+### `AddressSet(bytes32 indexed identifier, address indexed registeredAddress)`
+Emitted when any system address is updated. Critical for:
+- Off-chain monitoring systems
+- Frontend cache invalidation  
+- Audit trail maintenance
+
+### `GlobalAdminUpdated(address indexed oldAdmin, address indexed newAdmin)`
+Emitted specifically for Global Admin changes. Enables:
+- Enhanced monitoring of privilege escalation
+- Separate alerting for highest-risk operations
+
+### `ContractFrozen()`
+Emitted when the contract is permanently frozen. Signals:
+- Critical security response activated
+- No further operations possible
+- Immediate migration required
+
+## Upgrade and Migration Patterns
+
+### Generic Upgrade Flow
+
+1. **Deploy New Contract**: Deploy upgraded version of target contract
+2. **Test Integration**: Verify new contract works with existing ecosystem
+3. **Governance Proposal**: Submit address update to governance 
+4. **Execute Update**: Call `setAddress()` with new contract address
+5. **Verify Systems**: Confirm all integrations work with new address
+
+### Emergency Procedures
+
+In case of contract vulnerabilities:
+
+**Level 1 - Temporary Pause**:
+1. **Pause AddressBook**: Prevents all operations (including reads)
+2. **Investigate**: Determine severity and response
+3. **Fix Issue**: Deploy patches if needed
+4. **Unpause**: Resume normal operations
+
+**Level 2 - Permanent Freeze** (Critical breach):
+1. **Pause First**: Contract must be paused before freezing
+2. **Freeze Contract**: Execute one-way freeze operation
+3. **Deploy New AddressBook**: Create replacement contract
+4. **Migrate Systems**: Update all contracts to use new AddressBook
+
+⚠️ **Warning**: Freezing is irreversible. Use only for critical security breaches.
+
+### Initial Deployment Process
+
+When deploying a new Moca ecosystem:
+
+1. **Deploy AddressBook First**: With governance multisig as global admin
+2. **Deploy Core Contracts**: Deploy all system contracts
+3. **Register Addresses**: Call `setAddress()` for each deployed contract
+4. **Verify Integration**: Ensure all contracts can resolve addresses correctly
+5. **Transfer Ownership**: If needed, transfer AddressBook ownership to final governance
+
+**Example Deployment Script**:
+```javascript
+// 1. Deploy AddressBook
+const addressBook = await AddressBook.deploy(governanceMultisig);
+
+// 2. Deploy other contracts
+const moca = await MocaToken.deploy();
+const votingController = await VotingController.deploy(addressBook.address);
+
+// 3. Register all addresses
+await addressBook.setAddress(ethers.utils.formatBytes32String('MOCA'), moca.address);
+await addressBook.setAddress(ethers.utils.formatBytes32String('VOTING_CONTROLLER'), votingController.address);
+```
+
+## Gas Optimization Notes
+
+- **Storage Layout**: Optimized for minimal storage slots per address
+- **Read Operations**: All getters are `view` functions with no gas cost
+- **Batch Updates**: Consider grouping multiple address updates in single governance proposal
+
+## Future Considerations
+
+The AddressBook is designed to be stable and long-lived. Potential enhancements might include:
+
+- **Address Validation**: On-chain verification of contract interfaces
+- **Version Tracking**: Historical address records for audit purposes  
+- **Proxy Detection**: Automatic detection and handling of proxy contracts
+- **Multi-Network Support**: Cross-chain address synchronization
+
+## Quick Reference
+
+### Common Identifiers
+```solidity
+// Tokens
+'MOCA'                // Main protocol token
+'ES_MOCA'            // Escrowed MOCA
+'VOTING_ESCROW_MOCA' // Vote-escrowed MOCA
+'USD8'               // USD stablecoin (8 decimals)
+
+// Controllers
+'ACCESS_CONTROLLER'   // Permission management
+'VOTING_CONTROLLER'   // Governance & rewards
+'PAYMENTS_CONTROLLER' // Fee processing
+'ROUTER'             // Transaction routing
+
+// Treasury
+'TREASURY'           // Protocol treasury
+
+// Special
+bytes32(0)           // Global Admin (DEFAULT_ADMIN_ROLE)
+```
+
+### Key Functions Cheat Sheet
+
+| Function                         | Access | Purpose                                 |
+|----------------------------------|--------|-----------------------------------------|
+| `setAddress(identifier, address)`| Owner  | Update any address except global admin  |
+| `updateGlobalAdmin(address)`     | Owner  | Update global admin specifically        |
+| `pause()`                        | Owner  | Temporarily pause all operations        |
+| `unpause()`                      | Owner  | Resume operations (if not frozen)       |
+| `freeze()`                       | Owner  | Permanently disable contract (one-way)  |
+| `getMoca()`                      | Public | Get MOCA token address                  |
+| `getVotingController()`          | Public | Get voting controller address           |
+| `getRouter()`                    | Public | Get router address                      |
+| `addresses(identifier)`          | Public | Generic address lookup                  |
+
+### Error Messages
+- `"Invalid identifier"` - Attempting to modify global admin via setAddress
+- `"Invalid address"` - Trying to set zero address
+- `"Pausable: paused"` - Contract is paused
+- `"Ownable: caller is not the owner"` - Unauthorized access
+- `IsFrozen()` - Contract is permanently frozen (custom error)
+
+---
+

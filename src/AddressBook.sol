@@ -3,9 +3,10 @@ pragma solidity 0.8.27;
 
 // External: OZ
 import {Ownable2Step, Ownable} from "./../lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
-import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {Pausable} from "./../lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 import {Events} from "./libraries/Events.sol";
+import {Errors} from "./libraries/Errors.sol";
 
 /**
  * @title AddressBook
@@ -34,13 +35,15 @@ contract AddressBook is Ownable2Step, Pausable {
     bytes32 private constant TREASURY = 'TREASURY';
 
     // Map of registered addresses
-    mapping(bytes32 identifier => address registeredAddress) public addresses;
+    mapping(bytes32 identifier => address registeredAddress) internal _addresses;
 
+    // risk
+    uint256 public isFrozen;
 
     constructor(address globalAdmin) Ownable(globalAdmin) {
 
         // set global admin: DEFAULT_ADMIN_ROLE
-        addresses[bytes32(0)] = globalAdmin;
+        _addresses[bytes32(0)] = globalAdmin;
     }
 
 // ------------------------------ Setters --------------------------------
@@ -52,57 +55,111 @@ contract AddressBook is Ownable2Step, Pausable {
 
         require(registeredAddress != address(0), "Invalid address");
 
-        addresses[identifier] = registeredAddress;
+        _addresses[identifier] = registeredAddress;
 
         emit Events.AddressSet(identifier, registeredAddress);
     }
 
 
-    // specific to updating global admin
+    /**
+     * @notice Updates the global admin address in the address book.
+     * @dev Only callable by the contract owner when not paused. 
+     *      Emits a GlobalAdminUpdated event with the previous and new admin addresses.
+     * @param globalAdmin The new global admin address to set.
+     */
     function updateGlobalAdmin(address globalAdmin) external onlyOwner whenNotPaused {
         require(globalAdmin != address(0), "Invalid address");
 
-        emit Events.GlobalAdminUpdated(addresses[bytes32(0)], globalAdmin);
+        emit Events.GlobalAdminUpdated(_addresses[bytes32(0)], globalAdmin);
         
         // update global admin
-        addresses[bytes32(0)] = globalAdmin;
+        _addresses[bytes32(0)] = globalAdmin;
     }
 
 // ------------------------------ Getters --------------------------------
+
     /**
-        zero address checks are not set here, and are expected to be handled by the caller contract
-        
+       REVIEW: should these be whenNotPaused?   
+       if we pause this contract - assume a malicious actor has changed an address,
+       so pause all view functions as well. 
+       @audit : R - what do you think?   
      */
 
-    function getUSD8Token() external view returns (address) {   // forge-lint: disable-line(mixed-case-function)
-        return addresses[USD8];
+    /**
+     * @notice Returns the registered address for a given identifier.
+     * @dev Reverts if the contract is paused.
+     * @param identifier The bytes32 identifier for the registered address.
+     * @return The address associated with the given identifier.
+     */
+    function getAddress(bytes32 identifier) external view whenNotPaused returns (address) {
+        return _addresses[identifier];
     }
 
-    function getMoca() external view returns (address) {
-        return addresses[MOCA];
+    function getUSD8() external view whenNotPaused returns (address) {   
+        return _addresses[USD8];
     }
 
-    function getEscrowedMoca() external view returns (address) {
-        return addresses[ES_MOCA];
+    function getMoca() external view whenNotPaused returns (address) {
+        return _addresses[MOCA];
     }
 
-    function getVotingEscrowMoca() external view returns (address) {
-        return addresses[VOTING_ESCROW_MOCA];
+    function getEscrowedMoca() external view whenNotPaused returns (address) {
+        return _addresses[ES_MOCA];
     }
 
-    function getAccessController() external view returns (address) {
-        return addresses[ACCESS_CONTROLLER];
+    function getVotingEscrowMoca() external view whenNotPaused returns (address) {
+        return _addresses[VOTING_ESCROW_MOCA];
     }
 
-    function getVotingController() external view returns (address) {
-        return addresses[VOTING_CONTROLLER];
+    function getAccessController() external view whenNotPaused returns (address) {
+        return _addresses[ACCESS_CONTROLLER];
     }
 
-    function getPaymentsController() external view returns (address) {
-        return addresses[PAYMENTS_CONTROLLER];
+    function getVotingController() external view whenNotPaused returns (address) {
+        return _addresses[VOTING_CONTROLLER];
     }
 
-    function getTreasury() external view returns (address) {
-        return addresses[TREASURY];
+    function getPaymentsController() external view whenNotPaused returns (address) {
+        return _addresses[PAYMENTS_CONTROLLER];
     }
+
+    function getTreasury() external view whenNotPaused returns (address) {
+        return _addresses[TREASURY];
+    }
+
+    function getRouter() external view whenNotPaused returns (address) {
+        return _addresses[ROUTER];
+    }
+
+//-------------------------------Risk functions-----------------------------
+
+    /**
+     * @notice Pause the contract.
+     * @dev Only callable by the Owner [multi-sig].
+     */
+    function pause() external whenNotPaused onlyOwner {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _pause();
+    }
+
+    /**
+     * @notice Unpause the contract.
+     * @dev Only callable by the Owner [multi-sig].
+     */
+    function unpause() external whenPaused onlyOwner {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _unpause();
+    }
+
+    /**
+     * @notice Freeze the contract.
+     * @dev Only callable by the Owner [multi-sig].
+     *      This is a kill switch function
+     */
+    function freeze() external whenPaused onlyOwner {
+        if(isFrozen == 1) revert Errors.IsFrozen();
+        isFrozen = 1;
+        emit Events.ContractFrozen();
+    }
+
 }
