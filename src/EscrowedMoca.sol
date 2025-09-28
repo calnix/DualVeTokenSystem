@@ -67,6 +67,12 @@ contract EscrowedMoca is ERC20, Pausable {
         require(votersPenaltySplit > 0, Errors.InvalidPercentage());
         require(votersPenaltySplit <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
         VOTERS_PENALTY_SPLIT = votersPenaltySplit;
+
+        //whitelist the asset manager
+        //whitelist[addressBook.getAssetManager()] = true;
+
+        //whitelist the voting controller
+        //whitelist[addressBook.getVotingController()] = true;
     }
 
 //-------------------------------User functions------------------------------------------
