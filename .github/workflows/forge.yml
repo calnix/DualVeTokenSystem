@@ -37,7 +37,22 @@ jobs:
       # Wake is having compatibility issues - removed for now
       # You already have Slither in a separate workflow for static analysis
       
+      - name: Check for tests
+        id: check-tests
+        run: |
+          if find test -name "*.t.sol" -o -name "*.test.sol" | grep -q .; then
+            echo "tests-exist=true" >> $GITHUB_OUTPUT
+          else
+            echo "tests-exist=false" >> $GITHUB_OUTPUT
+          fi
+          
       - name: Run Forge tests
+        if: steps.check-tests.outputs.tests-exist == 'true'
         run: |
           forge test -vvv
         id: test
+        
+      - name: No tests found
+        if: steps.check-tests.outputs.tests-exist == 'false'
+        run: |
+          echo "::notice::No test files found, skipping tests"
