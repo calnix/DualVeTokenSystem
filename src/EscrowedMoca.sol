@@ -414,33 +414,31 @@ contract EscrowedMoca is ERC20, Pausable {
 //-------------------------------Transfer ERC20 Overrides-----------------------------------------
     
     /**
-     * @notice Override ERC20 transfer function to restrict transfers to whitelisted addresses only.
-     * @dev Only addresses in the whitelist can transfer esMoca; all others are blocked.
-     * @param recipient The address to transfer to.
-     * @param amount The amount to transfer.
-     * @return success True if transfer is allowed and successful.
+     * @notice Transfers esMoca tokens to a specified address, restricted to whitelisted senders.
+     * @dev Overrides ERC20 transfer. Only whitelisted addresses can initiate transfers; non-whitelisted senders are blocked.
+     * @param recipient Address receiving the tokens.
+     * @param amount Number of tokens to transfer.
+     * @return success True if the transfer is permitted and succeeds.
      */
     function transfer(address recipient, uint256 amount) public override whenNotPaused returns (bool) {
         require(whitelist[msg.sender], Errors.OnlyCallableByWhitelistedAddress());
-        require(whitelist[recipient], Errors.OnlyCallableByWhitelistedAddress()); 
         return super.transfer(recipient, amount);
     }
 
     /**
-     * @notice Override the transferFrom function to restrict transfers to whitelisted addresses only.
-     * @dev Only addresses in the whitelist can transfer esMoca; all others are blocked.
-     * @param sender The address which owns the tokens.
-     * @param recipient The address to transfer to.
-     * @param amount The amount to transfer.
-     * @return success True if transfer is allowed and successful.
+     * @notice Transfers esMoca tokens from one address to another, restricted to whitelisted senders.
+     * @dev Overrides ERC20 transferFrom. Only addresses present in the whitelist can initiate transfers; all others are blocked.
+     * @param sender The address from which the tokens will be debited.
+     * @param recipient The address to which the tokens will be credited.
+     * @param amount The number of tokens to transfer.
+     * @return success True if the transfer is permitted and succeeds.
      */
     function transferFrom(address sender, address recipient, uint256 amount) public override whenNotPaused returns (bool) {
         require(whitelist[sender], Errors.OnlyCallableByWhitelistedAddress());
-        require(whitelist[recipient], Errors.OnlyCallableByWhitelistedAddress());
         return super.transferFrom(sender, recipient, amount);
     }
 
-//-------------------------------risk functions----------------------------------------------------------
+//-------------------------------Risk functions----------------------------------------------------------
 
     /**
      * @notice Pause the contract.
@@ -492,7 +490,7 @@ contract EscrowedMoca is ERC20, Pausable {
         emit Events.EmergencyExit(treasury);
     }
 
-//-------------------------------view functions----------------------------------------------------------
+//-------------------------------View functions----------------------------------------------------------
 
 
 }
