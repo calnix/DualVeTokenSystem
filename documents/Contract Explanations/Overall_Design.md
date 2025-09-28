@@ -53,7 +53,83 @@ Example: where we want to check that caller is a specific contract. Does not inv
 - useful in case we want to have a different ACL grid for another set of contracts
 - i.e. there could be 2 ACL layers active in parallel servicing different set of contracts
 
+## Global Admin Transfer Mechanism
 
+The protocol's global admin is defined by the ownership of AddressBook. When ownership changes, the DEFAULT_ADMIN_ROLE in AccessController must be atomically transferred to maintain consistency.
+
+### Design Principles
+- **Single Source of Truth**: AddressBook ownership = Protocol global admin
+- **Atomic Transfer**: No intermediate states with mismatched permissions
+- **Two-Step Safety**: Uses Ownable2Step to prevent accidental transfers
+- **No Lockout Risk**: New admin receives role before old admin loses it
+
+### Implementation Details
+
+AddressBook overrides `_transferOwnership` to:
+1. Update AddressBook ownership (via parent implementation)
+2. Update stored global admin at `bytes32(0)`
+3. Call AccessController to atomically transfer DEFAULT_ADMIN_ROLE
+
+AccessController provides `transferGlobalAdminFromAddressBook` which:
+- Validates caller is AddressBook
+- Grants role to new admin first
+- Revokes role from old admin
+- Emits GlobalAdminTransferred event
+
+### Execution Flow
+
+#### Step 1: Initiate Transfer
+
+Current global admin calls on AddressBook: `transferOwnership(newAdminAddress)`
+
+- Sets pending owner in AddressBook
+- Emits `OwnershipTransferStarted` event
+- No permissions change yet
+
+#### Step 2: Accept Ownership
+
+New admin calls on AddressBook: `acceptOwnership()`
+
+This triggers the following internal flow:
+
+1. **AddressBook._transferOwnership(newAdmin)**
+   - Calls parent's `_transferOwnership` → updates owner
+   - Updates `_addresses[bytes32(0)]` to newAdmin
+   - Calls `AccessController.transferGlobalAdminFromAddressBook(oldAdmin, newAdmin)`
+   - Emits `GlobalAdminUpdated` event
+
+2. **AccessController.transferGlobalAdminFromAddressBook(oldAdmin, newAdmin)**
+   - Verifies caller is AddressBook
+   - Verifies oldAdmin has DEFAULT_ADMIN_ROLE
+   - Grants DEFAULT_ADMIN_ROLE to newAdmin
+   - Revokes DEFAULT_ADMIN_ROLE from oldAdmin
+   - Emits `GlobalAdminTransferred` event
+
+#### Result
+- AddressBook owner: newAdmin
+- AccessController DEFAULT_ADMIN_ROLE: newAdmin
+- Complete atomic transfer with no intermediate inconsistent state
+
+### Security Considerations
+
+1. **Self-Removal Protection**: Admins cannot remove themselves via `removeGlobalAdmin`
+2. **AddressBook Exclusive**: Only AddressBook can call `transferGlobalAdminFromAddressBook`
+3. **Zero Address Checks**: Both old and new admin must be non-zero addresses
+4. **Role Verification**: Confirms old admin actually has the role before transfer
+
+### Deployment Requirements
+
+1. Deploy AddressBook with initial global admin
+2. Deploy AccessController with AddressBook address
+3. Call `setAddress(ACCESS_CONTROLLER, accessControllerAddress)` on AddressBook
+4. AccessController automatically grants DEFAULT_ADMIN_ROLE to AddressBook's owner
+
+### Emergency Scenarios
+
+If AccessController address is not set in AddressBook:
+- Ownership transfer still succeeds
+- Manual role grant required in AccessController
+- Prevents blocking ownership transfer due to missing dependency
 
 ## Zero Address Handling:
 

@@ -39,7 +39,7 @@ contract AccessController is AccessControl {
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE"); // withdraw fns on PaymentsController, VotingController
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
 
-//-------------------------------Constructor-----------------------------------------
+//-------------------------------Constructor-------------------------------------------------------
 
     /**
      * @dev Constructor
@@ -70,7 +70,7 @@ contract AccessController is AccessControl {
         _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
     }
 
-// -------------------- Generic setRoleAdmin function --------------------
+// -------------------- Generic setRoleAdmin function ----------------------------------------
 
     /**
      * @notice Sets the admin role for a specific role
@@ -84,7 +84,7 @@ contract AccessController is AccessControl {
     }
 
 
-// -------------------- HIGH-FREQUENCY ROLE MANAGEMENT --------------------
+// -------------------- HIGH-FREQUENCY ROLE MANAGEMENT ----------------------------------------
 
     // Monitor role functions
     function addMonitor(address addr) external noZeroAddress(addr) {
@@ -229,7 +229,7 @@ contract AccessController is AccessControl {
         return hasRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
     }
 
-// -------------------- GLOBAL ADMIN FUNCTIONS --------------------
+// -------------------- GLOBAL ADMIN FUNCTIONS ------------------------------------------------------------
 
     function addGlobalAdmin(address addr) external noZeroAddress(addr) {
         grantRole(DEFAULT_ADMIN_ROLE, addr);
