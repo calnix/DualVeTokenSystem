@@ -1,0 +1,233 @@
+# EscrowedMoca (esMoca)
+
+EscrowedMoca provides a flexible, secure mechanism for distributing protocol rewards while incentivizing long-term alignment. 
+
+Through its redemption system, it balances immediate liquidity needs with value accrual for patient participants, creating a sustainable token economy that benefits all stakeholders.
+
+
+## Overview
+
+EscrowedMoca (esMoca) is a non-transferable token representing Moca tokens held in escrow within the protocol ecosystem. 
+- functions as a reward token that can be redeemed for Moca through various redemption options
+- each redemption option has different lock periods and conversion rates
+- similar to early bond redemption mechanisms with penalties for immediate liquidity.
+
+### **Key Features:**
+- 1:1 conversion from MOCA to esMoca (no penalty on entry)
+- Multiple redemption pathways with configurable lock periods and conversion rates
+- Penalty system that redistributes value to voters and treasury
+- Non-transferable by default (except for whitelisted addresses)
+- Integrated risk management with pause and freeze mechanisms
+
+### **Objective of esMoca**
+
+1. **Incentivize long-term holding** - Users who wait longer receive full value
+2. **Provide liquidity options** - Users can exit early at a penalty
+3. **Redistribute value** - Penalties from early redemptions benefit other ecosystem participants
+
+### The Escrow-Redemption Lifecycle
+
+Moca → esMoca (1:1, no penalty) → Choose Redemption Option → Receive MOCA (with/without penalty)
+
+## Redemption System
+
+### Redemption Options
+
+The contract supports multiple redemption options, each defined by:
+- **Lock Duration**: How long tokens are locked before redemption (0 for instant)
+- **Receivable Percentage**: What percentage of esMoca converts to MOCA (up to 100%)
+- **Enabled Status**: Whether the option is currently available
+
+Example redemption options:
+```
+Option 0: Standard   - 180 days lock, 100% receivable (no penalty)
+Option 1: Early      - 30 days lock,  80% receivable (20% penalty)  
+Option 2: Instant    - 0 days lock,   50% receivable (50% penalty)
+```
+
+### How Redemption Works
+
+1. **Selection Phase** (`selectRedemptionOption`)
+   - User chooses a redemption option and `amount`
+   - `esMoca` is immediately burned
+   - Redemption is scheduled based on lock duration
+   - If instant (0 lock), `Moca` is transferred immediately
+   - If locked, user must wait and claim later
+
+2. **Claim Phase** (`claimRedemption`)
+   - After lock period expires, user claims their Moca
+   - No additional penalties at claim time
+
+### Penalty Mechanics
+
+When users redeem with a penalty:
+- The penalty amount is the difference between `esMoca` burned and `moca` received
+- Penalties are split between:
+  - **Voters**: Percentage defined by `VOTERS_PENALTY_SPLIT`
+  - **Treasury**: Remaining percentage
+
+This creates a value redistribution mechanism where early exits benefit long-term participants.
+
+**Important Design Choice**: 
+```solidity
+// We block redemptions where penalty rounds to 0 but receivable > 0
+require(penaltyAmount > 0, Errors.InvalidAmount());
+```
+This prevents gaming the system with micro-transactions that would avoid penalties due to rounding.
+
+## Key Functions
+
+### For Users
+
+**`escrowMoca(uint256 amount)`**
+- Converts MOCA to esMoca at 1:1 ratio
+- Requires MOCA approval first
+- Mints esMoca to caller
+
+**`selectRedemptionOption(uint256 option, uint256 amount)`**
+- Initiates redemption process
+- Burns esMoca immediately
+- Schedules or executes redemption based on lock duration
+
+**`claimRedemption(uint256 timestamp)`**
+- Claims MOCA after lock period expires
+- Only for non-instant redemptions
+
+### For Asset Managers
+
+**`escrowMocaOnBehalf(addresses[], amounts[])`**
+- Batch mint esMoca to multiple users
+- Used for protocol rewards distribution
+
+**`claimPenalties()`**
+- Withdraws accumulated penalties for voters/treasury
+- Tracks claimed vs unclaimed amounts
+
+**`releaseEscrowedMoca(uint256 amount)`**
+- Instant 1:1 conversion for asset managers
+- No penalties applied
+
+## Access Control & Roles
+
+The system uses role-based access control via the AccessController:
+
+| **Role**                  | **Permissions**                                        | **Purpose**                        |
+|---------------------------|--------------------------------------------------------|------------------------------------|
+| **User**                  | escrowMoca, selectRedemption, claimRedemption          | Standard user operations           |
+| **Asset Manager**         | escrowOnBehalf, claimPenalties, releaseEscrowedMoca    | Protocol operations                |
+| **EscrowedMoca Admin**    | setRedemptionOption, setPenaltyToVoters, setWhitelist  | Parameter configuration            |
+| **Monitor**               | pause                                                  | Emergency response (automated)     |
+| **Global Admin**          | unpause, freeze                                        | Emergency response (multisig)      |
+| **Emergency Exit Handler**| emergencyExit                                          | Asset recovery when frozen         |
+
+## Transfer Restrictions
+
+esMoca is **non-transferable** by default. This ensures:
+- Rewards stay with intended recipients
+- No secondary markets for esMoca
+
+**Exception: Whitelist System**
+- Specific addresses can be whitelisted to transfer esMoca
+- Primary use case: Asset Manager transferring to VotingController to deposit rewards/subsidies
+- Both sender **AND** recipient must be whitelisted
+
+## Risk Management
+
+### Three-Tier Safety System
+
+1. **Pausable** 
+   - Monitor role can pause (automated response)
+   - Global Admin can unpause (manual review)
+   - Blocks all user operations when paused
+
+2. **Freeze Mechanism**
+   - One-way kill switch (cannot be unfrozen)
+   - Requires contract to be paused first
+   - Enables emergency exit functionality
+
+3. **Emergency Exit**
+   - Only available when frozen
+   - Transfers all `Moca` to treasury
+   - Disregards user claims (nuclear option)
+
+### Risk Hierarchy
+```
+Normal Operation → Monitor Pauses → Global Admin Reviews
+                                            ↓
+                                   [Unpause or Freeze]
+                                            ↓
+                                  [If Frozen: Emergency Exit]
+```
+
+## Technical Implementation Details
+
+### Precision and Limits
+
+- **Percentage Precision**: 2 decimal places (10,000 = 100%, 100 = 1%, 1 = 0.01%)
+- **Maximum Lock Duration**: 888 days (~2.4 years)
+- **Redemption Options**: Unlimited number, each independently configurable *[via mapping]*
+
+### State Tracking
+
+The contract maintains several key state variables:
+- `TOTAL_MOCA_ESCROWED`: Total MOCA backing all esMoca
+- `ACCRUED_PENALTY_TO_VOTERS/TREASURY`: Accumulated penalties
+- `CLAIMED_PENALTY_FROM_VOTERS/TREASURY`: Already distributed penalties
+
+### Redemption Storage Pattern
+
+```solidity
+mapping(address user => mapping(uint256 timestamp => Redemption)) redemptionSchedule;
+
+struct Redemption {
+    uint256 mocaReceivable;  // Moca to receive
+    uint256 penalty;         // Penalty amount
+    uint256 claimed;         // Already claimed amount
+}
+```
+
+Multiple redemptions can be scheduled for the same timestamp, and they aggregate automatically.
+
+## Integration Points
+
+### With VotingController
+- Asset Manager can transfer esMoca as voting rewards
+- Requires whitelist configuration
+- Enables reward distribution in esMoca instead of Moca
+
+### With VotingEscrowMoca
+- Users can lock esMoca (instead of Moca) to create veMoca positions
+- Provides flexibility in how users engage with the voting system
+
+## Design Rationale
+
+### Why Non-Transferable?
+
+Making esMoca non-transferable prevents:
+- Circumvention of vesting schedules through secondary markets
+- Complex tracking of redemption rights across addresses
+
+### Why Multiple Redemption Options?
+
+Different users have different liquidity needs:
+- **Long-term holders**: Maximum value through patient redemption
+- **Liquidity seekers**: Immediate access at a cost
+- **Balanced users**: Middle-ground options
+
+### Why Split Penalties?
+
+Penalties serve dual purposes:
+1. **Compensate voters**: Those who lock longer benefit from others' impatience
+2. **Fund treasury**: Protocol treasury for self-sustainability
+
+The configurable split allows governance to balance these objectives.
+
+## Security Considerations
+
+1. **Reentrancy Protection**: Uses SafeERC20 for all token transfers
+2. **Integer Overflow**: Redemption calculations protected by Solidity 0.8.x checks
+3. **Access Control**: All privileged functions have explicit role checks
+4. **State Consistency**: Burn happens before external calls in redemption flow
+5. **Precision Loss**: Explicit checks prevent zero-penalty redemptions with positive receivables
+
+---
