@@ -664,11 +664,13 @@ contract PaymentsController is EIP712, Pausable {
     function _generateSchemaId(uint256 salt, bytes32 issuerId) internal view returns (bytes32) {
         return bytes32(keccak256(abi.encode(issuerId, block.timestamp, salt)));
     }
-
+    
+    // if zero address, reverts automatically
     function _usd8() internal view returns (IERC20) {
         return IERC20(addressBook.getUSD8Token());
     }
     
+    // if zero address, reverts automatically
     function _moca() internal view returns (IERC20){
         return IERC20(addressBook.getMoca());
     }

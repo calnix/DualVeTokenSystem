@@ -367,7 +367,7 @@ contract EscrowedMoca is ERC20, Pausable {
 
 //-------------------------------Internal functions---------------------------------------------------------------
 
-    // get moca token address
+    // get moca token address | if zero address, reverts
     function _moca() internal view returns (IERC20){
         return IERC20(addressBook.getMoca());
     }

@@ -1084,22 +1084,19 @@ contract VotingController is Pausable {
     }
 
 
+    // if zero address, reverts automatically
     function _veMoca() internal view returns (IVotingEscrowMoca) {
-        address veMoca = addressBook.getVotingEscrowMoca();
-        require(veMoca != address(0), Errors.InvalidAddress());
-        return IVotingEscrowMoca(veMoca);
+        return IVotingEscrowMoca(addressBook.getVotingEscrowMoca());
     }
 
+    // if zero address, reverts automatically
     function _esMoca() internal view returns (IERC20) {
-        address esMoca = addressBook.getEscrowedMoca();
-        require(esMoca != address(0), Errors.InvalidAddress());
-        return IERC20(esMoca);
+        return IERC20(addressBook.getEscrowedMoca());
     }
 
+    // if zero address, reverts automatically
     function _moca() internal view returns (IERC20) {
-        address moca = addressBook.getMoca();
-        require(moca != address(0), Errors.InvalidAddress());
-        return IERC20(moca);
+        return IERC20(addressBook.getMoca());
     }
 
 //-------------------------------Modifiers---------------------------------------------------------------

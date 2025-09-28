@@ -84,6 +84,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
 //-------------------------------Constructor-------------------------------------------------
 
         constructor(address addressBook_) ERC20("veMoca", "veMoca") {
+            require(addressBook_ != address(0), Errors.InvalidAddress());
             addressBook = IAddressBook(addressBook_);
 
             // note: has to be done on AddressBook contract after deployment
@@ -829,10 +830,12 @@ contract VotingEscrowMoca is ERC20, Pausable {
             }
         }
 
+        // if zero address, reverts automatically
         function _mocaToken() internal view returns (IERC20){
             return IERC20(addressBook.getMoca());
         }
 
+        // if zero address, reverts automatically
         function _esMocaToken() internal view returns (IERC20){
             return IERC20(addressBook.getEscrowedMoca());
         }
