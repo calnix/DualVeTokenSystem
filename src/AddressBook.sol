@@ -8,6 +8,8 @@ import {Pausable} from "./../lib/openzeppelin-contracts/contracts/utils/Pausable
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
 
+import {IAccessController} from "./interfaces/IAccessController.sol";
+
 /**
  * @title AddressBook
  * @author Calnix [@cal_nix]
@@ -29,15 +31,18 @@ contract AddressBook is Ownable2Step, Pausable {
     bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
     bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
     bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER'; 
-    bytes32 private constant ROUTER = 'ROUTER';
     
     // Treasury
     bytes32 private constant TREASURY = 'TREASURY';
 
+    // Router
+    bytes32 private constant ROUTER = 'ROUTER';
+
+
     // Map of registered addresses
     mapping(bytes32 identifier => address registeredAddress) internal _addresses;
 
-    // risk
+    // Risk
     uint256 public isFrozen;
 
     constructor(address globalAdmin) Ownable(globalAdmin) {
@@ -61,21 +66,30 @@ contract AddressBook is Ownable2Step, Pausable {
     }
 
 
+
     /**
-     * @notice Updates the global admin address in the address book.
-     * @dev Only callable by the contract owner when not paused. 
-     *      Emits a GlobalAdminUpdated event with the previous and new admin addresses.
-     * @param globalAdmin The new global admin address to set.
-     */
-    function updateGlobalAdmin(address globalAdmin) external onlyOwner whenNotPaused {
-        require(globalAdmin != address(0), "Invalid address");
-
-        emit Events.GlobalAdminUpdated(_addresses[bytes32(0)], globalAdmin);
+    * @notice Override to sync AccessController when ownership changes
+    * @dev Called when acceptOwnership() is executed by the new owner
+    * @param newOwner The address accepting ownership
+    */
+    function _transferOwnership(address newOwner) internal virtual override {
+        address oldOwner = owner();
         
-        // update global admin
-        _addresses[bytes32(0)] = globalAdmin;
+        // Call parent implementation first
+        super._transferOwnership(newOwner);
+        
+        // Update the stored global admin
+        _addresses[bytes32(0)] = newOwner;
+        
+        // Update AccessController if it exists
+        address accessControllerAddr = _addresses[ACCESS_CONTROLLER];
+        if (accessControllerAddr != address(0)) {
+            IAccessController(accessControllerAddr).transferGlobalAdminFromAddressBook(oldOwner, newOwner);
+        }
+        
+        emit Events.GlobalAdminUpdated(oldOwner, newOwner);
     }
-
+    
 // ------------------------------ Getters --------------------------------
 
     /**
@@ -84,6 +98,7 @@ contract AddressBook is Ownable2Step, Pausable {
        so pause all view functions as well. 
        @audit : R - what do you think?   
      */
+     
 
     /**
      * @notice Returns the registered address for a given identifier.
@@ -125,6 +140,10 @@ contract AddressBook is Ownable2Step, Pausable {
 
     function getTreasury() external view whenNotPaused returns (address) {
         return _addresses[TREASURY];
+    }
+
+    function getGlobalAdmin() external view whenNotPaused returns (address) {
+        return _addresses[bytes32(0)];
     }
 
     function getRouter() external view whenNotPaused returns (address) {

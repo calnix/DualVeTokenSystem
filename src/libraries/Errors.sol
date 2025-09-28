@@ -101,5 +101,5 @@ library Errors {
     error OnlyCallableByPaymentsControllerAdmin();
 
     error OnlyCallableByVotingControllerContract();
-
+    error CannotRemoveSelfAsAdmin();
 }

@@ -39,7 +39,7 @@ contract AccessController is AccessControl {
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE"); // withdraw fns on PaymentsController, VotingController
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
 
-//-------------------------------constructor-----------------------------------------
+//-------------------------------Constructor-----------------------------------------
 
     /**
      * @dev Constructor
@@ -70,7 +70,7 @@ contract AccessController is AccessControl {
         _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
     }
 
-// ----- generic setRoleAdmin function -----
+// -------------------- Generic setRoleAdmin function --------------------
 
     /**
      * @notice Sets the admin role for a specific role
@@ -237,12 +237,36 @@ contract AccessController is AccessControl {
     }
 
     function removeGlobalAdmin(address addr) external noZeroAddress(addr) {
+        // Prevent admin from removing themselves to avoid accidental lockout
+        require(msg.sender != addr, Errors.CannotRemoveSelfAsAdmin());
         revokeRole(DEFAULT_ADMIN_ROLE, addr);
         emit Events.GlobalAdminRemoved(addr, msg.sender);
     }
 
     function isGlobalAdmin(address addr) external view returns (bool) {
         return hasRole(DEFAULT_ADMIN_ROLE, addr);
+    }
+
+    /**
+     * @notice Transfers the GlobalAdmin role from one address to another.
+     * @param oldAdmin The address to remove the role from.
+     * @param newAdmin The address to add the role to.
+     */
+    function transferGlobalAdminFromAddressBook(address oldAdmin, address newAdmin) external {
+        // Only AddressBook can call this
+        require(msg.sender == address(_addressBook), "Only AddressBook can call");
+        require(oldAdmin != address(0) && newAdmin != address(0), Errors.InvalidAddress());
+        
+        // Verify the oldAdmin actually has the role
+        require(hasRole(DEFAULT_ADMIN_ROLE, oldAdmin), "Old admin doesn't have role");
+        
+        // Grant to new admin first (atomic operation)
+        _grantRole(DEFAULT_ADMIN_ROLE, newAdmin);
+        
+        // Revoke from old admin
+        _revokeRole(DEFAULT_ADMIN_ROLE, oldAdmin);
+        
+        emit Events.GlobalAdminTransferred(oldAdmin, newAdmin);
     }
 
 
