@@ -102,4 +102,7 @@ library Errors {
 
     error OnlyCallableByVotingControllerContract();
     error CannotRemoveSelfAsAdmin();
+    // transferGlobalAdminFromAddressBook
+    error OnlyCallableByAddressBook();
+
 }

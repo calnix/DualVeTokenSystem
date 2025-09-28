@@ -254,7 +254,7 @@ contract AccessController is AccessControl {
      */
     function transferGlobalAdminFromAddressBook(address oldAdmin, address newAdmin) external {
         // Only AddressBook can call this
-        require(msg.sender == address(_addressBook), "Only AddressBook can call");
+        require(msg.sender == address(_addressBook), Errors.OnlyCallableByAddressBook());
         require(oldAdmin != address(0) && newAdmin != address(0), Errors.InvalidAddress());
         
         // Verify the oldAdmin actually has the role

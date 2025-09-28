@@ -169,5 +169,7 @@ library Events {
     // Global admin functions
     event GlobalAdminAdded(address indexed admin, address indexed addedBy);
     event GlobalAdminRemoved(address indexed admin, address indexed removedBy);
+    // transferGlobalAdminFromAddressBook
     event GlobalAdminTransferred(address indexed oldAdmin, address indexed newAdmin);
+
 }
