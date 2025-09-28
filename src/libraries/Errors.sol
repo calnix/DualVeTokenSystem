@@ -20,6 +20,7 @@ library Errors {
     
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
+    error InvalidIssuer();
     error SignatureExpired();
     error NoClaimableFees();
     error InvalidSchemaFee();

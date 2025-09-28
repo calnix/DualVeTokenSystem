@@ -4,14 +4,15 @@ AccessController is the central authority for all roles and privileges across th
 
 ## Executive Summary
 
-The AccessController implements a **frequency-based role hierarchy** that aligns administrative authority with operational demands. This design eliminates bottlenecks in daily operations while maintaining executive oversight for strategic decisions.
+The AccessController eliminates bottlenecks in daily operations while maintaining executive oversight for strategic decisions by implementing a **frequency-based role hierarchy** that aligns administrative authority with operational demands.
 
-**The Innovation:** 
-- Rather than traditional static hierarchies, permissions are assigned as a pair-wise evaluation on frequency of calls and its corresponding impact: {Freq. function call, Impact of fn call}. 
-- High-frequency operational roles have dedicated admins for instant action.
-- Low-frequency, high-impact roles fall directly under global admin control.
+**Design Approach:**  
+- Instead of static hierarchies, permissions are assigned by evaluating both the frequency of function calls and their impact: {call frequency, function impact}.
+  - High-frequency operational roles have dedicated admins for timely action.
+  - Low-frequency, high-impact roles are managed directly by the global admin.
 
-Additionally, authority is mapped to how often roles need to be updated. High-frequency operational roles have dedicated admins to add/remove addresses [i.e. risk bots, cron jobs].
+Authority to update roles is also mapped to operational needs:
+- High-frequency roles allow their admins to add or remove addresses as required (e.g., risk bots, cron jobs).
 
 **Key Benefits:**
 - Operational efficiency: Teams manage routine tasks without executive delays.
@@ -32,11 +33,11 @@ Traditional access control systems force an difficult choice:
 **Understanding the challenge**
 
 Traditional access control systems create operational bottlenecks by requiring executive approval for all privileged operations. 
-When monitoring systems detect anomalies and need immediate response, or when automated systems require routine maintenance, the approval process can introduce dangerous delays.
+Approval process can introduce dangerous delays, when monitoring systems detect anomalies and need immediate response, or when automated systems require routine maintenance.
 
-Consider a scenario where automated monitoring detects a potential security issue at 2 AM. The team needs to rotate monitoring addresses or pause contracts immediately, but must wait for executive approval. This delay could allow problems to escalate.
-
-The AccessController system addresses this tension through a simple observation that reshapes how we think about permissions.
+Consider a scenario where automated monitoring detects a potential security issue at 2 AM:
+- Delays caused by the team needing to rotate monitoring addresses or pause contracts immediately could allow problems to escalate.
+- The AccessController system addresses this tension through a simple observation that reshapes how we think about permissions.
 
 *It recognizes that not all privileged operations carry the same risk, or require the same level of oversight.*
 
@@ -60,12 +61,12 @@ This reshapes how we think about permissions and roles.
 - Authority, roles and hierarchy should be based on a pair-wise evaluation of frequency and impact of tasks.
 
 **This insight drives our entire security architecture.**
-- By matching administrative overhead, impact of outcome and operational frequency, we achieve both speed and security without compromise.
-- Thus the system reduces friction for common operations while ensuring safeguards for critical ones. 
+- Achieve both speed and security without compromise, by matching administrative overhead, impact of outcome and operational frequency.
+- Resulting in reduction of friction for common operations while ensuring safeguards for critical ones.
 
 ## Core Innovation: Risk-weighted, Frequency-Based Access Control
 
-The AccessController addresses this by organizing roles according to how frequently they need to be managed, creating distinct paths for operations:
+The AccessController addresses this by creating distinct paths for operations–organizing roles according to how frequently they need to be managed:
 
 - High-Frequency Operations: Include monitoring, automation, and routine maintenance. These are assigned dedicated administrators to avoid delays, ensuring rapid responses without compromising security.
 - Low-Frequency Strategic Operations: Cover protocol parameters, asset management, and emergency procedures. These remain under executive oversight to allow for careful consideration.
