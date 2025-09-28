@@ -165,6 +165,7 @@ contract VotingController is Pausable {
         require(availableVotes > 0, Errors.NoAvailableVotes());
 
         // update votes at a pool+epoch level | account:{personal,delegate}
+        // does not check for duplicate poolIds in the array; users can vote repeatedly for the same pool
         uint128 totalNewVotes;
         for(uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];

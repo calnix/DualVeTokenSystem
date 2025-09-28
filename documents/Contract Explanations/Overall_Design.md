@@ -52,3 +52,35 @@ Example: where we want to check that caller is a specific contract. Does not inv
 
 - useful in case we want to have a different ACL grid for another set of contracts
 - i.e. there could be 2 ACL layers active in parallel servicing different set of contracts
+
+
+
+## Zero Address Handling:
+
+Recommendation: Zero address checks should be in calling contracts, not AddressBook, because:
+1.Explicit Errors: Calling contracts can provide context-specific error messages
+2.Intentional Deprecation: AddressBook might legitimately return zero for deprecated contracts
+3.Gas Efficiency: Avoid redundant checks if address is used multiple times
+
+AddressBook: NO checks for regular addresses (allow zero)
+AddressBook: KEEP checks for critical infrastructure (AccessController, AddressBook in constructors)
+Calling Contracts: ALWAYS check with context-specific errors
+
+# Notes
+
+## EmergencyExits
+
+if veMoca contract is emergencyExit(), but VotingController is not,
+VotingController would be operating on an incorrect state - as we do not update locks/etc in veMoca.emergencyExit
+⦁	Phantom Voting Power
+⦁	when would you emergenctExit veMoca, but not VotingController?
+
+## asset flows
+
+Deposits + WithdrawX: Payments and Voting
+
+in PC, USD8 is withdrawn to TREASURY [called by assetMgr]
+in VC, esMoca is deposited frm msg.sender: cronJob
+⦁	unclaimed is withdrawn to TREASURY
+
+this is fine. treasury will transfer esMoca to cronjob as needed.

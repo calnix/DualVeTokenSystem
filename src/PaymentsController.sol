@@ -519,6 +519,9 @@ contract PaymentsController is EIP712, Pausable {
         // cache schema in memory (saves ~800 gas)
         DataTypes.Schema storage schemaStorage = _schemas[schemaId];
         DataTypes.Schema memory schema = schemaStorage; // Load once into memory
+        
+        // check if schema belongs to issuer
+        require(schema.issuerId == issuerId, Errors.InvalidIssuer());
 
         //----- NextFee check -----
         uint128 currentFee = schema.currentFee;
