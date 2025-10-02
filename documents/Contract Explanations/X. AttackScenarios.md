@@ -69,6 +69,9 @@ Step 6: Normal operations resume
 
 **Result:** Temporary DoS, but recoverable with proper procedure
 
+>Monitors can only pause and CronJobs can only execute strictly defined functions that typically involve asset-inflow; not out.
+>I.e.: stakeOnBehalf, depositSubsidies, FinalizeEpochsAndRewards.
+
 ### Scenario 4: Critical Role Management During Epoch Transition ✅
 
 Step 1: Epoch N approaching end (1 hour remaining)
@@ -172,108 +175,51 @@ Step 9: System recovers due to accessible role management
 
 **Result:** Epoch-end operational procedures must be executed with care and not automated via `set & forget`
 
-### Scenario 12: Multi-Contract Circular Dependency Check ✅ [!!]
+### Scenario 12: Multi-Contract Circular Dependency Check ✅
 
 Step 1: VotingController needs to process epoch finalization
 Step 2: VotingController calls addressBook.getAccessController()
 Step 3: Receives AccessController address successfully
 Step 4: VotingController calls accessController.isCronJob(msg.sender)
-Step 5: AccessController is paused but permission check works
-Step 6: Returns true/false based on role status
-Step 7: VotingController proceeds with operation
-Step 8: No circular dependency or deadlock
+Step 5: Permission check returns true/false based on role status
+Step 6: VotingController proceeds with operation
+Step 7: No circular dependency or deadlock
 
 **Result:** No circular dependency, clean separation
 
-### Scenario 13: Reentrancy Through Role Changes ✅ [!!]
-
-Step 1: Malicious contract becomes MONITOR_ADMIN
-Step 2: MONITOR_ADMIN calls addMonitor() with malicious contract address
-Step 3: Within same transaction, malicious monitor receives role
-Step 4: Malicious contract attempts callback to addMonitor()
-Step 5: OpenZeppelin AccessControl prevents reentrancy
-Step 6: Nested call REVERTS
-Step 7: Transaction completes with single monitor added
-
-**Result:** Protected by OZ AccessControl
-
-### Scenario 14: Gas Griefing Through Mass Role Assignment ✅
-
-Step 1: MONITOR_ADMIN creates malicious contract
-Step 2: Contract attempts to add 1000 monitors in a loop
-Step 3: Each addMonitor() consumes gas
-Step 4: Gas consumption increases linearly
-Step 5: Transaction hits block gas limit
-Step 6: Entire transaction REVERTS
-Step 7: No monitors added (atomic reversion)
-
-**Result:** Self-limiting, no security risk
-
-### Scenario 15: Emergency Exit Handler Race Condition ⚠️
+### Scenario 13: No pre-assigned emergency exit handler ✅
 
 Step 1: System frozen due to critical exploit
 Step 2: Emergency exit needed immediately
 Step 3: No pre-assigned emergency exit handler
 Step 4: Freeze is one-way, cannot unfreeze
-Step 5: Cannot add handler to frozen contract
-Step 6: Funds locked permanently
+Step 5: Add emergency exit handler via AccessController
+Step 6: Exfil assets from each contract accordingly.
 
-**Result:** Emergency handlers must always be pre-assigned.
+**Takeaway:** Emergency handlers should be pre-assigned; but not mandatory.
 
-### Scenario 16: AddressBook Zero Address Edge Case ✅ [!!]
+### Scenario 14: Contract Upgrade - Role Persistence ✅
 
-Step 1: AddressBook deployed
-Step 2: AccessController not yet deployed/set, but core contracts are deployed and active
-Step 3: User calls VotingController.vote()
-Step 4: VotingController calls addressBook.getAccessController()
-Step 5: Returns address(0)
-Step 6: VotingController attempts IAccessController(0).isMonitor()
-Step 7: Call to zero address REVERTS
-Step 8: User transaction fails safely
+Step 1: Protocol upgrades VotingController from V1 to V2
+Step 2: AddressBook.setAddress("VOTING_CONTROLLER", V2) updates pointer
+Step 3: Cron job bot (address with CRON_JOB_ROLE) can now:
+    Call V2.finalizeEpochRewardsSubsidies() ✓
+    Still call V1.finalizeEpochRewardsSubsidies() ✓
+Step 4: Bot continues operations on V2 seamlessly
+Step 5: V1 remains callable by any address with appropriate roles
+Step 6: Protocol must explicitly pause/freeze V1 to prevent usage
 
-**Result:** Natural fail-safe, operations blocked until properly configured
+**Takeaway**: 
+1. Role-based permissions are address-centric, not contract-centric. 
+2. Contract upgrades require clear operational procedures for deprecating old contracts:
+    - Pausing/Freezing old contracts to prevent dual execution
+    - No permission changes needed for bots
 
-### Scenario 17: Privilege Escalation Through Contract Upgrade ✅ [!!]
+### Scenario 15: Cross-Chain Bridge Integration Security [!!]
 
-Step 1: Protocol decides to upgrade VotingController
-Step 2: New VotingController V2 deployed
-Step 3: AddressBook.setAddress() called to update pointer
-Step 4: Old VotingController V1 attempts operation 
-Step 5: V1 calls accessController.isCronJob(address(V1)) [!!]
-Step 6: Returns false - V1 no longer has privileges
-Step 7: V1 operations blocked
-Step 8: Clean privilege migration achieved
+@follow-up TODO, update once bridge is completed. 
 
-**Result:** Clean permission migration
-
-### Scenario 18: Front-Running Attack on Role Assignment ✅
-
-Step 1: MONITOR_ADMIN adds a new monitor: `addMonitor(trustedAddress)`
-Step 2: Attacker observes transaction in mempool
-Step 3: Attacker attempts to front-run with two strategies:
-    Strategy A: Compromise trustedAddress before assignment
-    Strategy B: Pause contracts before monitor added
-Step 4: If Strategy A: Requires private key compromise (unlikely)
-Step 5: If Strategy B: Requires monitor role (attacker doesn't have)
-Step 6: Original transaction executes as intended
-
-**Result:** Limited impact, standard front-running risks
-
-### Scenario 19: Cross-Chain Bridge Integration Security [!!]
-
-Step 1: Future bridge contract planned for deployment
-Step 2: Evaluate permission requirements
-Step 3: Consider creating BRIDGE_ROLE? No.
-Step 4: Bridge uses existing ASSET_MANAGER_ROLE
-Step 5: Bridge deployed and registered in AddressBook
-Step 6: Bridge granted ASSET_MANAGER_ROLE
-Step 7: If bridge compromised, damage limited to:
-    Asset operations only
-    Cannot affect voting, monitors, or governance
-
-**Result:** Role segregation provides security boundaries
-
-### Scenario 21: Access Control Cache Poisoning ⚠️
+### Scenario 16: Access Control Cache Poisoning ⚠️
 
 Step 1: Third-party integrator caches accessController address
 Step 2: Time passes, AccessController needs upgrade
@@ -284,27 +230,7 @@ Step 6: Old AccessController has outdated role data
 Step 7: Security decisions based on stale data
 Step 8: Potential unauthorized access
 
-**Result:** Contracts must not cache addresses - use AddressBook dynamically
-
-### Scenario 22: Composite Attack - The Perfect Storm ✅
-
-Step 1: Attacker compromises MONITOR_ADMIN (2/3 multisig)
-Step 2: Rapidly adds 10 malicious monitors
-Step 3: All monitors pause contracts simultaneously
-Step 4: Attacker compromises CRON_JOB_ADMIN
-Step 5: Attempts to add malicious cron jobs
-Step 6: AccessController likely paused - additions BLOCKED
-Step 7: Global admin responds:
-    Assesses situation
-    Unpauses AccessController
-    Removes all malicious actors
-    Re-establishes security
-Step 8: During unpause window, attacker attempts more additions
-Step 9: Race condition resolved by atomic transactions
-
-**Result:** Recoverable with proper incident response
-
-**Result:** Sustainable architecture
+**Takeaway:** Projects/Front-ends must not cache addresses - use AddressBook dynamically
 
 ## Critical Findings Summary
 
