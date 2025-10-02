@@ -104,9 +104,11 @@ contract AccessController is AccessControl, Pausable {
         emit Events.MonitorRemoved(addr, msg.sender);
     }
 
-    function isMonitor(address addr) external view returns (bool) {
+    // is EOA - so no whenNotPaused | in case attacker slips through
+    function isMonitor(address addr) external view whenNotPaused returns (bool) {
         return hasRole(MONITOR_ROLE, addr);
     }
+
 
     // CronJob role functions
     function addCronJob(address addr) external noZeroAddress(addr) whenNotPaused {
@@ -119,19 +121,22 @@ contract AccessController is AccessControl, Pausable {
         emit Events.CronJobRemoved(addr, msg.sender);
     }
 
-    function isCronJob(address addr) external view returns (bool) {
+    // is EOA - so no whenNotPaused | in case attacker slips through
+    function isCronJob(address addr) external view whenNotPaused returns (bool) {
         return hasRole(CRON_JOB_ROLE, addr);
     }
     
     // --------------- OPERATIONAL ADMIN ROLE MANAGEMENT ---------------
     
     // Monitor admin functions
-    function addMonitorAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    // is multi-sig - so no whenNotPaused
+    function addMonitorAdmin(address addr) external noZeroAddress(addr) {
         grantRole(MONITOR_ADMIN_ROLE, addr);
         emit Events.MonitorAdminAdded(addr, msg.sender);
     }
 
-    function removeMonitorAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    // is multi-sig - so no whenNotPaused
+    function removeMonitorAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(MONITOR_ADMIN_ROLE, addr);
         emit Events.MonitorAdminRemoved(addr, msg.sender);
     }
@@ -141,12 +146,14 @@ contract AccessController is AccessControl, Pausable {
     }
 
     // CronJob admin functions
-    function addCronJobAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    // is multi-sig - so no whenNotPaused
+    function addCronJobAdmin(address addr) external noZeroAddress(addr) {
         grantRole(CRON_JOB_ADMIN_ROLE, addr);
         emit Events.CronJobAdminAdded(addr, msg.sender);
     }
 
-    function removeCronJobAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    // is multi-sig - so no whenNotPaused
+    function removeCronJobAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(CRON_JOB_ADMIN_ROLE, addr);
         emit Events.CronJobAdminRemoved(addr, msg.sender);
     }
@@ -158,79 +165,85 @@ contract AccessController is AccessControl, Pausable {
 // -------------------- LOW-FREQUENCY STRATEGIC ROLES (managed by DEFAULT_ADMIN_ROLE) --------------------
 
     // PaymentsControllerAdmin role functions
-    function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.PaymentsControllerAdminAdded(addr, msg.sender);
     }
 
-    function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.PaymentsControllerAdminRemoved(addr, msg.sender);
     }
 
-    function isPaymentsControllerAdmin(address addr) external view returns (bool) {
+
+    // whenNotPaused to block role from being used to make contract params changes, if contract is paused
+    function isPaymentsControllerAdmin(address addr) external view whenNotPaused returns (bool) {
         return hasRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
     }
 
 
     // VotingControllerAdmin role functions
-    function addVotingControllerAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    function addVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.VotingControllerAdminAdded(addr, msg.sender);
     }
 
-    function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.VotingControllerAdminRemoved(addr, msg.sender);
     }
 
-    function isVotingControllerAdmin(address addr) external view returns (bool) {
+    // whenNotPaused to block role from being used to make contract params changes, if contract is paused
+    function isVotingControllerAdmin(address addr) external view whenNotPaused returns (bool) {
         return hasRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
     }
 
 
     // EscrowedMocaAdmin role functions
-    function addEscrowedMocaAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    function addEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
         grantRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
         emit Events.EscrowedMocaAdminAdded(addr, msg.sender);
     }
     
-    function removeEscrowedMocaAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
+    function removeEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
         emit Events.EscrowedMocaAdminRemoved(addr, msg.sender);
     }
 
-    function isEscrowedMocaAdmin(address addr) external view returns (bool) {
+    // whenNotPaused to block role from being used to make contract params changes, if contract is paused
+    function isEscrowedMocaAdmin(address addr) external view whenNotPaused returns (bool) {
         return hasRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
     }
 
 
-    // AssetManager role functions
-    function addAssetManager(address addr) external noZeroAddress(addr) whenNotPaused {
+    // AssetManager role functions | can only be added by global admin
+    function addAssetManager(address addr) external noZeroAddress(addr) {
         grantRole(ASSET_MANAGER_ROLE, addr);
         emit Events.AssetManagerAdded(addr, msg.sender);
     }
 
-    function removeAssetManager(address addr) external noZeroAddress(addr) whenNotPaused {
+    function removeAssetManager(address addr) external noZeroAddress(addr) {
         revokeRole(ASSET_MANAGER_ROLE, addr);
         emit Events.AssetManagerRemoved(addr, msg.sender);
     }
 
-    function isAssetManager(address addr) external view returns (bool) {
+    // whenNotPaused to block role from being used to make withdrawals, if contract is paused
+    function isAssetManager(address addr) external view whenNotPaused returns (bool) {
         return hasRole(ASSET_MANAGER_ROLE, addr);
     }
 
 
     // EmergencyExitHandler role functions
-    function addEmergencyExitHandler(address addr) external noZeroAddress(addr) whenNotPaused {
+    function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
         emit Events.EmergencyExitHandlerAdded(addr, msg.sender);
     }
     
-    function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) whenNotPaused {
+    function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
         emit Events.EmergencyExitHandlerRemoved(addr, msg.sender);
     }
+
 
     function isEmergencyExitHandler(address addr) external view returns (bool) {
         return hasRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
@@ -238,6 +251,7 @@ contract AccessController is AccessControl, Pausable {
 
 // -------------------- GLOBAL ADMIN FUNCTIONS ------------------------------------------------------------
 
+    // is multi-sig - so no whenNotPaused | to prevent blockage of risk functions on other contracts
     function isGlobalAdmin(address addr) public view returns (bool) {
         return hasRole(DEFAULT_ADMIN_ROLE, addr);
     }
@@ -275,7 +289,7 @@ contract AccessController is AccessControl, Pausable {
     }
 
     modifier onlyGlobalAdmin() {
-        require(isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), Errors.OnlyCallableByGlobalAdmin());
         _;
     }
 
