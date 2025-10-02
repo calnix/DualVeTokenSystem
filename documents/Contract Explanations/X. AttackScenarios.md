@@ -69,45 +69,52 @@ Step 6: Normal operations resume
 
 **Result:** Temporary DoS, but recoverable with proper procedure
 
-### Scenario 4: CronJob Manipulation During Epoch Transition ✅
+### Scenario 4: Critical Role Management During Epoch Transition ✅
 
 Step 1: Epoch N approaching end (1 hour remaining)
-Step 2: Unrelated security concern arises; AccessController remains fully operational (not pausable)
-Step 3: DevOps needs to add temporary cron job for epoch finalization
-Step 4: addCronJob() call proceeds as normal—no pause state to block action
-Step 5: Security controls enforced via multi-sig and role checks, not pausability
-Step 6: DevOps completes cron job addition; operational continuity maintained
+Step 2: Monitoring detects suspicious activity in PaymentsController
+Step 3: Monitor bot pauses PaymentsController as precaution
+Step 4: Primary cron job bot goes offline unexpectedly
+Step 5: CRON_JOB_ADMIN (multi-sig) needs to add backup cron job
+Step 6: Calls addCronJob() with new backup address - succeeds immediately
+Step 7: Backup cron job executes finalizeEpochRewardsSubsidies() on time
+Step 8: Epoch transitions successfully despite ongoing security investigation
 
-**Result:** Operational constraint, but secure
+**Result**: AccessController's non-pausable design ensures critical role management during emergencies. Multi-sig requirement maintains security without operational disruption.
 
-### Scenario 5: Emergency Exit Handler Deadlock ✅
+>If AccessController were pausable and got paused during the security incident, the protocol would have missed the epoch transition deadline, causing significant operational failure. The non-pausable design with multi-sig controls provides both security and reliability.
+
+### Scenario 5: Emergency Exit Handler During Crisis ✅
 
 Step 1: Major exploit discovered in protocol
-Step 2: All contracts paused as immediate response
-Step 3: AccessController paused to prevent role manipulation
-Step 4: Decision made to freeze contracts and exit
-Step 5: Contracts frozen successfully
-Step 6: Need to add emergency exit handler *[assuming none was added priori]*
-Step 7: addEmergencyExitHandler() BLOCKED - AccessController is paused
-Step 8: Global admin must unpause AccessController
-Step 9: Add emergency exit handler
-Step 10: Execute emergency exits
+Step 2: All operational contracts paused as immediate response
+Step 3: Global admin evaluates need for emergency exit procedures
+Step 4: Decision made to freeze contracts and activate emergency exit
+Step 5: Global admin adds emergency exit handler via addEmergencyExitHandler() *[assuming none was added priori]*
+Step 6: Handler address successfully granted EMERGENCY_EXIT_HANDLER_ROLE
+Step 7: Operational contracts frozen via freeze() calls
+Step 8: Emergency exit handler executes emergencyExit() on frozen contracts
+Step 9: Assets successfully recovered to designated safe address
+Step 10: Protocol shutdown complete with all funds secured
 
-**Result:** 
-- Requires careful sequencing but no deadlock.
-- Each contract must have an updated emergency handler address to avoid this scenario.
+**Result:**
+- Non-pausable AccessController enables seamless crisis management
+- No operational delays or sequencing issues
+- Critical role assignments remain available when most needed
+- Multi-sig requirement ensures only legitimate emergency handlers added
 
-### Scenario 6: Cross-Contract Permission Check During Pause ✅
+### Scenario 6: Cross-Contract Permission Check During Crisis ✅
 
-Step 1: AccessController is paused (role management blocked)
-Step 2: Monitor bot detects anomaly in VotingController
+Step 1: Multiple operational contracts paused due to security incident
+Step 2: Monitor bot detects additional anomaly in VotingController
 Step 3: Monitor bot calls VotingController.pause()
 Step 4: VotingController calls addressBook.getAccessController()
 Step 5: VotingController calls accessController.isMonitor(bot)
-Step 6: isMonitor() returns true (view function works despite pause)
+Step 6: isMonitor() returns true (permission check succeeds)
 Step 7: VotingController pause succeeds
+Step 8: Meanwhile, MONITOR_ADMIN can add/remove monitors as needed
 
-**Result:** Permission checks work even when AccessController paused
+**Result:** Non-pausable AccessController ensures permission infrastructure remains fully operational during emergencies, enabling coordinated response across all contracts
 
 ### Scenario 7: AddressBook as Cross-Contract Kill Switch ✅
 
@@ -132,14 +139,13 @@ Step 4: Operations that DON'T require address lookups continue:
 Step 1: Critical vulnerability discovered requiring permanent shutdown
 Step 2: Global admin initiates freeze sequence
 Step 3: Pause AddressBook
-Step 4: Pause AccessController
-Step 5: Pause all operational contracts (PaymentsController, VotingController, etc.)
-Step 6: Freeze AddressBook (requires paused state)
-Step 7: Freeze AccessController (requires paused state)
-Step 8: System permanently locked
-Step 9: No recovery possible - freeze is one-way
+Step 4: Pause all operational contracts (PaymentsController, VotingController, etc.)
+Step 5: Freeze AddressBook (requires paused state)
+Step 6: Freeze operational contracts (requires paused state)
+Step 7: System permanently locked
+Step 8: No recovery possible - freeze is one-way
 
-**Result:** Proper one-way freeze mechanism
+**Result:** Proper one-way freeze mechanism with AccessController remaining operational for emergency role management until the end
 
 ### Scenario 10: Role Admin Hierarchy Attack ✅
 
@@ -149,9 +155,8 @@ Step 3: Calls setRoleAdmin(MONITOR_ROLE, ATTACKER_CONTROLLED_ROLE)
 Step 4: Call requires DEFAULT_ADMIN_ROLE
 Step 5: Attacker doesn't have DEFAULT_ADMIN_ROLE
 Step 6: Transaction REVERTS
-Step 7: Even if attacker were global admin, cannot change while paused
 
-**Result:** Role hierarchy protected
+**Result:** Role hierarchy protected by multi-sig requirements
 
 ### Scenario 11: Time-Based Attack During Epoch Transition ⚠️
 
@@ -161,9 +166,9 @@ Step 3: Attacker rapidly adds malicious cron_job bot
 Step 4: Malicious cron_job bot calls finalizeEpochRewardsSubsidies()
 Step 5: Manipulated reward data submitted
 Step 6: Global admin detects anomaly
-Step 7: Global admin pauses AccessController
-Step 8: Cannot remove malicious cron job while paused
-Step 9: Epoch operations potentially compromised
+Step 7: Global admin immediately removes malicious cron job
+Step 8: Adds trusted cron job to correct the issue *[100% rectification of issue may not be possible]*
+Step 9: System recovers due to accessible role management
 
 **Result:** Epoch-end operational procedures must be executed with care and not automated via `set & forget`
 
