@@ -3,6 +3,7 @@ pragma solidity 0.8.27;
 
 // External: OZ
 import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {Pausable} from "./../lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
 import {Errors} from "./libraries/Errors.sol";
@@ -11,6 +12,7 @@ import {Events} from "./libraries/Events.sol";
 // interfaces
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
 
+
 /**
  * @title AccessControlLayer
  * @author Calnix [@cal_nix]
@@ -18,7 +20,7 @@ import {IAddressBook} from "./interfaces/IAddressBook.sol";
  */
 
 //note: get addresses from address book
-contract AccessController is AccessControl {
+contract AccessController is AccessControl, Pausable {
 
     IAddressBook internal immutable _addressBook;
   
@@ -35,9 +37,14 @@ contract AccessController is AccessControl {
     bytes32 public constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256("PAYMENTS_CONTROLLER_ADMIN_ROLE");
     bytes32 public constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256("VOTING_CONTROLLER_ADMIN_ROLE");
     bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = keccak256("ESCROWED_MOCA_ADMIN_ROLE");
+
     // [for multiple contracts]: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
-    bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE"); // withdraw fns on PaymentsController, VotingController
+    bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE");                   // withdraw fns on PaymentsController, VotingController
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
+
+
+    // Risk
+    uint256 public isFrozen;
 
 //-------------------------------Constructor-------------------------------------------------------
 
@@ -79,7 +86,7 @@ contract AccessController is AccessControl {
      * @param adminRole The new administrator role for the specified role
      * Emits a {RoleAdminChanged} event
     */
-    function setRoleAdmin(bytes32 role, bytes32 adminRole) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setRoleAdmin(bytes32 role, bytes32 adminRole) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         _setRoleAdmin(role, adminRole);
     }
 
@@ -87,12 +94,12 @@ contract AccessController is AccessControl {
 // -------------------- HIGH-FREQUENCY ROLE MANAGEMENT ----------------------------------------
 
     // Monitor role functions
-    function addMonitor(address addr) external noZeroAddress(addr) {
+    function addMonitor(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(MONITOR_ROLE, addr);
         emit Events.MonitorAdded(addr, msg.sender);
     }
 
-    function removeMonitor(address addr) external noZeroAddress(addr) {
+    function removeMonitor(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(MONITOR_ROLE, addr);
         emit Events.MonitorRemoved(addr, msg.sender);
     }
@@ -102,12 +109,12 @@ contract AccessController is AccessControl {
     }
 
     // CronJob role functions
-    function addCronJob(address addr) external noZeroAddress(addr) {
+    function addCronJob(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(CRON_JOB_ROLE, addr);
         emit Events.CronJobAdded(addr, msg.sender);
     }
 
-    function removeCronJob(address addr) external noZeroAddress(addr) {
+    function removeCronJob(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(CRON_JOB_ROLE, addr);
         emit Events.CronJobRemoved(addr, msg.sender);
     }
@@ -119,12 +126,12 @@ contract AccessController is AccessControl {
     // --------------- OPERATIONAL ADMIN ROLE MANAGEMENT ---------------
     
     // Monitor admin functions
-    function addMonitorAdmin(address addr) external noZeroAddress(addr) {
+    function addMonitorAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(MONITOR_ADMIN_ROLE, addr);
         emit Events.MonitorAdminAdded(addr, msg.sender);
     }
 
-    function removeMonitorAdmin(address addr) external noZeroAddress(addr) {
+    function removeMonitorAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(MONITOR_ADMIN_ROLE, addr);
         emit Events.MonitorAdminRemoved(addr, msg.sender);
     }
@@ -134,12 +141,12 @@ contract AccessController is AccessControl {
     }
 
     // CronJob admin functions
-    function addCronJobAdmin(address addr) external noZeroAddress(addr) {
+    function addCronJobAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(CRON_JOB_ADMIN_ROLE, addr);
         emit Events.CronJobAdminAdded(addr, msg.sender);
     }
 
-    function removeCronJobAdmin(address addr) external noZeroAddress(addr) {
+    function removeCronJobAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(CRON_JOB_ADMIN_ROLE, addr);
         emit Events.CronJobAdminRemoved(addr, msg.sender);
     }
@@ -151,12 +158,12 @@ contract AccessController is AccessControl {
 // -------------------- LOW-FREQUENCY STRATEGIC ROLES (managed by DEFAULT_ADMIN_ROLE) --------------------
 
     // PaymentsControllerAdmin role functions
-    function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
+    function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.PaymentsControllerAdminAdded(addr, msg.sender);
     }
 
-    function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
+    function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.PaymentsControllerAdminRemoved(addr, msg.sender);
     }
@@ -167,12 +174,12 @@ contract AccessController is AccessControl {
 
 
     // VotingControllerAdmin role functions
-    function addVotingControllerAdmin(address addr) external noZeroAddress(addr) {
+    function addVotingControllerAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.VotingControllerAdminAdded(addr, msg.sender);
     }
 
-    function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) {
+    function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.VotingControllerAdminRemoved(addr, msg.sender);
     }
@@ -183,12 +190,12 @@ contract AccessController is AccessControl {
 
 
     // EscrowedMocaAdmin role functions
-    function addEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
+    function addEscrowedMocaAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
         emit Events.EscrowedMocaAdminAdded(addr, msg.sender);
     }
     
-    function removeEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
+    function removeEscrowedMocaAdmin(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
         emit Events.EscrowedMocaAdminRemoved(addr, msg.sender);
     }
@@ -199,12 +206,12 @@ contract AccessController is AccessControl {
 
 
     // AssetManager role functions
-    function addAssetManager(address addr) external noZeroAddress(addr) {
+    function addAssetManager(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(ASSET_MANAGER_ROLE, addr);
         emit Events.AssetManagerAdded(addr, msg.sender);
     }
 
-    function removeAssetManager(address addr) external noZeroAddress(addr) {
+    function removeAssetManager(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(ASSET_MANAGER_ROLE, addr);
         emit Events.AssetManagerRemoved(addr, msg.sender);
     }
@@ -215,12 +222,12 @@ contract AccessController is AccessControl {
 
 
     // EmergencyExitHandler role functions
-    function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
+    function addEmergencyExitHandler(address addr) external noZeroAddress(addr) whenNotPaused {
         grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
         emit Events.EmergencyExitHandlerAdded(addr, msg.sender);
     }
     
-    function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) {
+    function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) whenNotPaused {
         revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
         emit Events.EmergencyExitHandlerRemoved(addr, msg.sender);
     }
@@ -231,34 +238,24 @@ contract AccessController is AccessControl {
 
 // -------------------- GLOBAL ADMIN FUNCTIONS ------------------------------------------------------------
 
-    function addGlobalAdmin(address addr) external noZeroAddress(addr) {
-        grantRole(DEFAULT_ADMIN_ROLE, addr);
-        emit Events.GlobalAdminAdded(addr, msg.sender);
-    }
-
-    function removeGlobalAdmin(address addr) external noZeroAddress(addr) {
-        // Prevent admin from removing themselves to avoid accidental lockout
-        require(msg.sender != addr, Errors.CannotRemoveSelfAsAdmin());
-        revokeRole(DEFAULT_ADMIN_ROLE, addr);
-        emit Events.GlobalAdminRemoved(addr, msg.sender);
-    }
-
-    function isGlobalAdmin(address addr) external view returns (bool) {
+    function isGlobalAdmin(address addr) public view returns (bool) {
         return hasRole(DEFAULT_ADMIN_ROLE, addr);
     }
 
     /**
-     * @notice Transfers the GlobalAdmin role from one address to another.
-     * @param oldAdmin The address to remove the role from.
-     * @param newAdmin The address to add the role to.
+     * @notice Atomically transfers the DEFAULT_ADMIN_ROLE (GlobalAdmin) from one address to another.
+     * @dev Only callable by the AddressBook contract to synchronize admin changes across the protocol.
+     *      Grants the role to the new admin before revoking from the old admin to ensure continuous access control.
+     *      Emits a {GlobalAdminTransferred} event.
+     * @param oldAdmin The address currently holding the DEFAULT_ADMIN_ROLE to be revoked.
+     * @param newAdmin The address to be granted the DEFAULT_ADMIN_ROLE.
      */
-    function transferGlobalAdminFromAddressBook(address oldAdmin, address newAdmin) external {
-        // Only AddressBook can call this
+    function transferGlobalAdminFromAddressBook(address oldAdmin, address newAdmin) external noZeroAddress(newAdmin) whenNotPaused {
+        // Only AddressBook can call this function
         require(msg.sender == address(_addressBook), Errors.OnlyCallableByAddressBook());
-        require(oldAdmin != address(0) && newAdmin != address(0), Errors.InvalidAddress());
-        
+
         // Verify the oldAdmin actually has the role
-        require(hasRole(DEFAULT_ADMIN_ROLE, oldAdmin), "Old admin doesn't have role");
+        require(hasRole(DEFAULT_ADMIN_ROLE, oldAdmin), Errors.OldAdminDoesntHaveRole());
         
         // Grant to new admin first (atomic operation)
         _grantRole(DEFAULT_ADMIN_ROLE, newAdmin);
@@ -275,5 +272,41 @@ contract AccessController is AccessControl {
     modifier noZeroAddress(address addr) {
         require(addr != address(0), Errors.InvalidAddress());
         _;
+    }
+
+    modifier onlyGlobalAdmin() {
+        require(isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
+        _;
+    }
+
+//-------------------------------Risk functions-----------------------------
+
+    /**
+     * @notice Pause the contract.
+     * @dev Only callable by the GlobalAdmin [multi-sig].
+     */
+    function pause() external whenNotPaused onlyGlobalAdmin {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _pause();
+    }
+
+    /**
+     * @notice Unpause the contract.
+     * @dev Only callable by the GlobalAdmin [multi-sig].
+     */
+    function unpause() external whenPaused onlyGlobalAdmin {
+        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        _unpause();
+    }
+
+    /**
+     * @notice Freeze the contract.
+     * @dev Only callable by the Owner [multi-sig].
+     *      This is a kill switch function
+     */
+    function freeze() external whenPaused onlyGlobalAdmin {
+        if(isFrozen == 1) revert Errors.IsFrozen();
+        isFrozen = 1;
+        emit Events.ContractFrozen();
     }
 }

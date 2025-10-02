@@ -101,8 +101,8 @@ library Errors {
     error OnlyCallableByPaymentsControllerAdmin();
 
     error OnlyCallableByVotingControllerContract();
-    error CannotRemoveSelfAsAdmin();
     // transferGlobalAdminFromAddressBook
     error OnlyCallableByAddressBook();
+    error OldAdminDoesntHaveRole();
 
 }

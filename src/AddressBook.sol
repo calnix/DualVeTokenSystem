@@ -80,9 +80,11 @@ contract AddressBook is Ownable2Step, Pausable {
         // Update the stored global admin
         _addresses[bytes32(0)] = newOwner;
         
-        // Update AccessController if it exists
+        // Update AccessController if it exists 
         address accessControllerAddr = _addresses[ACCESS_CONTROLLER];
         if (accessControllerAddr != address(0)) {
+            // transfer global admin from old owner to new owner
+            // will revert if AccessController is paused
             IAccessController(accessControllerAddr).transferGlobalAdminFromAddressBook(oldOwner, newOwner);
         }
         
