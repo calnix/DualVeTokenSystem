@@ -39,7 +39,7 @@ contract AddressBook is Ownable2Step, Pausable {
     bytes32 private constant ROUTER = 'ROUTER';
 
 
-    // Map of registered addresses
+    // Map of registered addresses | internal so that public getter can be custom paused
     mapping(bytes32 identifier => address registeredAddress) internal _addresses;
 
     // Risk
@@ -92,13 +92,6 @@ contract AddressBook is Ownable2Step, Pausable {
     
 // ------------------------------ Getters --------------------------------
 
-    /**
-       REVIEW: should these be whenNotPaused?   
-       if we pause this contract - assume a malicious actor has changed an address,
-       so pause all view functions as well. 
-       @audit : R - what do you think?   
-     */
-     
 
     /**
      * @notice Returns the registered address for a given identifier.
