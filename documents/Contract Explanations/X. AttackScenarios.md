@@ -20,14 +20,22 @@ Comprehensive security analysis of the Moca protocol's access control system, fo
 
 ## Contract State Interaction Matrix
 
-| AddressBook State | AccessController State | System Impact                                 | Recovery Path                |
-|:-----------------:|:---------------------:|:----------------------------------------------:|:----------------------------:|
-| **Active**        | **Active**            | Normal operations                              | N/A                         |
-| **Paused**        | **Active**            | All operations blocked (can't fetch AC address)| Unpause AddressBook          |
-| **Active**        | **Paused**            | Role checks work, role changes blocked         | Unpause AccessController     |
-| **Paused**        | **Paused**            | System fully locked                            | Global admin unpauses both   |
-| **Frozen**        | **Any**               | Permanent shutdown                             | No recovery                  |
-| **Any**           | **Frozen**            | Role structure permanently locked              | No recovery                  |
+| AddressBook State | System Impact                                  | Recovery Path                |
+|:-----------------:|:----------------------------------------------:|:----------------------------:|
+| **Active**        | Normal operations                              | N/A                          |
+| **Paused**        | All operations blocked (can't fetch AC address)| Unpause AddressBook          |
+| **Frozen**        | Permanent shutdown                             | No recovery                  |
+
+### Why AccessController is Not Pausable
+
+Unlike operational contracts, AccessController deliberately excludes pausable functionality:
+
+1. **Multi-sig Protection**: All role management already requires multi-sig coordination, providing inherent security
+2. **Emergency Response**: During crises, the ability to revoke compromised roles is critical - pausability would block this
+3. **No Deadlock Risk**: Role permission checks must remain functional for unpause/freeze operations
+4. **Clear Security Model**: Fast emergency response via monitor pauses on operational contracts, while role management remains secure through multi-sig
+
+This design ensures that even during protocol emergencies, the access control layer remains fully operational for critical role management tasks.
 
 ## Attack Scenarios Analysis
 
@@ -36,11 +44,9 @@ Comprehensive security analysis of the Moca protocol's access control system, fo
 Step 1: Security incident detected
 Step 2: Monitor bot calls pause() on all operational contracts
 Step 3: Global admin evaluates situation
-Step 4: Global admin pauses AccessController to prevent role changes
-Step 5: Try to add emergency handler: BLOCKED by pause
-Step 6: Global admin must unpause AccessController first
-Step 7: Add emergency handler
-Step 8: Re-pause AccessController
+Step 4: AccessController remains fully operational (not pausable)
+Step 5: Global admin can add or remove emergency handlers at any time
+Step 6: Role management and emergency response remain available throughout
 
 **Result:** System secure, proper authorization hierarchy maintained
 
@@ -56,28 +62,21 @@ Step 3: Transaction REVERTS - attacker is not the owner
 
 Step 1: Monitor bot private key compromised
 Step 2: Attacker uses compromised key to pause all operational contracts 
-        *Attacker cannot pause AccessController; only global admin can*
 Step 3: MONITOR_ADMIN detects abnormal pause activity
 Step 4: MONITOR_ADMIN calls removeMonitor() for compromised bot
-Step 6: If AccessController is paused:
-   - MONITOR_ADMIN cannot remove monitor
-   - Must escalate to Global Admin to unpause
-Step 7: Once AccessController is active, MONITOR_ADMIN removes bad monitor
-Step 8: MONITOR_ADMIN adds new trusted monitor
-Step 9: Normal operations resume
+Step 5: MONITOR_ADMIN adds new trusted monitor
+Step 6: Normal operations resume
 
 **Result:** Temporary DoS, but recoverable with proper procedure
 
 ### Scenario 4: CronJob Manipulation During Epoch Transition ✅
 
 Step 1: Epoch N approaching end (1 hour remaining)
-Step 2: AccessController paused due to unrelated security concern
+Step 2: Unrelated security concern arises; AccessController remains fully operational (not pausable)
 Step 3: DevOps needs to add temporary cron job for epoch finalization
-Step 4: addCronJob() call REVERTS - AccessController is paused
-Step 5: DevOps must choose:
-    Option A: Unpause AccessController temporarily (risk exposure)
-    Option B: Miss epoch finalization (operational impact)
-Step 6: Decision made based on risk assessment
+Step 4: addCronJob() call proceeds as normal—no pause state to block action
+Step 5: Security controls enforced via multi-sig and role checks, not pausability
+Step 6: DevOps completes cron job addition; operational continuity maintained
 
 **Result:** Operational constraint, but secure
 

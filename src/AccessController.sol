@@ -3,7 +3,6 @@ pragma solidity 0.8.27;
 
 // External: OZ
 import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
-import {Pausable} from "./../lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
 import {Errors} from "./libraries/Errors.sol";
@@ -14,13 +13,21 @@ import {IAddressBook} from "./interfaces/IAddressBook.sol";
 
 
 /**
- * @title AccessControlLayer
+ * @title AccessController
  * @author Calnix [@cal_nix]
  * @notice Centralized access control layer managing all system roles and permissions.
+ * @dev No pausable functionality as it is not needed for this contract.
+ *      All role management functions are inherently protected by multi-sig requirements:
+ *      - Strategic roles (PAYMENTS_CONTROLLER_ADMIN, ASSET_MANAGER, etc.) are managed directly by DEFAULT_ADMIN_ROLE (multi-sig)
+ *      - Operational roles (MONITOR, CRON_JOB) are managed by their respective admin roles (MONITOR_ADMIN, CRON_JOB_ADMIN) which are also multi-sigs
+ *      - Making AccessController pausable would prevent emergency response (unable to revoke compromised roles when most needed)
+ *      - Role permission checks must remain functional during protocol emergencies to allow unpause/freeze operations
+ *      The protocol's security model relies on fast emergency response via monitor pause capabilities on operational contracts,
+ *      while role management remains deliberately slow and secure through multi-sig coordination.
  */
 
 //note: get addresses from address book
-contract AccessController is AccessControl, Pausable {
+contract AccessController is AccessControl {
 
     IAddressBook internal immutable _addressBook;
   
@@ -86,7 +93,7 @@ contract AccessController is AccessControl, Pausable {
      * @param adminRole The new administrator role for the specified role
      * Emits a {RoleAdminChanged} event
     */
-    function setRoleAdmin(bytes32 role, bytes32 adminRole) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setRoleAdmin(bytes32 role, bytes32 adminRole) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRoleAdmin(role, adminRole);
     }
 
@@ -94,48 +101,44 @@ contract AccessController is AccessControl, Pausable {
 // -------------------- HIGH-FREQUENCY ROLE MANAGEMENT ----------------------------------------
 
     // Monitor role functions
-    function addMonitor(address addr) external noZeroAddress(addr) whenNotPaused {
+    function addMonitor(address addr) external noZeroAddress(addr) {
         grantRole(MONITOR_ROLE, addr);
         emit Events.MonitorAdded(addr, msg.sender);
     }
 
-    function removeMonitor(address addr) external noZeroAddress(addr) whenNotPaused {
+    function removeMonitor(address addr) external noZeroAddress(addr) {
         revokeRole(MONITOR_ROLE, addr);
         emit Events.MonitorRemoved(addr, msg.sender);
     }
 
-    // is EOA - so no whenNotPaused | in case attacker slips through
-    function isMonitor(address addr) external view whenNotPaused returns (bool) {
+    function isMonitor(address addr) external view returns (bool) {
         return hasRole(MONITOR_ROLE, addr);
     }
 
 
     // CronJob role functions
-    function addCronJob(address addr) external noZeroAddress(addr) whenNotPaused {
+    function addCronJob(address addr) external noZeroAddress(addr) {
         grantRole(CRON_JOB_ROLE, addr);
         emit Events.CronJobAdded(addr, msg.sender);
     }
 
-    function removeCronJob(address addr) external noZeroAddress(addr) whenNotPaused {
+    function removeCronJob(address addr) external noZeroAddress(addr) {
         revokeRole(CRON_JOB_ROLE, addr);
         emit Events.CronJobRemoved(addr, msg.sender);
     }
 
-    // is EOA - so no whenNotPaused | in case attacker slips through
-    function isCronJob(address addr) external view whenNotPaused returns (bool) {
+    function isCronJob(address addr) external view returns (bool) {
         return hasRole(CRON_JOB_ROLE, addr);
     }
     
     // --------------- OPERATIONAL ADMIN ROLE MANAGEMENT ---------------
     
     // Monitor admin functions
-    // is multi-sig - so no whenNotPaused
     function addMonitorAdmin(address addr) external noZeroAddress(addr) {
         grantRole(MONITOR_ADMIN_ROLE, addr);
         emit Events.MonitorAdminAdded(addr, msg.sender);
     }
 
-    // is multi-sig - so no whenNotPaused
     function removeMonitorAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(MONITOR_ADMIN_ROLE, addr);
         emit Events.MonitorAdminRemoved(addr, msg.sender);
@@ -146,13 +149,11 @@ contract AccessController is AccessControl, Pausable {
     }
 
     // CronJob admin functions
-    // is multi-sig - so no whenNotPaused
     function addCronJobAdmin(address addr) external noZeroAddress(addr) {
         grantRole(CRON_JOB_ADMIN_ROLE, addr);
         emit Events.CronJobAdminAdded(addr, msg.sender);
     }
 
-    // is multi-sig - so no whenNotPaused
     function removeCronJobAdmin(address addr) external noZeroAddress(addr) {
         revokeRole(CRON_JOB_ADMIN_ROLE, addr);
         emit Events.CronJobAdminRemoved(addr, msg.sender);
@@ -176,8 +177,7 @@ contract AccessController is AccessControl, Pausable {
     }
 
 
-    // whenNotPaused to block role from being used to make contract params changes, if contract is paused
-    function isPaymentsControllerAdmin(address addr) external view whenNotPaused returns (bool) {
+    function isPaymentsControllerAdmin(address addr) external view returns (bool) {
         return hasRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
     }
 
@@ -193,8 +193,7 @@ contract AccessController is AccessControl, Pausable {
         emit Events.VotingControllerAdminRemoved(addr, msg.sender);
     }
 
-    // whenNotPaused to block role from being used to make contract params changes, if contract is paused
-    function isVotingControllerAdmin(address addr) external view whenNotPaused returns (bool) {
+    function isVotingControllerAdmin(address addr) external view returns (bool) {
         return hasRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
     }
 
@@ -210,8 +209,7 @@ contract AccessController is AccessControl, Pausable {
         emit Events.EscrowedMocaAdminRemoved(addr, msg.sender);
     }
 
-    // whenNotPaused to block role from being used to make contract params changes, if contract is paused
-    function isEscrowedMocaAdmin(address addr) external view whenNotPaused returns (bool) {
+    function isEscrowedMocaAdmin(address addr) external view returns (bool) {
         return hasRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
     }
 
@@ -227,8 +225,7 @@ contract AccessController is AccessControl, Pausable {
         emit Events.AssetManagerRemoved(addr, msg.sender);
     }
 
-    // whenNotPaused to block role from being used to make withdrawals, if contract is paused
-    function isAssetManager(address addr) external view whenNotPaused returns (bool) {
+    function isAssetManager(address addr) external view returns (bool) {
         return hasRole(ASSET_MANAGER_ROLE, addr);
     }
 
@@ -251,7 +248,6 @@ contract AccessController is AccessControl, Pausable {
 
 // -------------------- GLOBAL ADMIN FUNCTIONS ------------------------------------------------------------
 
-    // is multi-sig - so no whenNotPaused | to prevent blockage of risk functions on other contracts
     function isGlobalAdmin(address addr) public view returns (bool) {
         return hasRole(DEFAULT_ADMIN_ROLE, addr);
     }
@@ -264,7 +260,7 @@ contract AccessController is AccessControl, Pausable {
      * @param oldAdmin The address currently holding the DEFAULT_ADMIN_ROLE to be revoked.
      * @param newAdmin The address to be granted the DEFAULT_ADMIN_ROLE.
      */
-    function transferGlobalAdminFromAddressBook(address oldAdmin, address newAdmin) external noZeroAddress(newAdmin) whenNotPaused {
+    function transferGlobalAdminFromAddressBook(address oldAdmin, address newAdmin) external noZeroAddress(newAdmin) {
         // Only AddressBook can call this function
         require(msg.sender == address(_addressBook), Errors.OnlyCallableByAddressBook());
 
@@ -286,41 +282,5 @@ contract AccessController is AccessControl, Pausable {
     modifier noZeroAddress(address addr) {
         require(addr != address(0), Errors.InvalidAddress());
         _;
-    }
-
-    modifier onlyGlobalAdmin() {
-        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), Errors.OnlyCallableByGlobalAdmin());
-        _;
-    }
-
-//-------------------------------Risk functions-----------------------------
-
-    /**
-     * @notice Pause the contract.
-     * @dev Only callable by the GlobalAdmin [multi-sig].
-     */
-    function pause() external whenNotPaused onlyGlobalAdmin {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
-        _pause();
-    }
-
-    /**
-     * @notice Unpause the contract.
-     * @dev Only callable by the GlobalAdmin [multi-sig].
-     */
-    function unpause() external whenPaused onlyGlobalAdmin {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
-        _unpause();
-    }
-
-    /**
-     * @notice Freeze the contract.
-     * @dev Only callable by the Owner [multi-sig].
-     *      This is a kill switch function
-     */
-    function freeze() external whenPaused onlyGlobalAdmin {
-        if(isFrozen == 1) revert Errors.IsFrozen();
-        isFrozen = 1;
-        emit Events.ContractFrozen();
     }
 }
