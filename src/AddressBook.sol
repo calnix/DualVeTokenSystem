@@ -66,12 +66,11 @@ contract AddressBook is Ownable2Step, Pausable {
     }
 
 
-
     /**
-    * @notice Override to sync AccessController when ownership changes
-    * @dev Called when acceptOwnership() is executed by the new owner
-    * @param newOwner The address accepting ownership
-    */
+     * @notice Overrides to allow synchronization with AccessController, with new global admin when contract ownership changes.
+     * @dev Invoked when acceptOwnership() is executed by the new owner; updates global admin in AccessController (if registered).
+     * @param newOwner Address assuming contract ownership and global admin role.
+     */
     function _transferOwnership(address newOwner) internal virtual override {
         address oldOwner = owner();
         
