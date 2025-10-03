@@ -1,0 +1,795 @@
+# VotingController Contract 
+
+## Executive Summary
+
+VotingController is the central governance hub of the protocol's voting ecosystem. 
+- manages voting power allocation, reward distribution, and subsidy payments. 
+- enables users to vote on credential pools, delegates to manage voting on behalf of others, and verifiers to receive subsidies for their services.
+
+Think of VotingController as a sophisticated voting booth combined with a rewards distribution center - users cast votes to direct protocol resources, earn rewards for participation, and delegates can offer professional voting services for a fee.
+
+## Table of Contents
+
+1. [Key & Unique Design Components](#key--unique-design-components)
+   - [On-Chain Delegations with Fee Charging](#1-on-chain-delegations-with-fee-charging)
+   - [Historical Fee Tracking Solution](#2-historical-fee-tracking-solution)
+2. [Core Concepts](#2-core-concepts)
+   - [What is VotingController?](#what-is-votingcontroller)
+   - [Key Participants](#key-participants)
+   - [The Epoch System](#the-epoch-system)
+3. [Architecture Overview](#3-architecture-overview)
+   - [Dual-Accounting Model](#dual-accounting-model)
+   - [Integration Points](#integration-points)
+4. [Key Features](#4-key-features)
+   - [Voting Mechanics](#voting-mechanics)
+   - [Delegation System](#delegation-system)
+   - [Rewards & Subsidies](#rewards--subsidies)
+5. [Contract Walkthrough](#5-contract-walkthrough)
+   - [State Variables](#state-variables)
+   - [Core Functions](#core-functions)
+6. [User Flows](#6-user-flows)
+   - [Voting Flow](#voting-flow)
+   - [Delegation Flow](#delegation-flow)
+   - [Claiming Rewards](#claiming-rewards)
+7. [Technical Deep Dive](#7-technical-deep-dive)
+   - [Historical Fee Tracking](#historical-fee-tracking)
+   - [Residuals Management](#residuals-management)
+   - [Gas Optimization](#gas-optimization)
+8. [Security & Risk Management](#8-security--risk-management)
+
+---
+
+## Key & Unique Design components
+
+### 1. **On-Chain Delegations with Fee Charging** 
+
+Unlike major protocols like Aerodrome that rely on external off-chain relayers for delegation management, VotingController processes all delegations entirely on-chain. This groundbreaking approach ensures:
+
+- **Complete Transparency**: All delegation activities and fee calculations are verifiable on-chain
+- **Trustless Operation**: No dependency on third-party relayers or off-chain scripts
+- **Accurate Fee Distribution**: Fees are calculated and distributed precisely between delegators and delegates
+
+Most protocols avoid on-chain delegation due to the complexity of handling dynamic fee updates and gas costs. We've solved these challenges through innovative design patterns and gas-efficient implementations.
+
+### 2. **Historical Fee Tracking Solution**
+
+Traditional Ve systems struggle with calculation and distributing delegation fees on-chain
+
+- Rewards are distributed on an epoch basis
+- Delegate fees are applied at the prevailing currentFee - the delegate's fee value at the time of a user's reward claim. 
+- This leads to inaccuracies because fees could have been updated any time - a user claiming for some arbitrary past epoch would be subject to the current fee.
+- If a delegate increased its fee mid-cycle (e.g., after your veTokens were snapshotted but before rewards were emitted), the current fee would overcharge you retroactively during claims.
+
+>**TLDR**: the dumb approach is to simply charge the user the prevailing delegate fee at the time of claiming; whatever that may be.
+
+#### How We Solved It: Historical Fee Snapshots and Epoch-Specific Queries
+
+We've implemented a historical fee tracking system that ensures complete fairness:
+
+- fee decreases to be applied instantly and logged
+- fee increases to be applied with delay, meaning it comes into effect in some future epoch.
+
+To ensure fees are accurately applied per epoch, we introduced a system leveraging the dual-account system; supporting that by introducing `delegateHistoricalFees` mapping: 
+
+```solidity
+// 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+mapping(address delegate => mapping(uint256 epoch => uint256 currentFeePct)) public delegateHistoricalFees;  
+```
+
+**How It Works:**
+- **Fee Decreases**: Applied immediately to benefit users
+- **Fee Increases**: Subject to a mandatory delay (e.g., 6 epochs), preventing surprise changes
+- **Epoch-Specific Tracking**: When delegates vote, their current fee is snapshot for that epoch
+- **Fair Claims**: Users always pay the fee that was active when their rewards were earned, not the current fee
+
+This approach eliminates the possibility of delegates gaming the system by changing fees retroactively, ensuring a fair and predictable experience for all participants.
+
+>There were other approaches that were tested out, see below section 'Design choices'.
+
+## 1. Core Concepts
+
+### What is VotingController?
+
+VotingController is a smart contract that orchestrates the protocol's governance through a vote-to-earn mechanism. It allows token holders to:
+- Direct protocol resources by voting on credential pools
+- Earn rewards proportional to their voting participation
+- Delegate voting power to professional voters (delegates)
+- Distribute subsidies to service providers (verifiers)
+
+### Key Participants
+
+**1. Voters (veToken Holders)**
+- Hold veMOCA tokens (voting power) from VotingEscrowMoca contract
+- Vote on credential pools to direct protocol resources
+- Earn esMOCA rewards based on future verification fees
+
+**2. Delegates**
+- Professional voters who manage voting on behalf of others
+- Charge fees (as a percentage) for their services
+- Must register and pay a one-time registration fee
+
+**3. Verifiers**
+- Service providers who verify credentials
+- Receive subsidies based on their activity and pool votes
+- Claim subsidies after epoch finalization
+
+**4. Protocol Administrators**
+- Manage epoch transitions and fund distribution
+- Set protocol parameters and handle emergency situations
+
+### The Epoch System
+
+The protocol operates in fixed time periods called "epochs":
+- Each epoch represents a voting and reward cycle
+- Votes cast in epoch N influence rewards distributed in epoch N+1
+- Epochs have clear start/end boundaries for fair accounting
+- All rewards and subsidies are calculated per epoch
+
+**1 Epoch is 14 days.**
+
+## 2. Architecture Overview
+
+### Dual-Accounting Model
+
+VotingController implements a unique dual-accounting system where every address maintains two separate accounts:
+
+**Personal Account**: Tracks direct voting activity
+- Records votes cast with user's own veMOCA
+- Accumulates rewards from personal voting
+
+**Delegate Account**: Tracks delegated voting activity
+- Records votes cast with delegated veMOCA from others
+- Accumulates gross rewards and fees earned as a delegate
+
+This design allows any address to seamlessly switch between being a voter and a delegate without separate contracts or complex state management.
+
+### Integration Points
+
+VotingController integrates with several other contracts:
+```
+┌─────────────────────┐
+│ VotingEscrowMoca │ ◄── Provides voting power (veMOCA)
+└──────────┬──────────┘
+│
+┌──────────▼──────────┐
+│ VotingController │ ◄── Central voting & rewards hub
+└──────────┬──────────┘
+│
+┌──────────▼──────────┐
+│ PaymentsController │ ◄── Tracks verification fees & subsidies
+└─────────────────────┘
+```
+
+
+## 3. Key Features
+
+### Voting Mechanics
+
+**Forward-Decay Voting Power**
+- Voting power is calculated at the end of the current epoch
+- Prevents gaming through time-based decay
+- Ensures fair representation across the epoch
+
+**Multi-Pool Voting**
+- Users can vote on multiple pools in a single transaction
+- Vote migration allowed within the current epoch; without any decay penalty
+
+### Delegation System
+
+**On-Chain Delegation**
+- Fully on-chain delegation (unlike competitors using off-chain relayers)
+- Delegates set fee percentages (e.g., 10% of rewards)
+- Fee increases have mandatory delay (protection for delegators)
+- Fee decreases apply immediately (user-friendly)
+
+**Historical Fee Tracking**
+- Fees are tracked per epoch to ensure fairness
+- Users pay the fee that was active when rewards were earned
+- Prevents retroactive fee changes from affecting past epochs
+
+### Rewards & Subsidies
+
+**Voting Rewards (for Voters)**
+- Funded by verification fees from PaymentsController
+- Distributed proportionally: `userRewards = (userVotes × poolRewards) / totalPoolVotes`
+- Claimed in esMOCA tokens
+- "Bet on the future" model - vote in epoch N, earn from epoch N+1 fees
+
+**Verification Subsidies (for Verifiers)**
+- Treasury-funded incentives for verifiers
+- Proportional to verifier activity and pool votes
+- Claimed after epoch finalization
+
+## 4. Contract Walkthrough
+
+### State Variables
+
+#### Global Counters
+```solidity
+uint256 public TOTAL_NUMBER_OF_POOLS;        // Active pool count
+uint256 public TOTAL_SUBSIDIES_DEPOSITED;    // Total subsidies ever deposited
+uint256 public TOTAL_SUBSIDIES_CLAIMED;      // Total subsidies ever claimed
+```
+
+#### Configuration Parameters
+```solidity
+uint256 public UNCLAIMED_DELAY_EPOCHS;       // Delay before unclaimed funds can be swept
+uint256 public REGISTRATION_FEE;             // Fee to register as delegate (in MOCA)
+uint256 public MAX_DELEGATE_FEE_PCT;         // Maximum delegate fee (10000 = 100%)
+uint256 public FEE_INCREASE_DELAY_EPOCHS;    // Delay for fee increases
+```
+
+#### Core Mappings
+
+**Epoch & Pool Data**
+```solidity
+mapping(uint256 => DataTypes.Epoch) epochs;              // Global epoch data
+mapping(bytes32 => DataTypes.Pool) pools;                // Global pool data
+mapping(uint256 => mapping(bytes32 => DataTypes.PoolEpoch)) epochPools;  // Per-epoch pool data
+```
+
+**User & Delegate Accounting**
+```solidity
+// Personal voting
+mapping(uint256 => mapping(address => DataTypes.Account)) usersEpochData;
+mapping(uint256 => mapping(bytes32 => mapping(address => DataTypes.Account))) usersEpochPoolData;
+
+// Delegated voting
+mapping(uint256 => mapping(address => DataTypes.Account)) delegateEpochData;
+mapping(uint256 => mapping(bytes32 => mapping(address => DataTypes.Account))) delegatesEpochPoolData;
+```
+
+### Core Functions
+
+#### Voting Functions
+
+**`vote(bytes32[] poolIds, uint128[] poolVotes, bool isDelegated)`**
+- Cast votes for one or more pools
+- `isDelegated`: true = use delegated voting power, false = use personal power
+- Validates voting power availability
+- Updates all relevant vote tallies
+
+**`migrateVotes(bytes32[] srcPoolIds, bytes32[] dstPoolIds, uint128[] poolVotes, bool isDelegated)`**
+- Move votes between pools within current epoch
+- Useful for reacting to changing pool performance
+- Maintains vote conservation (no creation/destruction)
+
+#### Delegation Functions
+
+**`registerAsDelegate(uint128 feePct)`**
+- Register as a delegate with specified fee percentage
+- Requires payment of registration fee
+- Activates delegate status in VotingEscrowMoca
+
+**`updateDelegateFee(uint128 feePct)`**
+- Modify delegate fee percentage
+- Increases: apply after delay (protect delegators)
+- Decreases: apply immediately
+
+#### Claiming Functions
+
+**`voterClaimRewards(uint256 epoch, bytes32[] poolIds)`**
+- Claim rewards from personal voting
+- Must wait for epoch finalization
+- Rewards paid in esMOCA
+
+**`claimRewardsFromDelegate(uint256 epoch, address[] delegates, bytes32[][] poolIdsPerDelegate)`**
+- Claim rewards from delegated voting
+- Automatically deducts delegate fees
+- Supports multiple delegates in one transaction
+
+**`claimDelegateFees(uint256 epoch, address[] delegators, bytes32[][] poolIdsPerDelegator)`**
+- Delegates claim their earned fees
+- Processes multiple delegators efficiently
+- Transfers net rewards to delegators
+
+#### Restricted Functions
+
+**Pool Management (CronJob Role)**
+
+**`createPool()`**
+- Creates a new voting pool with unique identifier
+- Blocked during active epoch finalization
+- Increments global pool counter
+- Returns: `bytes32` poolId
+
+**`removePool(bytes32 poolId)`**
+- Removes a pool from active voting
+- Can only be called before subsidies are deposited
+- Prevents epoch finalization issues
+- Decrements global pool counter
+
+**Epoch Management (CronJob Role)**
+
+**`depositEpochSubsidies(uint256 epoch, uint128 subsidies)`**
+- Deposits treasury-funded subsidies for distribution
+- Must be called after epoch ends, before finalization
+- Can only be called once per epoch
+- Subsidies can be zero
+
+**`finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] poolIds, uint128[] rewards)`**
+- Finalizes rewards and subsidies for pools
+- Calculates pool-specific allocations
+- Marks pools as processed
+- Can be called multiple times to process all pools
+
+**Configuration Functions (VotingControllerAdmin Role)**
+
+**`setMaxDelegateFeePct(uint128 maxFeePct)`**
+- Sets maximum allowed delegate fee percentage
+- Value must be > 0 and < 100% (10000)
+- Protects delegators from excessive fees
+
+**`setFeeIncreaseDelayEpochs(uint256 delayEpochs)`**
+- Sets delay period for delegate fee increases
+- Must be multiple of epoch duration
+- Provides predictability for delegators
+
+**`setUnclaimedDelay(uint256 newDelayEpoch)`**
+- Sets delay before unclaimed funds can be swept
+- Applies to both rewards and subsidies
+- Must be multiple of epoch duration
+
+**`setDelegateRegistrationFee(uint256 newRegistrationFee)`**
+- Updates fee required to register as delegate
+- Can be set to zero
+- Collected fees go to protocol treasury
+
+**Asset Recovery Functions (AssetManager Role)**
+
+**`withdrawUnclaimedRewards(uint256 epoch)`**
+- Sweeps unclaimed rewards after delay period
+- Includes both unclaimed and residual amounts
+- Transfers to protocol treasury
+
+**`withdrawUnclaimedSubsidies(uint256 epoch)`**
+- Sweeps unclaimed subsidies after delay period
+- Recovers funds not claimed by verifiers
+- Transfers to protocol treasury
+
+**`withdrawRegistrationFees()`**
+- Withdraws collected delegate registration fees
+- Tracks claimed vs. unclaimed amounts
+- Transfers to protocol treasury
+
+#### Risk Management Functions
+
+**`pause()` (Monitor Role)**
+- Immediately halts all user operations
+- Can be called by automated monitoring systems
+- Cannot be called if contract is frozen
+
+**`unpause()` (GlobalAdmin Role)**
+- Resumes normal operations after pause
+- Requires multi-signature approval
+- Cannot be called if contract is frozen
+
+**`freeze()` (GlobalAdmin Role)**
+- Permanently disables the contract
+- One-way operation (cannot be unfrozen)
+- Enables emergency asset recovery
+
+**`emergencyExit()` (EmergencyExitHandler Role)**
+- Recovers all contract-held assets when frozen
+- Transfers esMOCA and MOCA to treasury
+- Disregards all outstanding claims
+- Last resort for critical failures
+
+ 
+
+
+## 5. User Flows
+
+### Voting Flow
+
+1. User holds veMOCA (from VotingEscrowMoca)
+2. User calls vote() with pool selections
+3. Contract validates available voting power
+4. Votes recorded for current epoch
+5. After epoch N+1 ends, user can claim reward
+
+### Delegation Flow
+
+**For Delegators:**
+1. User delegates veMOCA to registered delegate
+2. Delegate votes on user's behalf
+3. User claims rewards minus delegate fee
+
+**For Delegates:**
+1. Register as delegate and set fee percentage  
+2. Receive delegated veMOCA from users  
+3. Vote using aggregated delegated power  
+4. Claim fees from delegator rewards
+
+
+### Claiming Rewards
+
+The claiming process follows strict epoch boundaries:
+
+1. **Epoch N**: Users vote on pools
+2. **Epoch N+1**: Pools generate verification fees
+3. **End of Epoch N+1**: Admin finalizes epoch with rewards
+4. **After finalization**: Users claim their proportional rewards
+
+## 6. End of epoch execution flows
+
+When an epoch ends, several critical operations must occur in a specific order, to distribute rewards and subsidies:
+1. Deposit subsidies for the completed epoch
+2. Finalize rewards and subsidies allocation for each pool
+3. Enable claims for voters and verifiers
+
+### Step 1: Deposit Epoch Subsidies
+
+**Function:** `depositEpochSubsidies(uint256 epoch, uint128 subsidies)`  
+**Caller:** CronJob (authorized automated system)  
+**When:** After epoch ends, before finalization
+
+This function deposits treasury-funded subsidies that will be distributed to verifiers based on their activity and the votes their pools received.
+
+**Why deposit at epoch end?**
+- `epoch.totalVotes` is finalized - no more votes can be cast
+- Enables sanity checking: Can preview if subsidies would result in meaningful distribution
+- Prevents depositing amounts so small they'd round to zero when distributed
+- Avoids locking funds that would be unclaimable
+
+**Key Features:**
+- Can only be called once per epoch (prevents accidental double deposits)
+- Subsidies can be zero (some epochs may not have subsidy programs)
+- If no votes were cast in the epoch, subsidies are not deposited
+- Sets `isSubsidiesSet = true` flag to indicate completion
+
+**Best Practice:** 
+Before calling `depositEpochSubsidies`, use the preview function to ensure the subsidy amount will result in meaningful distributions and won't be lost to rounding.
+
+### Step 2: Finalize Epoch Rewards and Subsidies
+
+**Function:** `finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] poolIds, uint128[] rewards)`  
+**Caller:** CronJob (authorized automated system)  
+**When:** After subsidies are deposited
+
+This function performs the critical task of allocating rewards and subsidies to each pool based on votes received.
+It is expected to be called repeatedly to process all the pools.
+
+**For Rewards (Voters):**
+- Rewards come from verification fees collected in PaymentsController
+- Protocol references `PaymentsController._epochPoolFeesAccrued[epoch][poolId].feesAccruedToVoters`
+- Each pool receives rewards proportional to verification activity
+- Rewards are set per pool: `epochPools[epoch][poolId].totalRewardsAllocated`
+
+**For Subsidies (Verifiers):**
+- Calculates each pool's share: `poolSubsidies = (poolVotes × totalSubsidies) / totalVotes`
+- Only allocates if result is greater than zero (prevents dust)
+- Updates `epochPools[epoch][poolId].totalSubsidiesAllocated`
+
+**Important Safeguards:**
+- Skips pools with zero votes (prevents division by zero)
+- Skips allocations that would round to zero
+- Marks each pool as `isProcessed` to prevent double processing
+- When all pools are processed, sets `epoch.isFullyFinalized = true`
+
+### Step 3: Claims Open for Voters
+
+**Function:** `voterClaimRewards(uint256 epoch, bytes32[] poolIds)`  
+**Caller:** Individual voters  
+**When:** After epoch is fully finalized
+
+Once finalization is complete, voters can claim their earned rewards:
+
+**Personal Voting Rewards:**
+- Users who voted directly claim via `voterClaimRewards`
+- Rewards calculated as: `userRewards = (userVotes × poolRewards) / totalVotes`
+- Paid in esMOCA tokens
+- Can claim multiple pools in one transaction
+
+**Delegated Voting Rewards:**
+- Users who delegated claim via `claimRewardsFromDelegate`
+- Automatically deducts delegate fees based on historical rates
+- Supports claiming from multiple delegates in one transaction
+- Net rewards transferred to user, fees to delegate
+
+### Step 4: Claims Open for Verifiers
+
+**Function:** `claimSubsidies(uint256 epoch, bytes32 verifierId, bytes32[] poolIds)`  
+**Caller:** Verifier asset addresses  
+**When:** After epoch is fully finalized
+
+Verifiers claim subsidies based on their activity:
+
+**Subsidy Calculation:**
+1. Get verifier's activity from PaymentsController
+2. Calculate share: `(verifierActivity / poolActivity) × poolSubsidies`
+3. Transfer esMOCA to verifier's asset address
+
+**Important Notes:**
+- Only the verifier's registered asset address can claim
+- Prevents double claims via per-pool tracking
+- Supports batch claims across multiple pools
+
+### Step 5: Delegate Fee Claims
+
+**Function:** `claimDelegateFees(uint256 epoch, address[] delegators, bytes32[][] poolIdsPerDelegator)`  
+**Caller:** Registered delegates  
+**When:** After epoch is fully finalized
+
+Delegates can claim their earned fees from managing delegated voting power:
+- Processes multiple delegators in one transaction
+- Transfers net rewards to delegators, fees to delegate
+- Uses historical fee rates (not current rates)
+
+### Post-Epoch Cleanup
+
+After a sufficient delay (defined by `UNCLAIMED_DELAY_EPOCHS`), the protocol can recover unclaimed funds:
+
+**`withdrawUnclaimedRewards(uint256 epoch)`** - Recovers unclaimed voter rewards  
+**`withdrawUnclaimedSubsidies(uint256 epoch)`** - Recovers unclaimed verifier subsidies
+
+These functions ensure no funds remain stuck in the contract indefinitely, while giving participants ample time to claim.
+
+### Timeline Example
+
+For a concrete example with 14-day epochs:
+- **Day 0-14**: Epoch N active (voting occurs)
+- **Day 14**: Epoch N ends
+- **Day 14-15**: Admin deposits subsidies and finalizes rewards
+- **Day 15+**: Claims open for epoch N
+- **Day 98+**: Unclaimed funds can be swept (assuming 6 epoch delay)
+
+This careful sequencing ensures fairness, prevents gaming, and maintains the integrity of the vote-to-earn mechanism.
+
+# **Design choices: Technical deep dive**
+
+## Rewards & Subsidies: Optimal Distribution
+
+### The Core Challenge
+
+Distributing rewards and subsidies in a way that is fair, precise, and robust is non-trivial. The naive approach—pre-calculating per-vote rates and distributing based on those—leads to stuck funds, unfairness for small participants, and operational headaches. We designed our system to avoid these pitfalls and ensure every token is either claimable or recoverable, with no silent losses or deadweight.
+
+---
+
+### The Problem with Pre-Calculation
+
+**Rewards:**  
+Traditionally, protocols pre-calculate a `rewardsPerVote` value for each pool: `rewardsPerVote = (poolRewards * 1e18) / totalVotes`
+This value is then used to determine each user’s claim: `userRewards = userVotes * rewardsPerVote / 1e18`
+
+But this approach is fundamentally flawed:
+- If `poolRewards` is small relative to `totalVotes`, `rewardsPerVote` for that pool can floor to zero, blocking epoch finalization and leaving rewards stuck.
+- Small voters are often zeroed out; while large voters can claim, it would be rounded down values.
+- Increasing pool rewards to avoid zeroing out is not an option, as pool rewards are financed by the PaymentsController[accrued verification fees].
+
+**Subsidies:**  
+A similar issue arises with subsidies. 
+Pre-calculating `subsidyPerVote` at the epoch level: `subsidyPerVote = subsidies / totalVotes`, means that small subsidies in high-vote epochs are floored to zero, making them undistributable.
+
+*Example:*
+
+```bash
+- Assume: totalRewards=5, totalVotes=10:
+    - User A with 3 votes: (3*5)/10 = 15/10 = 1 (floored from 1.5).
+    - User B with 1 vote: (1*5)/10 = 5/10 = 0 (floored from 0.5).
+
+UserB has no rewards to claim.
+``` 
+
+### Our Solution: Proportional, On-Claim Calculation
+
+We intentionally reject pre-calculation in favor of a proportional, on-claim approach:
+
+- **No Pre-Calculation:** We do not store or use `rewardsPerVote` or `subsidyPerVote` in storage.
+- **Direct Allocation:** On deposit, we simply set `totalRewards` or `totalSubsidies` for the epoch if the value is non-zero and there are votes.
+- **On-Claim Math:** All calculations are performed at claim time, maximizing precision and fairness:
+    - Rewards: `userRewards = (userVotes * totalRewards) / totalVotes`
+    - Subsidies: `poolSubsidies = (poolVotes * totalSubsidies) / totalVotes` [then verifiers claim their share proportionally]
+
+**Why This Wins:**
+- **No Stuck Funds:** Even if totals are small, partial distribution is always possible. Any leftovers (residuals) can be swept later.
+- **Per-Pool Isolation:** Each pool is handled independently. Zero-reward pools never block others. [blocking would prevent finalization of epoch via `finalizeEpoch()`]
+- **No Reverts for Small Amounts:** Tiny rewards or subsidies are handled gracefully, preventing blocking of pools from being processed [`isProcessed` flag].
+- **Simplicity & Gas Efficiency:** Fewer storage writes, less risk of revert, and cheaper execution.
+
+> This also allows for epochs to have 0 subsidies, without any issues.
+---
+
+## Residuals Management: Accounting and Recovery
+
+**What are residuals?**  
+
+Residuals are small amounts left behind due to flooring in integer division. They are an unavoidable reality in both rewards and subsidies flows.
+Our design tackles this head-on, ensuring every token is either claimable or recoverable, never lost.
+
+**Sources of Residuals:**
+1. **Pool allocation**: `poolSubsidies = (poolVotes × totalSubsidies) / totalVotes`
+2. **User rewards**: `userRewards = (userVotes × poolRewards) / totalPoolVotes`
+3. **Delegate rewards**: Multiple divisions compound rounding losses
+
+**Management Strategy:**
+- Track exact amounts distributed vs. allocated
+- Residuals = allocated - claimed
+- Admin can sweep residuals after delay period
+- No distinction between "unclaimed" and "residuals" for simplicity
+
+**During Epoch Finalization:** 
+- If a pool has zero votes but a nonzero reward or subsidy, we don’t deposit it.
+- For subsidies, proportional allocation across pools can also leave tiny amounts undistributed. 
+- `finalizeEpochRewardsSubsidies()` prevents stuck funds by ensuring that only distributable amounts enter the system.
+
+```solidity
+            // Calc. subsidies for each pool | if there are subsidies for epoch + pool has votes
+            if(epochTotalSubsidiesDeposited > 0 && poolVotes > 0) {
+                
+                uint128 poolSubsidies = (poolVotes * epochPtr.totalSubsidiesDeposited) / epochPtr.totalVotes;
+                
+                // sanity check: poolSubsidies > 0; skip if floored to 0
+                if(poolSubsidies > 0) { 
+                    epochPoolPtr.totalSubsidiesAllocated = poolSubsidies;
+                    poolPtr.totalSubsidiesAllocated += poolSubsidies;
+
+                    totalSubsidies += poolSubsidies;
+                }
+            }
+
+            // Set totalRewards for each pool | only if rewards >0 and votes >0 (avoids undistributable)
+            if(poolRewards > 0 && poolVotes > 0) {
+
+                epochPoolPtr.totalRewardsAllocated = poolRewards;
+                poolPtr.totalRewardsAllocated += poolRewards;
+
+                totalRewards += poolRewards;
+            } // else skip, rewards effectively 0 for this pool
+
+```
+
+**During Claims:** 
+- Whether users or verifiers claim, all calculations use integer division, so each claim is rounded down. 
+- Multiple layers of division (e.g., delegate → user) can amplify rounding losses. 
+- To tackle this, we approach by doing a cumSum of total claims before delegate division as seen in claim functions
+- Every distributed amount is booked; `epoch.totalRewardsClaimed` and `epoch.totalSubsidiesClaimed` are always incremented by the **actual value** transferred out.
+
+The result: `epoch.totalRewardsAllocated - epoch.totalRewardsClaimed` and `epoch.totalSubsidiesAllocated - epoch.totalSubsidiesClaimed` always reflect the **true sum of all residuals and unclaimed funds**.
+
+**Unified Sweeping:** 
+- We make no distinction between “residuals” and “unclaimed” funds. 
+- Both are swept together, after a set delay, using `withdrawUnclaimedRewards()` and `withdrawUnclaimedSubsidies()`. 
+
+This approach keeps the system simple and robust, while guaranteeing that assets do not get stuck to rounding or operational edge cases.
+
+**Bottom line:**
+1. By moving all calculations to claim time, instead of calculating in "per unit terms",
+2. and tracking every distributed amount, and sweeping all leftovers,
+ 
+We enable an optimal, fair, and recoverable distribution - no matter how small the pool, the voter, or the subsidy. 
+
+**The sum of these extra efforts/unorthodox calculations is so that users whom are considered "small fish", can participate and benefit from voting; instead of being floored out.**
+
+*For an illustrated guide, highlighting sources of residuals and rounding down due to division, please see the later section titled: Residuals Illustrated*
+
+>Illustration of residual origination: https://app.excalidraw.com/s/ZeH3y0tOi6/4nyJOQSlGn3?element=aO2TZqM4AcQ0tqw7fV8XF
+
+
+## Accurate Delegate Fee Application: Historical Fee Tracking
+
+**The Challenge**
+
+Delegate fees can be updated in at any epoch. If a delegate increases their fee in epoch N, but a user claims rewards for delegated votes from epoch N-2, what fee should apply? 
+Using the latest fee, is unfair and breaks the link between voting and fee accrual. Fees must be indexed by epoch, not just stored as a single value. This is why most protocols push this feature off-chain to relayers. 
+
+**The Solution: Epoch-Indexed Fee History**
+
+Rather than simply storing the latest fee, we implement an elegant epoch-indexed fee snapshotting mechanism. 
+
+- Every delegate fee update is logged in a mapping keyed by both delegate and epoch, ensuring that for any claim, the contract can reference the exact fee that was in effect when the relevant votes were cast and rewards accrued. 
+- This is not a passive log: fee increases are only activated after a mandatory delay, preventing last-minute fee hikes, while fee decreases are applied instantly for user benefit. 
+
+**This approach relies on 1 key rule: delegate fees can never be zero.**
+
+That way every epoch has a valid fee reference. If a fee is zero, it simply means the delegate didn’t vote that epoch and won’t receive fees.
+
+**How it works:**
+1. When a delegate votes, their current fee is logged for that epoch
+2. When rewards are claimed, the historical fee (not current fee) is applied
+3. This prevents delegates from retroactively changing fees on past earnings
+
+**Implementation Details:**
+- Fee updates are logged when delegates vote via `_applyPendingFeeIfNeeded()`
+- Zero fee means delegate didn't vote that epoch (no fees claimable)
+- System handles fee increases (delayed) and decreases (immediate) differently
+
+```solidity
+mapping(address => mapping(uint256 => uint128)) delegateHistoricalFeePcts;
+```
+
+## Delegated Reward Claiming: Per-Pool, Per-Delegate Tracking
+ 
+Powered by `userDelegateAccounting` mapping & nested mapping in `OmnibusDelegateAccount`:
+
+```solidity
+    // User-Delegate tracking [for this user-delegate pair, what was the user's {rewards,claimed}]
+    mapping(uint256 epochNum => mapping(address user => mapping(address delegate => DataTypes.OmnibusDelegateAccount userDelegateAccount))) public userDelegateAccounting;
+
+    struct OmnibusDelegateAccount {
+        uint128 totalNetRewards;    // claimed by user
+        mapping(bytes32 poolId => uint128 grossRewards) userPoolGrossRewards; // flag: 0 = not claimed, non-zero = claimed
+    }
+```
+
+**Why per-pool tracking is essential for delegated claims**
+
+When users claim rewards via `claimRewardsFromDelegate`, they may need to:
+- Claim for the same delegate across different pools (multiple calls)
+- Claim for different delegates, each with their own set of pools
+
+A user can delegate to several delegates, and each delegate can vote in various pools. Sometimes, multiple delegates may even vote in the same pool. This means that in `claimRewardsForDelegate`, we **cannot** simply check:
+`require(userDelegateAccounting[epoch][msg.sender][delegate].totalRewards == 0, Errors.RewardsAlreadyClaimed());`
+Doing so would block further claims for other pools or delegates, restricting users to a single claim per delegate per epoch—which is not what we want.
+
+**The challenge:**  
+- We must allow users to claim rewards for each pool, for each delegate, as needed.
+- But we must also *prevent double-claiming* for the same pool/delegate/epoch combination.
+
+**The solution:**  
+Delegations are tracked at the epoch level, but claims must be tracked at the per-pool level within each user-delegate-epoch entry. This ensures:
+- Users can claim for each pool, for each delegate, independently.
+- Double-claims for the same pool/delegate/epoch are blocked, but claims for the same pool via different delegates are allowed.
+
+To achieve this, we introduce a new struct `OmnibusDelegateAccount` for `userDelegateAccounting`:
+- Tracks the total net rewards claimed (aggregate)
+- Includes a nested mapping for per-pool gross rewards (set when claimed; `== 0` means "not yet claimed")
+
+This design enables flexible, granular claiming while maintaining strict double-claim prevention.
+
+## Overflow concerns
+
+Possible sources of integer overflow:
+
+1. `_claimDelegateRewards()`: 
+    - `uint256 delegatePoolRewards = (delegatePoolVotes * totalPoolRewards) / totalPoolVotes;`
+    - `uint256 userGrossRewards = (userVotesAllocatedToDelegateForEpoch * delegatePoolRewards) / delegateTotalVotesForEpoch;`
+
+However,
+**Token Economics Constraints [Mathematical Analysis]**
+- MOCA Total Supply: 8,888,888,888 tokens
+- With 18 decimals: 8.888 × 10²⁷
+- Maximum delegate fee: 100% = 10,000 (based on PRECISION_BASE)
+- uint256 maximum: 2²⁵⁶ - 1 ≈ 1.16 × 10⁷⁷
+
+**Overflow Calculation [Worst-case theoretical scenario]:**
+
+Using as example: `uint256 delegateFee = userTotalGrossRewards * delegateFeePct / Constants.PRECISION_BASE;`
+
+- Maximum possible multiplication = 8.888 × 10²⁷ × 10,000 = 8.888 × 10³¹
+- Safety margin = (1.16 × 10⁷⁷) / (8.888 × 10³¹) = 1.3 × 10⁴⁶
+
+**Conclusion:**
+
+Integer overflow risk is not a concern in fee/rewards/subsidy calculations:
+- **Token supply is capped:** MOCA’s total supply is fixed and known.
+- **Delegate fees are limited:** Fee percentages have strict upper bounds.
+- **Enormous safety margin:** Even in the most extreme case, calculations are 46 orders of magnitude below the overflow limit for `uint256`.
+
+Given these constraints, overflow is mathematically impossible in this context. No extra overflow checks are needed for delegate fee math.
+
+### Gas Optimization
+
+The contract employs several gas optimization techniques:
+
+1. **Batch Operations**: Multiple claims/votes in single transaction
+2. **Storage Packing**: Using uint128 where possible
+3. **Conditional Updates**: Only update storage when values change
+4. **Memory Caching**: Cache storage values in loops
+
+# Security & Risk Management
+
+## Access Control
+
+The contract implements role-based access control:
+
+- **CronJob**: Create/remove pools, deposit subsidies, finalize epochs
+- **VotingControllerAdmin**: Set protocol parameters
+- **AssetManager**: Handle fund deposits/withdrawals
+- **Monitor**: Pause contract in emergencies
+- **GlobalAdmin**: Unpause and freeze operations
+- **EmergencyExitHandler**: Asset recovery when frozen
+
+
+
+
