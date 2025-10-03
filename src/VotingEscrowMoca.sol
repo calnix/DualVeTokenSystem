@@ -538,7 +538,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 {
                     uint256 salt = block.number;
                     lockId = _generateLockId(salt, user);
-                    while (locks[lockId].lockId != bytes32(0)) lockId = _generateLockId(--salt, user);      // If lockId exists, generate new random Id
+                    while (locks[lockId].lockId != bytes32(0)) lockId = _generateLockId(++salt, user);      // If lockId exists, generate new random Id
                 }
 
                 DataTypes.Lock memory newLock;
@@ -779,8 +779,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
             uint256 biasReduction = expiringSlope * expiry;
 
             // defensive: to prevent underflow [should not be possible in practice]
-            a.bias = a.bias > biasReduction ? a.bias - uint128(biasReduction) : 0;      // remove decayed ve
-            a.slope = a.slope > expiringSlope ? a.slope - uint128(expiringSlope) : 0; // remove expiring slopes
+            a.bias = a.bias > biasReduction ? unchecked{a.bias - uint128(biasReduction)} : 0;      // remove decayed ve
+            a.slope = a.slope > expiringSlope ? unchecked{a.slope - uint128(expiringSlope)} : 0; // remove expiring slopes
             return a;
         }
 
@@ -808,7 +808,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 return 0;
             }
             // offset inception inflation
-            return a.bias - (a.slope * timestamp);
+            unchecked { return a.bias - (a.slope * timestamp); } // safe: already checked above
         }
 
         // calc. veBalance{bias,slope} from lock; based on expiry time | inception offset is handled by balanceOf() queries
@@ -1238,7 +1238,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             
             // binary search
             while (min < max) {
-                uint256 mid = (min + max + 1) / 2;
+                unchecked { uint256 mid = (min + max + 1) / 2; } // cannot overflow: max < 2^256
                 if(history[mid].lastUpdatedAt <= timestamp) {
                     min = mid;
                 } else {
