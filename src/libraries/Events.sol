@@ -144,9 +144,6 @@ library Events {
 // --------- AddressBook.sol ---------
     event AddressSet(bytes32 indexed identifier, address registeredAddress);
     event GlobalAdminUpdated(address indexed oldGlobalAdmin, address indexed newGlobalAdmin);
-    // EscrowedMocaAdmin role functions
-    event EscrowedMocaAdminAdded(address indexed admin, address indexed addedBy);
-    event EscrowedMocaAdminRemoved(address indexed admin, address indexed removedBy);
 
 // --------- AccessController.sol ---------
     // Monitor admin functions
@@ -167,6 +164,12 @@ library Events {
     // VotingController admin functions
     event VotingControllerAdminAdded(address indexed admin, address indexed addedBy);
     event VotingControllerAdminRemoved(address indexed admin, address indexed removedBy);
+    // VotingEscrowMocaAdmin functions
+    event VotingEscrowMocaAdminAdded(address indexed admin, address indexed addedBy);
+    event VotingEscrowMocaAdminRemoved(address indexed admin, address indexed removedBy);
+    // EscrowedMocaAdmin functions
+    event EscrowedMocaAdminAdded(address indexed admin, address indexed addedBy);
+    event EscrowedMocaAdminRemoved(address indexed admin, address indexed removedBy);
     // AssetManager role functions
     event AssetManagerAdded(address indexed manager, address indexed addedBy);
     event AssetManagerRemoved(address indexed manager, address indexed removedBy);

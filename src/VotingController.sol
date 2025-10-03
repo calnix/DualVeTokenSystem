@@ -685,9 +685,23 @@ contract VotingController is Pausable {
         emit Events.SubsidiesSet(epoch, subsidies);
     }
 
-    //Note: only callable once for each pool | rewards are referenced from PaymentsController | subsidies are referenced from PaymentsController
-    //Review: str vs mem | uint128 vs uint256
-    //note: only deposits rewards that can be claimed[poolRewards > 0 & poolVotes > 0]. therefore, sum of input rewards could be lesser than totalRewardsAllocated
+    /**
+     * @notice Finalizes rewards and subsidies allocation for pools in a given epoch.
+     * @dev 
+     *   - Callable only once per pool per epoch.
+     *   - Subsidies are referenced from PaymentsController. Rewards are decided by Protocol.
+     *   - Only deposits rewards that can be claimed (i.e., poolRewards > 0 and poolVotes > 0).
+     *   - The sum of input rewards may be less than or equal to totalRewardsAllocated.
+     * @param epoch The epoch number to finalize.
+     * @param poolIds Array of pool IDs to finalize for the epoch.
+     * @param rewards Array of reward amounts (1e18 precision) corresponding to each pool.
+     * Requirements:
+     *   - poolIds and rewards arrays must be non-empty and of equal length.
+     *   - Epoch must have ended and not be finalized.
+     *   - Subsidies must have been set for the epoch.
+     *   - Each pool must exist, not be removed, and not already be processed for the epoch.
+     *   - Only callable by cron job role when not paused.
+     */
     function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint128[] calldata rewards) external onlyCronJob whenNotPaused {
         require(poolIds.length > 0, Errors.InvalidArray());
         require(poolIds.length == rewards.length, Errors.MismatchedArrayLengths());
@@ -697,72 +711,69 @@ contract VotingController is Pausable {
         require(block.timestamp >= epochEndTimestamp, Errors.EpochNotEnded());
 
         // sanity check: epoch must not be finalized + depositEpochSubsidies() must have been called
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
-        require(epochPtr.isSubsidiesSet, Errors.SubsidiesNotSet());
-        require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
+        DataTypes.Epoch storage epochStorage = epochs[epoch];
+        require(epochStorage.isSubsidiesSet, Errors.SubsidiesNotSet());
+        require(!epochStorage.isFullyFinalized, Errors.EpochFinalized());
 
         // cache to local so for loop does not load from storage for each iteration
-        uint256 epochTotalSubsidiesDeposited = epochPtr.totalSubsidiesDeposited;
+        uint128 epochTotalSubsidiesDeposited = epochStorage.totalSubsidiesDeposited;    // can be 0
+        uint128 epochTotalVotes = epochStorage.totalVotes;
+        //require(epochTotalVotes > 0, Errors.ZeroVotes());  --> can be 0, but do not implement; else epoch finalization will be blocked
 
         // iterate through pools
-        uint256 totalSubsidies;
         uint128 totalRewards;
         for (uint256 i; i < poolIds.length; ++i) {
             bytes32 poolId = poolIds[i];
-            uint128 poolRewards = rewards[i];       // can be 0  @follow-up why can it be 0?  so it can be marked processed
+            uint128 poolRewards = rewards[i];       // can be 0 , so tt all pools can be marked processed
 
             // cache: Pool storage pointers
-            DataTypes.Pool storage poolPtr = pools[poolId];
-            DataTypes.PoolEpoch storage epochPoolPtr = epochPools[epoch][poolId];
+            DataTypes.Pool storage poolStorage = pools[poolId];
+            DataTypes.PoolEpoch storage epochPoolStorage = epochPools[epoch][poolId];
 
             // sanity check: pool exists + not processed + not removed
-            require(poolPtr.poolId != bytes32(0), Errors.PoolDoesNotExist());
-            require(!epochPoolPtr.isProcessed, Errors.PoolAlreadyProcessed());
-            require(!poolPtr.isRemoved, Errors.PoolRemoved());
+            require(poolStorage.poolId != bytes32(0), Errors.PoolDoesNotExist());
+            require(!epochPoolStorage.isProcessed, Errors.PoolAlreadyProcessed());
+            require(!poolStorage.isRemoved, Errors.PoolRemoved());
 
-            uint128 poolVotes = epochPoolPtr.totalVotes;
+            uint128 poolVotes = epochPoolStorage.totalVotes;
             
-            // Calc. subsidies for each pool | if there are subsidies for epoch + pool has votes
+            // Calc. subsidies for each pool: if there are subsidies for epoch & pool has votes
             if(epochTotalSubsidiesDeposited > 0 && poolVotes > 0) {
                 
-                uint128 poolSubsidies = (poolVotes * epochPtr.totalSubsidiesDeposited) / epochPtr.totalVotes;
+                uint128 poolSubsidies = (poolVotes * epochTotalSubsidiesDeposited) / epochTotalVotes;
                 
                 // sanity check: poolSubsidies > 0; skip if floored to 0
                 if(poolSubsidies > 0) { 
-                    epochPoolPtr.totalSubsidiesAllocated = poolSubsidies;
-                    poolPtr.totalSubsidiesAllocated += poolSubsidies;
-
-                    totalSubsidies += poolSubsidies;
+                    epochPoolStorage.totalSubsidiesAllocated = poolSubsidies;
+                    poolStorage.totalSubsidiesAllocated += poolSubsidies;
                 }
             }
 
             // Set totalRewards for each pool | only if rewards >0 and votes >0 (avoids undistributable)
             if(poolRewards > 0 && poolVotes > 0) {
-
-                epochPoolPtr.totalRewardsAllocated = poolRewards;
-                poolPtr.totalRewardsAllocated += poolRewards;
+                epochPoolStorage.totalRewardsAllocated = poolRewards;
+                poolStorage.totalRewardsAllocated += poolRewards;
 
                 totalRewards += poolRewards;
             } // else skip, rewards effectively 0 for this pool
 
             // mark processed
-            epochPoolPtr.isProcessed = true;
+            epochPoolStorage.isProcessed = true;
         }
 
-        //STORAGE update epoch global | do not overwrite subsidies; was set in depositEpochSubsidies()
-        epochPtr.totalRewardsAllocated += totalRewards;
+        // STORAGE: update epoch global rewards allocated | subsidies was set in depositEpochSubsidies()
+        epochStorage.totalRewardsAllocated += totalRewards;
+        // STORAGE: increment count of pools finalized
+        epochStorage.poolsFinalized += uint128(poolIds.length);
 
         emit Events.EpochPartiallyFinalized(epoch, poolIds);
-
-        // STORAGE: increment count of pools finalized
-        epochPtr.poolsFinalized += uint128(poolIds.length);
 
         // deposit rewards
         _esMoca().transferFrom(msg.sender, address(this), totalRewards);
 
         // check if epoch is fully finalized
-        if(epochPtr.poolsFinalized == TOTAL_NUMBER_OF_POOLS) {
-            epochPtr.isFullyFinalized = true;
+        if(epochStorage.poolsFinalized == TOTAL_NUMBER_OF_POOLS) {
+            epochStorage.isFullyFinalized = true;
             emit Events.EpochFullyFinalized(epoch);
         }
     }
