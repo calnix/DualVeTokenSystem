@@ -533,8 +533,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 bytes32 lockId;
                 {
                     uint256 salt = block.number;
-                    lockId = _generateVaultId(salt, user);
-                    while (locks[lockId].lockId != bytes32(0)) lockId = _generateVaultId(--salt, user);      // If lockId exists, generate new random Id
+                    lockId = _generateLockId(salt, user);
+                    while (locks[lockId].lockId != bytes32(0)) lockId = _generateLockId(--salt, user);      // If lockId exists, generate new random Id
                 }
 
                 DataTypes.Lock memory newLock;
@@ -603,7 +603,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
         ///@dev Generate a vaultId. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
-        function _generateVaultId(uint256 salt, address user) internal view returns (bytes32) {
+        function _generateLockId(uint256 salt, address user) internal view returns (bytes32) {
             return bytes32(keccak256(abi.encode(user, block.timestamp, salt)));
         }
 
