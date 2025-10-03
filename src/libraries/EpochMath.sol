@@ -9,9 +9,9 @@ pragma solidity ^0.8.27;
 library EpochMath {
 
     // PERIODICITY:  does not account for leap year or leap seconds
-    uint256 internal constant EPOCH_DURATION = 14 days;                    // ~ 1 month            
-    uint256 internal constant MIN_LOCK_DURATION = 28 days;                // @follow-up : change to 14 days? or keep as 28 days as per livelines?
-    uint256 internal constant MAX_LOCK_DURATION = 672 days;                // ~2 years= 28 days * 24 months
+    uint256 internal constant EPOCH_DURATION = 14 days;                    
+    uint256 internal constant MIN_LOCK_DURATION = 28 days;            // double the epoch duration for minimum lock duration: for forward decay liveliness
+    uint256 internal constant MAX_LOCK_DURATION = 672 days;               
 
 
     ///@dev returns epoch number for a given timestamp
