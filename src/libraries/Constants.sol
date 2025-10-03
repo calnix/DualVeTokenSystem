@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+/**
+ * @title Constants
+ * @author Calnix [@cal_nix]
+ * @notice Library for constant values used across the Moca protocol.
+ * @dev Provides precision constants for token decimals and other protocol-level values.
+ */
+    
 library Constants {
     
     // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)

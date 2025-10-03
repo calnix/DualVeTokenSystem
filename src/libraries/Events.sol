@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+/**
+ * @title Events
+ * @author Calnix [@cal_nix]
+ * @notice Library for events used across the Moca protocol.
+ * @dev Provides events for protocol functions.
+ */
+    
 library Events {
     
 // --------- Generic: Risk ---------

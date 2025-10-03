@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+/**
+ * @title Errors
+ * @author Calnix [@cal_nix]
+ * @notice Library for error messages used across the Moca protocol.
+ * @dev Provides error messages for protocol functions.
+ */
+
 library Errors {
 
     // --------- Generic ---------

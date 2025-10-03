@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.27;
 
+
+/**
+ * @title EpochMath
+ * @author Calnix [@cal_nix]
+ * @notice Library for epoch-based time calculations used across the Moca protocol.
+ * @dev Provides utilities for epoch number, start/end timestamps, and lock duration constants.
+ */
+
+
 /** On week, days, hours, minutes etc.:
     Take care if you perform calendar calculations using these units, 
     because not every year equals 365 days and not even every day has 24 hours because of leap seconds.

@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+/**
+ * @title DataTypes
+ * @author Calnix [@cal_nix]
+ * @notice Library for data types used across the Moca protocol.
+ * @dev Provides data structures for protocol entities.
+ */
+
 library DataTypes {
 
 // --------- PaymentsController.sol -------
