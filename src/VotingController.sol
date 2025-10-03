@@ -470,11 +470,6 @@ contract VotingController is Pausable {
     }
 
 
-
-    /**
-        few delegates, many pools
-        so iterate over delegates, then pools
-    */
     /**
      * @notice Allows a user (delegator) to claim all rewards accrued from votes delegated to multiple delegates in a single transaction.
      * @dev Processes rewards in batches by delegates and their respective pools. 
@@ -483,14 +478,16 @@ contract VotingController is Pausable {
      * @param epoch The epoch for which rewards are being claimed.
      * @param delegateList Array of delegate addresses from whom the user is claiming rewards.
      * @param poolIdsPerDelegate Array of poolId arrays, each corresponding to the pools voted by a specific delegate.
-     * 
+     *
      * Requirements:
      * - The epoch must be fully finalized.
-     * - delegateList and poolIdsPerDelegate must have the same nonzero length.
      * - msg.sender must be the delegator (user).
-     * - At least one net reward must be claimable.
-     * 
-     * Emits a {RewardsClaimedFromDelegate} event and {DelegateFeesClaimed} events for each delegate with a nonzero fee.
+     *
+     * Rationale:
+     * - Batch processing reduces gas costs and improves UX for users with multiple delegate relationships.
+     * - Aggregating net rewards into a single transfer minimizes token transfer overhead.
+     * - Per-delegate fee payments ensure accurate fee distribution and event logging.
+     * - The function enforces finalized epoch and array length checks to prevent inconsistent state or under-claimed rewards.
      */
     function claimRewardsFromDelegate(uint256 epoch, address[] calldata delegateList, bytes32[][] calldata poolIdsPerDelegate) external whenNotPaused {
         // sanity check: epoch must be finalized + delegateList & poolIdsPerDelegate must be of the same length
