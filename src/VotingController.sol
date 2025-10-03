@@ -685,6 +685,7 @@ contract VotingController is Pausable {
         emit Events.SubsidiesSet(epoch, subsidies);
     }
 
+    //Note: pools tt were removed will not be processed. If users did not migrate votes from removed pools, this will result in lost rewards and subsidies
     /**
      * @notice Finalizes rewards and subsidies allocation for pools in a given epoch.
      * @dev 
@@ -944,6 +945,13 @@ contract VotingController is Pausable {
 
         return poolId;
     }
+
+   
+    /** Note: If a removed pool has votes at epoch end, the following will happen, during finalization:
+        - Lost Rewards: Users who voted for a removed pool forfeit their rewards *(unless they migrated their votes)*
+        - Accounting Mismatch: The epoch's `totalVotes` includes votes for removed pools, but rewards and subsidies are only distributed to active pools *(unless users migrated their votes)*
+        - Lost Subsidies: Verifiers for removed pools cannot claim subsidies
+     */
 
     /**
      * @notice Removes a voting pool from the protocol.
