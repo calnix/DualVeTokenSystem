@@ -11,7 +11,7 @@ library EpochMath {
     // PERIODICITY:  does not account for leap year or leap seconds
     uint256 internal constant EPOCH_DURATION = 14 days;                    
     uint256 internal constant MIN_LOCK_DURATION = 28 days;            // double the epoch duration for minimum lock duration: for forward decay liveliness
-    uint256 internal constant MAX_LOCK_DURATION = 672 days;               
+    uint256 internal constant MAX_LOCK_DURATION = 728 days;               
 
 
     ///@dev returns epoch number for a given timestamp
