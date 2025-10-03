@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {DataTypes} from "../libraries/DataTypes.sol";
+import {Errors} from "../libraries/Errors.sol";
+
+// interfaces
+import {IAddressBook} from "../interfaces/IAddressBook.sol";
+import {IAccessController} from "../interfaces/IAccessController.sol";
+
+// Lock Migration Function
+contract VotingEscrowMocaMigratable {
+    IAddressBook public immutable addressBook;
+
+    address public migrationTarget;
+
+    // --- Errors ---
+    /// @notice Migration target already set
+    error MigrationTargetAlreadySet();
+    /// @notice Migration target not set
+    error MigrationTargetNotSet();
+    /// @notice Caller is not the lock owner
+    error NotLockOwner();
+    /// @notice Lock already unlocked or migrated
+    error LockAlreadyUnlocked();
+
+    // --- Events ---
+    /// @notice Emitted when a lock is migrated to a new contract
+    /// @param lockId The ID of the migrated lock
+    /// @param owner The owner of the lock
+    /// @param target The migration target contract
+    event LockMigrated(bytes32 indexed lockId, address indexed owner, address indexed target);
+
+    function setMigrationTarget(address _target) external onlyGlobalAdminRole {
+        if (migrationTarget != address(0)) revert MigrationTargetAlreadySet();
+        migrationTarget = _target;
+    }
+
+    function migrateLock(bytes32 lockId) external {
+        if (migrationTarget == address(0)) revert MigrationTargetNotSet();
+        DataTypes.Lock memory lock = locks[lockId];
+        if (lock.owner != msg.sender) revert NotLockOwner();
+        if (lock.isUnlocked) revert LockAlreadyUnlocked();
+
+        // Mark as migrated
+        lock.isUnlocked = true;
+        locks[lockId] = lock;
+
+        // Call migration contract
+        IVotingEscrowMocaV2(migrationTarget).receiveMigration(
+            msg.sender,
+            lockId,
+            lock
+        );
+
+        // Transfer tokens to migration contract
+        if (lock.moca > 0) _mocaToken().safeTransfer(migrationTarget, lock.moca);
+        if (lock.esMoca > 0) _esMocaToken().safeTransfer(migrationTarget, lock.esMoca);
+
+        emit LockMigrated(lockId, msg.sender, migrationTarget);
+    }
+
+//-------------------------------Internal functions---------------------------------------------------------------
+        // if zero address, reverts automatically
+        function _mocaToken() internal view returns (IERC20){
+            return IERC20(addressBook.getMoca());
+        }
+
+        // if zero address, reverts automatically
+        function _esMocaToken() internal view returns (IERC20){
+            return IERC20(addressBook.getEscrowedMoca());
+        }
+//-------------------------------Modifiers---------------------------------------------------------------
+
+        // not using internal function
+        modifier onlyGlobalAdminRole(){
+            IAccessController accessController = IAccessController(addressBook.getAccessController());
+            require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
+            _;
+        }
+
+
+}
+
+/** Emergency Migration Mode Pattern
+
+    uint256 public migrationMode;  // 0: normal, 1: migration active
+
+    function enableMigration() external onlyGlobalAdminRole whenPaused {
+        migrationMode = 1;
+        emit MigrationEnabled();
+    }
+
+    function emergencyMigrate(
+        bytes32[] calldata lockIds,
+        address newContract
+    ) external onlyEmergencyExitHandlerRole {
+        require(migrationMode == 1, "Migration not enabled");
+        // Batch migrate locks with signature verification
+    }
+
+ */

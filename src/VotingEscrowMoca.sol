@@ -40,8 +40,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
     IAddressBook public immutable addressBook;
 
     // global principal
-    uint256 public totalLockedMoca;
-    uint256 public totalLockedEsMoca;
+    uint256 public TOTAL_LOCKED_MOCA;
+    uint256 public TOTAL_LOCKED_ESMOCA;
 
     // global veBalance
     DataTypes.VeBalance public veGlobal;
@@ -155,14 +155,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             // emit event
 
-            // STORAGE: increment global totalLockedMoca/EsMoca
-            // TRANSFER: tokens to contract
+            // STORAGE: increment global TOTAL_LOCKED_MOCA/TOTAL_LOCKED_ESMOCA + transfer tokens to contract
             if(mocaToIncrease > 0){
-                totalLockedMoca += mocaToIncrease;
+                TOTAL_LOCKED_MOCA += mocaToIncrease;
                 _mocaToken().safeTransferFrom(msg.sender, address(this), mocaToIncrease);
             }
             if(esMocaToIncrease > 0){
-                totalLockedEsMoca += esMocaToIncrease;
+                TOTAL_LOCKED_ESMOCA += esMocaToIncrease;
                 _esMocaToken().safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
             }
         }
@@ -248,8 +247,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
             veGlobal = veGlobal_;   
 
             // STORAGE: decrement global totalLocked counters
-            totalLockedMoca -= lock.moca;
-            totalLockedEsMoca -= lock.esMoca;
+            TOTAL_LOCKED_MOCA -= lock.moca;
+            TOTAL_LOCKED_ESMOCA -= lock.esMoca;
 
             // burn originally issued veMoca
             uint256 mintedVeMoca = _convertToVeBalance(lock).bias;
@@ -306,7 +305,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             // Update user & global: account for decay since lastUpdate and any scheduled slope changes | false since lock is not yet delegated
             (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint256 currentEpochStart,,) = _updateAccountAndGlobal(msg.sender, false);
-            unchecked { uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION; }
+            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
             // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
             DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
@@ -373,7 +372,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             
             // Update delegate: apply decay since lastUpdate and any scheduled slope changes [required before removing the lock from delegate's balance]
             (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint256 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
-            unchecked { uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION; }
+            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
             // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
             DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
@@ -405,7 +404,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             delete lock.delegate;
             locks[lockId] = lock;
 
-            emit LockUndelegated(lockId, msg.sender, lock.delegate);
+            emit Events.LockUndelegated(lockId, msg.sender, lock.delegate);
         }
         
         /**
@@ -437,7 +436,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // Update current delegate: account for decay since lastUpdate and any scheduled slope changes [required before removing the lock from the current delegate]
             // true: update current delegate's aggregated veBalance; not personal
             (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veCurrentDelegate, uint256 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
-            unchecked { uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION; }
+            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
             // get lock's current veBalance [no checkpoint required as lock attributes have not changed]
             DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
@@ -471,7 +470,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // STORAGE: update global state
             veGlobal = veGlobal_;
 
-            emit Events.DelegateChanged(lockId, msg.sender, lock.delegate, newDelegate);
+            emit Events.LockDelegateSwitched(lockId, msg.sender, lock.delegate, newDelegate);
         }
 
 
@@ -592,14 +591,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // MINT: veMoca to account
             _mint(account, veIncoming.bias);
 
-            // STORAGE: increment global totalLockedMoca/EsMoca
-            // TRANSFER: tokens to contract
+            // STORAGE: increment global TOTAL_LOCKED_MOCA/TOTAL_LOCKED_ESMOCA + transfer tokens to contract
             if (moca > 0) {
-                totalLockedMoca += moca;
+                TOTAL_LOCKED_MOCA += moca;
                 _mocaToken().safeTransferFrom(msg.sender, address(this), moca);
             } 
             if (esMoca > 0) {
-                totalLockedEsMoca += esMoca;
+                TOTAL_LOCKED_ESMOCA += esMoca;
                 _esMocaToken().safeTransferFrom(msg.sender, address(this), esMoca);
             } 
 
@@ -779,8 +777,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
             uint256 biasReduction = expiringSlope * expiry;
 
             // defensive: to prevent underflow [should not be possible in practice]
-            a.bias = a.bias > biasReduction ? unchecked{a.bias - uint128(biasReduction)} : 0;      // remove decayed ve
-            a.slope = a.slope > expiringSlope ? unchecked{a.slope - uint128(expiringSlope)} : 0; // remove expiring slopes
+            a.bias = a.bias > biasReduction ? a.bias - uint128(biasReduction) : 0;      // remove decayed ve
+            a.slope = a.slope > expiringSlope ? a.slope - uint128(expiringSlope) : 0; // remove expiring slopes
             return a;
         }
 
@@ -934,17 +932,25 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @param lockIds Array of lock IDs for which principals should be returned.
          * @custom:security No state updates except principal return; system is assumed failed.
          */
-        function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole {
+        function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole returns(uint256, uint256, uint256){
             require(isFrozen == 1, Errors.NotFrozen());
             require(lockIds.length > 0, Errors.InvalidAmount());
 
+            // Cache token interfaces
+            IERC20 mocaToken = _mocaToken();
+            IERC20 esMocaToken = _esMocaToken();
+
+            // Track totals for single event emission
+            uint256 totalMocaReturned;
+            uint256 totalEsMocaReturned;
+            uint256 validLocks;
+            
             // get user's veBalance for each lock
             for(uint256 i; i < lockIds.length; ++i) {
                 DataTypes.Lock memory lock = locks[lockIds[i]];
 
-                //sanity: lock exists + principals not returned
-                require(lock.owner != address(0), Errors.InvalidLockId());
-                require(lock.isUnlocked == false, Errors.PrincipalsAlreadyReturned());                
+                // Skip invalid/already processed locks
+                if(lock.owner == address(0) || lock.isUnlocked) continue;            
                 
                 // Determine who holds the veMOCA tokens
                 bool isDelegated = lock.delegate != address(0);
@@ -960,23 +966,35 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 // Note: If burnAmount < veMocaToBurn, we accept the discrepancy
                 // Emergency exit prioritizes returning principals over perfect accounting
 
-                // STORAGE: decrement global totalLocked counters
-                totalLockedMoca -= lock.moca;
-                totalLockedEsMoca -= lock.esMoca;
+                // direct storage updates - only write changed fields
+                if(lock.moca > 0) {
+                    TOTAL_LOCKED_MOCA -= lock.moca;  
+                    totalMocaReturned += lock.moca;
+                    mocaToken.safeTransfer(lock.owner, lock.moca);
+                    delete lock.moca;
+                }
 
-                // transfer all tokens to the users
-                if(lock.moca > 0) _mocaToken().safeTransfer(lock.owner, lock.moca);
-                if(lock.esMoca > 0) _esMocaToken().safeTransfer(lock.owner, lock.esMoca);
+                if(lock.esMoca > 0) {
+                    TOTAL_LOCKED_ESMOCA -= lock.esMoca;
+                    totalEsMocaReturned += lock.esMoca;
+                    esMocaToken.safeTransfer(lock.owner, lock.esMoca);
+                    delete lock.esMoca;
+                }
 
                 // mark exited 
-                delete lock.moca; 
-                delete lock.esMoca;
                 lock.isUnlocked = true;
-    
+
+                // STORAGE: update lock
                 locks[lockIds[i]] = lock;
+
+                ++validLocks;
             }
 
-            emit Events.EmergencyExit(lockIds);
+            if(validLocks > 0) {
+                emit Events.EmergencyExit(lockIds, validLocks, totalMocaReturned, totalEsMocaReturned);
+            }
+
+            return (validLocks, totalMocaReturned, totalEsMocaReturned);
         }
 
 //-------------------------------Internal: view-----------------------------------------------------
@@ -1220,7 +1238,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @return The veBalance of the lock at the specified timestamp.
          */
         function getLockVeBalanceAt(bytes32 lockId, uint128 timestamp) external view returns (uint256) {
-            require(timestamp <= block.timestamp, "Timestamp is in the future");
+            require(timestamp <= block.timestamp, Errors.InvalidTimestamp());
 
             DataTypes.Checkpoint[] storage history = lockHistory[lockId];
             uint256 length = history.length;
@@ -1237,16 +1255,17 @@ contract VotingEscrowMoca is ERC20, Pausable {
             if(timestamp >= history[max].lastUpdatedAt) return _getValueAt(history[max].veBalance, timestamp);
             
             // binary search
-            while (min < max) {
-                unchecked { uint256 mid = (min + max + 1) / 2; } // cannot overflow: max < 2^256
-                if(history[mid].lastUpdatedAt <= timestamp) {
-                    min = mid;
-                } else {
-                    max = mid - 1;
+            unchecked {
+                while (min < max) {
+                    uint256 mid = (min + max + 1) / 2; // cannot overflow: max < 2^256
+                    if(history[mid].lastUpdatedAt <= timestamp) {
+                        min = mid;
+                    } else {
+                        max = mid - 1;
+                    }
                 }
             }
-            
+                
             return _getValueAt(history[min].veBalance, timestamp);
         }
-
 }

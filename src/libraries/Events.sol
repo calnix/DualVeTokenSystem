@@ -43,7 +43,15 @@ library Events {
     // delegate
     event DelegateRegistered(address indexed delegate);
     event DelegateUnregistered(address indexed delegate);
-    event EmergencyExit(bytes32[] lockIds);
+    //unlock
+    event LockUnlocked(bytes32 indexed lockId, address indexed owner, uint256 moca, uint256 esMoca);
+    // undelegateLock
+    event LockUndelegated(bytes32 indexed lockId, address indexed owner, address delegate);
+    // switchDelegate
+    event LockDelegateSwitched(bytes32 indexed lockId, address indexed owner, address delegate, address newDelegate);
+    // emergencyExit
+    event EmergencyExit(bytes32[] lockIds, uint256 validLocks, uint256 totalMocaReturned, uint256 totalEsMocaReturned);
+
 
 // --------- VotingController.sol ---------
     // createPool(), removePool()

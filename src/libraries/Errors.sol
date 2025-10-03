@@ -41,7 +41,14 @@ library Errors {
 // --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();
     error IsNonTransferable();
-
+    error InvalidLockId();
+    error InvalidLockState();
+    error InvalidOwner();
+    error InvalidEpochTime();
+    error InvalidDelegate();
+    error LockExpiresTooSoon();
+    error PrincipalsAlreadyReturned();
+    error InvalidTimestamp();
 
 // --------- VotingController.sol ---------
     error EpochNotEnded();
