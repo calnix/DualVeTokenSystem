@@ -223,7 +223,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             DataTypes.Lock memory lock = locks[lockId];
 
             require(lock.lockId != bytes32(0), "LockNotFound");
-            require(lock.expiry > block.timestamp, "Lock not expired");
+            require(lock.expiry <= block.timestamp, "Lock not expired");
             require(lock.isUnlocked == false, "Lock already unlocked");
             require(lock.owner == msg.sender, "Only creator can unlock");
 
@@ -893,27 +893,27 @@ contract VotingEscrowMoca is ERC20, Pausable {
 //-------------------------------Risk management--------------------------------------------------------
 
         /**
-        * @notice Pause contract. Cannot pause once frozen
-        */
+         * @notice Pause contract. Cannot pause once frozen
+         */
         function pause() external whenNotPaused onlyMonitorRole {
             if(isFrozen == 1) revert Errors.IsFrozen(); 
             _pause();
         }
 
         /**
-        * @notice Unpause pool. Cannot unpause once frozen
-        */
+         * @notice Unpause pool. Cannot unpause once frozen
+         */
         function unpause() external whenPaused onlyGlobalAdminRole {
             if(isFrozen == 1) revert Errors.IsFrozen(); 
             _unpause();
         }
 
         /**
-        * @notice To freeze the pool in the event of something untoward occurring
-        * @dev Only callable from a paused state, affirming that staking should not resume
-        *      Nothing to be updated. Freeze as is.
-        *      Enables emergencyExit() to be called.
-        */
+         * @notice To freeze the pool in the event of something untoward occurring
+         * @dev Only callable from a paused state, affirming that staking should not resume
+         *      Nothing to be updated. Freeze as is.
+         *      Enables emergencyExit() to be called.
+         */
         function freeze() external whenPaused onlyGlobalAdminRole {
             if(isFrozen == 1) revert Errors.IsFrozen();
 
@@ -941,9 +941,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 //sanity: lock exists + principals not returned
                 require(lock.owner != address(0), "Invalid lockId");
                 require(lock.isUnlocked == false, "Principals already returned");                
+                
+                // Determine who holds the veMOCA tokens
+                bool isDelegated = lock.delegate != address(0);
+                address veHolder = isDelegated ? lock.delegate : lock.owner;
 
                 // burn veMoca tokens
-                _burn(lock.owner, uint256(_convertToVeBalance(lock).bias)); 
+                _burn(veHolder, uint256(_convertToVeBalance(lock).bias)); 
 
                 // transfer all tokens to the users
                 if(lock.moca > 0) _mocaToken().safeTransfer(lock.owner, lock.moca);
@@ -957,7 +961,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 locks[lockIds[i]] = lock;
             }
 
-            // emit event
             emit Events.EmergencyExit(lockIds);
         }
 
@@ -1174,7 +1177,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _convertToVeBalance(locks[lockId]);
         }
 
-        // note:  @follow-up should remove, since voting does not operate on point-in-time values
         /**
          * @notice Returns the current voting power of a lock.
          * @dev
@@ -1187,7 +1189,15 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return _getValueAt(_convertToVeBalance(locks[lockId]), uint128(block.timestamp));
         }
 
-        //note: historical search. veBalances are stored epoch-wise, find the closest epoch boundary to the timestamp and interpolate from there
+        /**
+         * @notice Retrieves the veBalance of a lock at a specific timestamp.
+         * @dev Performs a historical search over epoch-wise stored veBalances.
+         *      Finds the checkpoint with the closest epoch boundary not exceeding the given timestamp,
+         *      then interpolates the veBalance at that point.
+         * @param lockId The ID of the lock to query.
+         * @param timestamp The timestamp for which the veBalance is requested.
+         * @return The veBalance of the lock at the specified timestamp.
+         */
         function getLockVeBalanceAt(bytes32 lockId, uint128 timestamp) external view returns (uint256) {
             require(timestamp <= block.timestamp, "Timestamp is in the future");
 
