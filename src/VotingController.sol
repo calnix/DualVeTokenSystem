@@ -575,8 +575,18 @@ contract VotingController is Pausable {
 
 //-------------------------------claim subsidies functions----------------------------------------------
 
-    //TODO: subsidies claimable based off their expenditure accrued for a pool-epoch
-    //REVIEW: Subsidies are paid out to the `assetAddress` of the verifier, so it is required that, `assetAddress` calls `VotingController.claimSubsidies`
+    /**
+     * @notice Claims verifier subsidies for specified pools in a given epoch.
+     * @dev Subsidies are claimable based on the verifier's expenditure accrued for each pool-epoch.
+     *      Only the `assetAddress` of the verifier (as registered in PaymentsController) can call this function.
+     * @param epoch The epoch number for which subsidies are being claimed.
+     * @param verifierId The identifier of the verifier claiming subsidies.
+     * @param poolIds Array of pool identifiers for which to claim subsidies.
+     *
+     * Requirements:
+     * - The epoch must be fully finalized.
+     * - Each poolId must exist and have allocated subsidies.
+     */
     function claimSubsidies(uint256 epoch, bytes32 verifierId, bytes32[] calldata poolIds) external whenNotPaused {
         require(poolIds.length > 0, Errors.InvalidArray());
         
@@ -602,16 +612,13 @@ contract VotingController is Pausable {
 
             // poolAccruedSubsidies == 0 will revert on division; verifierAccruedSubsidies == 0 will be skipped | no need for checks
 
-            // rebase USD8 (6dp) to match esMOCA (18dp) | * 1e12 to match precision
-            uint256 verifierAccruedSubsidies_18dp = verifierAccruedSubsidies * Constants.USD8_TO_18DP_SCALE;
-            uint256 poolAccruedSubsidies_18dp = poolAccruedSubsidies * Constants.USD8_TO_18DP_SCALE;
+            // calculate ratio and rebase it to 18dp in single step | ratio is in 18dp precision
+            uint256 ratio = (verifierAccruedSubsidies * 1E18) / poolAccruedSubsidies; // subsidies in 1e6 precision
+            
+            // calculate subsidy receivable
+            uint256 subsidyReceivable_256 = (ratio * poolAllocatedSubsidies) / 1E18; // subsidies in 1e18 precision
+            require(subsidyReceivable_256 <= type(uint128).max, Errors.RebaseOverflow());
 
-            // sanity checks @follow-up : R has a pattern for this? check w/ him
-            require(verifierAccruedSubsidies_18dp <= type(uint128).max, Errors.RebaseOverflow());
-            require(poolAccruedSubsidies_18dp <= type(uint128).max, Errors.RebaseOverflow());
-
-            // calculate subsidy receivable (all in 18dp)
-            uint256 subsidyReceivable_256 = (verifierAccruedSubsidies_18dp * poolAllocatedSubsidies) / poolAccruedSubsidies_18dp;
 
             uint128 subsidyReceivable = uint128(subsidyReceivable_256);
             if(subsidyReceivable == 0) continue;  // skip if floored to 0
