@@ -247,11 +247,15 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // STORAGE: update global state
             veGlobal = veGlobal_;   
 
+            // STORAGE: decrement global totalLocked counters
+            totalLockedMoca -= lock.moca;
+            totalLockedEsMoca -= lock.esMoca;
+
             // burn originally issued veMoca
             uint256 mintedVeMoca = _convertToVeBalance(lock).bias;
             _burn(account, mintedVeMoca);
 
-            // emit event
+            emit Events.LockUnlocked(lockId, lock.owner, lock.moca, lock.esMoca);
 
             // return principals to lock.owner
             if(lock.moca > 0) _mocaToken().safeTransfer(lock.owner, lock.moca);
@@ -931,23 +935,34 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @custom:security No state updates except principal return; system is assumed failed.
          */
         function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole {
-            require(isFrozen == 1, "Contract is not frozen");
-            require(lockIds.length > 0, "No locks provided");
+            require(isFrozen == 1, Errors.NotFrozen());
+            require(lockIds.length > 0, Errors.InvalidAmount());
 
             // get user's veBalance for each lock
             for(uint256 i; i < lockIds.length; ++i) {
                 DataTypes.Lock memory lock = locks[lockIds[i]];
 
                 //sanity: lock exists + principals not returned
-                require(lock.owner != address(0), "Invalid lockId");
-                require(lock.isUnlocked == false, "Principals already returned");                
+                require(lock.owner != address(0), Errors.InvalidLockId());
+                require(lock.isUnlocked == false, Errors.PrincipalsAlreadyReturned());                
                 
                 // Determine who holds the veMOCA tokens
                 bool isDelegated = lock.delegate != address(0);
                 address veHolder = isDelegated ? lock.delegate : lock.owner;
 
-                // burn veMoca tokens
-                _burn(veHolder, uint256(_convertToVeBalance(lock).bias)); 
+                // Calculate expected veMOCA to burn
+                uint256 veMocaToBurn = uint256(_convertToVeBalance(lock).bias);
+
+                // Burn veMOCA tokens
+                uint256 actualBalance = balanceOf(veHolder);
+                uint256 burnAmount = veMocaToBurn > actualBalance ? actualBalance : veMocaToBurn;
+                if (burnAmount > 0) _burn(veHolder, burnAmount);                
+                // Note: If burnAmount < veMocaToBurn, we accept the discrepancy
+                // Emergency exit prioritizes returning principals over perfect accounting
+
+                // STORAGE: decrement global totalLocked counters
+                totalLockedMoca -= lock.moca;
+                totalLockedEsMoca -= lock.esMoca;
 
                 // transfer all tokens to the users
                 if(lock.moca > 0) _mocaToken().safeTransfer(lock.owner, lock.moca);
