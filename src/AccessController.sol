@@ -43,8 +43,8 @@ contract AccessController is AccessControl {
     // Roles for making changes to contract parameters + configuration [multi-sig]
     bytes32 public constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256("PAYMENTS_CONTROLLER_ADMIN_ROLE");
     bytes32 public constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256("VOTING_CONTROLLER_ADMIN_ROLE");
-    bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = keccak256("ESCROWED_MOCA_ADMIN_ROLE");
     bytes32 public constant VOTING_ESCROW_MOCA_ADMIN_ROLE = keccak256("VOTING_ESCROW_MOCA_ADMIN_ROLE");
+    bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = keccak256("ESCROWED_MOCA_ADMIN_ROLE");
 
     // [for multiple contracts]: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE");                   // withdraw fns on PaymentsController, VotingController
@@ -198,6 +198,22 @@ contract AccessController is AccessControl {
 
     function isVotingControllerAdmin(address addr) external view returns (bool) {
         return hasRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+
+    // VotingEscrowMocaAdmin role functions
+    function addVotingEscrowMocaAdmin(address addr) external noZeroAddress(addr) {
+        grantRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, addr);
+        emit Events.VotingEscrowMocaAdminAdded(addr, msg.sender);
+    }
+
+    function removeVotingEscrowMocaAdmin(address addr) external noZeroAddress(addr) {
+        revokeRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, addr);
+        emit Events.VotingEscrowMocaAdminRemoved(addr, msg.sender);
+    }
+
+    function isVotingEscrowMocaAdmin(address addr) external view returns (bool) {
+        return hasRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, addr);
     }
 
 
