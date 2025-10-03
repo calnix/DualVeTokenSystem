@@ -525,8 +525,10 @@ contract VotingController is Pausable {
     }
 
     /**
-     * @notice Called by delegates to claim accumulated fees from multiple delegators. [delegator==user tt delegated votes]
-     * @dev Processes batches by delegators; each delegator's pools are specified for fee calculation and distribution.
+     * @notice Mirror function of {claimRewardsFromDelegate}, enabling delegates to claim accumulated fees from multiple delegators.
+     * @dev Allows delegates to claim their earned fees directly, independent of user (delegator) activity, ensuring fee collection is not blocked by user inactivity.
+     *      Input lists of pools and delegators should be constructed to maximize total aggregated rewards, minimizing rounding down and flooring losses.
+     *      Processes batches by delegators; each delegator's pools are specified for fee calculation and distribution.
      * @param epoch The epoch for which delegate fees are being claimed.
      * @param delegators Array of delegator addresses from whom fees are being claimed.
      * @param poolIdsPerDelegator Array of poolId arrays, each corresponding to the pools voted by a specific delegator.
