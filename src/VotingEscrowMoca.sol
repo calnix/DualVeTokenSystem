@@ -306,7 +306,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             // Update user & global: account for decay since lastUpdate and any scheduled slope changes | false since lock is not yet delegated
             (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint256 currentEpochStart,,) = _updateAccountAndGlobal(msg.sender, false);
-            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+            unchecked { uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION; }
 
             // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
             DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
@@ -373,7 +373,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             
             // Update delegate: apply decay since lastUpdate and any scheduled slope changes [required before removing the lock from delegate's balance]
             (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint256 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
-            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+            unchecked { uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION; }
 
             // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
             DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
@@ -437,7 +437,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // Update current delegate: account for decay since lastUpdate and any scheduled slope changes [required before removing the lock from the current delegate]
             // true: update current delegate's aggregated veBalance; not personal
             (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veCurrentDelegate, uint256 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
-            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+            unchecked { uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION; }
 
             // get lock's current veBalance [no checkpoint required as lock attributes have not changed]
             DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
@@ -628,7 +628,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // there are updates to be done: update global veBalance
             while (lastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
-                lastUpdatedAt += EpochMath.EPOCH_DURATION;                  
+                unchecked { lastUpdatedAt += EpochMath.EPOCH_DURATION; }                  
 
                 // apply scheduled slope reductions and handle decay for expiring locks
                 veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
@@ -702,7 +702,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // Updating needed: global and account veBalance to current epoch
             while (accountLastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
-                accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
+                unchecked { accountLastUpdatedAt += EpochMath.EPOCH_DURATION; }
 
                 // --- Update global: if required ---
                 if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
@@ -995,7 +995,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // update global veBalance
             while (lastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
-                lastUpdatedAt += EpochMath.EPOCH_DURATION;                  
+                unchecked { lastUpdatedAt += EpochMath.EPOCH_DURATION; }                  
 
                 // decrement decay for this epoch & apply scheduled slope changes
                 veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
@@ -1037,7 +1037,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // update account veBalance to current epoch
             while (accountLastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
-                accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
+                unchecked { accountLastUpdatedAt += EpochMath.EPOCH_DURATION; }
 
                 // decrement decay for this epoch & apply scheduled slope changes
                 uint256 expiringSlope = accountSlopeChanges[account][accountLastUpdatedAt];
