@@ -44,6 +44,7 @@ contract AccessController is AccessControl {
     bytes32 public constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256("PAYMENTS_CONTROLLER_ADMIN_ROLE");
     bytes32 public constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256("VOTING_CONTROLLER_ADMIN_ROLE");
     bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = keccak256("ESCROWED_MOCA_ADMIN_ROLE");
+    bytes32 public constant VOTING_ESCROW_MOCA_ADMIN_ROLE = keccak256("VOTING_ESCROW_MOCA_ADMIN_ROLE");
 
     // [for multiple contracts]: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE");                   // withdraw fns on PaymentsController, VotingController
@@ -80,6 +81,8 @@ contract AccessController is AccessControl {
         // Low-frequency roles managed directly by global admin
         _setRoleAdmin(PAYMENTS_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(VOTING_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(VOTING_ESCROW_MOCA_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(ESCROWED_MOCA_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(ASSET_MANAGER_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
     }
