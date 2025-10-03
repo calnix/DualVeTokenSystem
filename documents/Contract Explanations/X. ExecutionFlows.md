@@ -575,16 +575,3 @@ The protocol prioritizes user asset safety through:
 - Clear role boundaries and access controls
 
 All privileged operations emit events for transparency and maintain strict access control through the centralized AccessController pattern.
-```
-
-I've written the complete privileged functions and execution flows documentation into the ExecutionFlows.md file. The document covers:
-
-1. **Initial Deployment Process** - Step-by-step deployment guide with code examples
-2. **Asset Flows** - All deposit/withdrawal patterns for MOCA, esMOCA, USD8
-3. **Risk Management** - Pause/freeze mechanisms and emergency procedures
-4. **Contract Operations** - Epoch lifecycle, pool management, delegation flows
-5. **Redeployment & Migration** - Upgrade procedures for AccessController and other contracts
-6. **Out-of-Sync Scenarios** - Edge cases and recovery procedures
-7. **Emergency Procedures** - Complete shutdown and asset recovery processes
-
-The document provides a comprehensive reference for all privileged operations in the protocol, with clear execution flows and code examples for each scenario.
