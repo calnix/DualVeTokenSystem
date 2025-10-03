@@ -112,8 +112,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
         function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external whenNotPaused {
             DataTypes.Lock memory oldLock = locks[lockId];
 
-            require(oldLock.lockId != bytes32(0), "NoLockFound");
-            require(oldLock.owner == msg.sender, "Only the creator can increase the amount");
+            require(oldLock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(oldLock.owner == msg.sender, Errors.InvalidOwner());
             
             // must have at least 2 Epoch left to increase amount: to meaningfully vote for the next epoch  
             // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
@@ -171,18 +171,18 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // newExpiry must be on a epoch boundary
         function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external whenNotPaused {
             // cannot extend duration arbitrarily; must be step-wise matching epoch boundaries
-            require(EpochMath.isValidEpochTime(durationToIncrease), "Duration must be on a epoch boundary");
+            require(EpochMath.isValidEpochTime(durationToIncrease), Errors.InvalidEpochTime());
 
             DataTypes.Lock memory oldLock = locks[lockId];
 
-            require(oldLock.lockId != bytes32(0), "NoLockFound");
-            require(oldLock.owner == msg.sender, "Only the creator can increase the duration");
-            require(oldLock.expiry > block.timestamp, "Lock has expired");
+            require(oldLock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(oldLock.owner == msg.sender, Errors.InvalidOwner());
+            require(oldLock.expiry > block.timestamp, Errors.InvalidExpiry());
             
             // must have at least 2 Epoch left to increase duration: to meaningfully vote for the next epoch  
             // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
             uint256 newExpiry = oldLock.expiry + durationToIncrease;
-            require(newExpiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
+            require(newExpiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), Errors.LockExpiresTooSoon());
 
             // DELEGATED OR PERSONAL LOCK:
             bool isDelegated = oldLock.delegate != address(0);
@@ -222,10 +222,10 @@ contract VotingEscrowMoca is ERC20, Pausable {
         function unlock(bytes32 lockId) external whenNotPaused {
             DataTypes.Lock memory lock = locks[lockId];
 
-            require(lock.lockId != bytes32(0), "LockNotFound");
-            require(lock.expiry <= block.timestamp, "Lock not expired");
-            require(lock.isUnlocked == false, "Lock already unlocked");
-            require(lock.owner == msg.sender, "Only creator can unlock");
+            require(lock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(lock.expiry <= block.timestamp, Errors.InvalidExpiry());
+            require(lock.isUnlocked == false, Errors.InvalidLockState());
+            require(lock.owner == msg.sender, Errors.InvalidOwner());
 
             // DELEGATED OR PERSONAL LOCK:
             bool isDelegated = lock.delegate != address(0);
@@ -290,14 +290,15 @@ contract VotingEscrowMoca is ERC20, Pausable {
          */
         function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
             // sanity check: delegate
-            require(delegate != msg.sender, "Cannot delegate to self");
-            require(isRegisteredDelegate[delegate], "Delegate not registered"); // implicit address(0) check: newDelegate != address(0)
+            require(delegate != address(0), Errors.InvalidAddress());
+            require(delegate != msg.sender, Errors.InvalidDelegate());
+            require(isRegisteredDelegate[delegate], Errors.DelegateNotRegistered()); // implicit address(0) check: newDelegate != address(0)
 
             DataTypes.Lock memory lock = locks[lockId];
             
             // sanity check: lock
-            require(lock.lockId != bytes32(0), "LockNotFound");
-            require(lock.owner == msg.sender, "Only the creator can delegate");
+            require(lock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(lock.owner == msg.sender, Errors.InvalidOwner());
 
             // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]    
             // allow the delegate to meaningfully vote for the next epoch        
@@ -357,10 +358,10 @@ contract VotingEscrowMoca is ERC20, Pausable {
             DataTypes.Lock memory lock = locks[lockId];
 
             // sanity checks
-            require(lock.lockId != bytes32(0), "NoLockFound");
-            require(lock.delegate != address(0), "Lock is not delegated");
-            require(lock.owner == msg.sender, "Only creator can undelegate");
-            require(lock.isUnlocked == false, "Principals returned");
+            require(lock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(lock.delegate != address(0), Errors.InvalidDelegate());
+            require(lock.owner == msg.sender, Errors.InvalidOwner());
+            require(lock.isUnlocked == false, Errors.PrincipalsAlreadyReturned());
 
             
             //note: intentionally not enforced: delegates may have unregistered, so users must always be able to reclaim their locks
@@ -404,8 +405,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             delete lock.delegate;
             locks[lockId] = lock;
 
-            // EMIT EVENT
-            //emit LockUndelegated(lockId, msg.sender, lock.delegate);
+            emit LockUndelegated(lockId, msg.sender, lock.delegate);
         }
         
         /**
@@ -419,15 +419,16 @@ contract VotingEscrowMoca is ERC20, Pausable {
          */
         function switchDelegate(bytes32 lockId, address newDelegate) external whenNotPaused {
             // sanity check: delegate
-            require(newDelegate != msg.sender, "Cannot delegate to self");
-            require(isRegisteredDelegate[newDelegate], "New delegate not registered");      // implicit address(0) check: newDelegate != address(0)
+            require(newDelegate != address(0), Errors.InvalidAddress());
+            require(newDelegate != msg.sender, Errors.InvalidDelegate());
+            require(isRegisteredDelegate[newDelegate], Errors.DelegateNotRegistered());      // implicit address(0) check: newDelegate != address(0)
 
             DataTypes.Lock memory lock = locks[lockId];
 
             // sanity check: lock
-            require(lock.lockId != bytes32(0), "NoLockFound");
-            require(lock.owner == msg.sender, "Only the creator can change delegate");
-            require(lock.delegate != newDelegate, "Cannot switch to the same delegate");
+            require(lock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(lock.owner == msg.sender, Errors.InvalidOwner());
+            require(lock.delegate != newDelegate, Errors.InvalidDelegate());
 
             // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]            
             // allow the delegate to meaningfully vote for the next epoch
@@ -470,8 +471,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // STORAGE: update global state
             veGlobal = veGlobal_;
 
-            // EMIT EVENT
-            //emit DelegateChanged(lockId, msg.sender, lock.delegate, newDelegate);
+            emit Events.DelegateChanged(lockId, msg.sender, lock.delegate, newDelegate);
         }
 
 
@@ -521,13 +521,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             // must have at least 2 Epoch left to create lock: to meaningfully vote for the next epoch  
             // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
-            require(expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
+            require(expiry >= EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), Errors.LockExpiresTooSoon());
 
             bool isDelegated;
             // if delegate is specified: check that delegate is registered
-            if (delegate > address(0)) {
-                require(isRegisteredDelegate[delegate], "Delegate not registered");
-                require(delegate != user, "Cannot delegate to self");
+            if (delegate != address(0)) {
+                require(isRegisteredDelegate[delegate], Errors.DelegateNotRegistered());
+                require(delegate != user, Errors.InvalidDelegate());
                 isDelegated = true;
             }
 
@@ -1091,6 +1091,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @return The current personal veBalance of the user.
          */
         function balanceOf(address user) public view override returns (uint256) {
+            require(user != address(0), Errors.InvalidAddress());
             if (isFrozen == 1) return 0;
             return balanceOf(user, false);  // Only personal voting power (non-delegated locks)
         }
@@ -1103,6 +1104,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @return The current veBalance of the user.
          */
         function balanceOf(address user, bool forDelegated) public view returns (uint256) {
+            require(user != address(0), Errors.InvalidAddress());
             if (isFrozen == 1) return 0;
             DataTypes.VeBalance memory veBalance = _viewAccount(user, forDelegated);
             return _getValueAt(veBalance, uint128(block.timestamp));
@@ -1120,8 +1122,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @return The user's veBalance at the specified timestamp.
          */
         function balanceOfAt(address user, uint256 time, bool forDelegated) external view returns (uint256) {
+            require(user != address(0), Errors.InvalidAddress());
             if (isFrozen == 1) return 0;
-            require(time <= block.timestamp, "Timestamp is in the future");
+            require(time <= block.timestamp, Errors.InvalidTimestamp());
 
             // find the closest epoch boundary (eTime) that is not larger than the input time
             uint256 eTime = EpochMath.getEpochStartForTimestamp(time);
@@ -1143,6 +1146,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @return The user's veBalance at the end of the specified epoch.
          */
         function balanceAtEpochEnd(address user, uint256 epoch, bool forDelegated) external view returns (uint256) {
+            require(user != address(0), Errors.InvalidAddress());
             if (isFrozen == 1) return 0;
             uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
             
@@ -1162,6 +1166,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @return The delegated veBalance (bias) at the end of the specified epoch.
          */
         function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint128) {
+            require(user != address(0), Errors.InvalidAddress());
+            require(delegate != address(0), Errors.InvalidAddress());
             if (isFrozen == 1) return 0;
             uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
             return delegatedAggregationHistory[user][delegate][epochEndTime].bias;
