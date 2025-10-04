@@ -70,13 +70,13 @@ contract PaymentsController is EIP712, Pausable {
 
 
     // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
-    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) private _epochPoolSubsidies;                                                     // totalSubsidiesPerPoolPerEpoch
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) private _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
+    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) internal _epochPoolSubsidies;                                                     // totalSubsidiesPerPoolPerEpoch
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) internal _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
     
     // To track fees accrued to each pool, per epoch | for voting rewards tracking
-    mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) private _epochPoolFeesAccrued;
+    mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) internal _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
-    mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) private _epochFeesAccrued;    
+    mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) internal _epochFeesAccrued;    
 
 //-------------------------------constructor-----------------------------------------
 

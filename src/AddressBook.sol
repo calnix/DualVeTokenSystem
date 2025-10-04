@@ -22,21 +22,21 @@ contract AddressBook is Ownable2Step, Pausable {
     // ..... Main identifiers .....
 
     // Tokens
-    bytes32 private constant USD8 = 'USD8';
-    bytes32 private constant MOCA = 'MOCA';
-    bytes32 private constant ES_MOCA = 'ES_MOCA';
-    bytes32 private constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
+    bytes32 public constant USD8 = 'USD8';
+    bytes32 public constant MOCA = 'MOCA';
+    bytes32 public constant ES_MOCA = 'ES_MOCA';
+    bytes32 public constant VOTING_ESCROW_MOCA = 'VOTING_ESCROW_MOCA';
     
     // Controllers
-    bytes32 private constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
-    bytes32 private constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
-    bytes32 private constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER'; 
+    bytes32 public constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
+    bytes32 public constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
+    bytes32 public constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER'; 
     
     // Treasury
-    bytes32 private constant TREASURY = 'TREASURY';
+    bytes32 public constant TREASURY = 'TREASURY';
 
     // Router
-    bytes32 private constant ROUTER = 'ROUTER';
+    bytes32 public constant ROUTER = 'ROUTER';
 
 
     // Map of registered addresses | internal so that public getter can be custom paused
