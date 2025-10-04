@@ -90,6 +90,7 @@ abstract contract StateT1_CreateIssuerAndVerifier is StateT0_Deploy {
 
     bytes32 public issuerId = PaymentsController_generateId(block.number, issuer1, issuer1Asset);
     bytes32 public verifierId = PaymentsController_generateId(block.number, verifier1, verifier1Asset);
+    bytes32 public expectedSchemaId1 = PaymentsController_generateSchemaId(block.number, issuerId);
 
     function setUp() public virtual override {
         super.setUp();
@@ -104,7 +105,7 @@ abstract contract StateT1_CreateIssuerAndVerifier is StateT0_Deploy {
 
 contract StateT1_CreateIssuerAndVerifierTest is StateT1_CreateIssuerAndVerifier {
 
-    function test_CreateSchema_RevertsWhenCallerIsNotIssuerAdmin() public {
+    function testCannot_CreateSchema_WhenCallerIsNotIssuerAdmin() public {
         uint128 fee = 1000;
 
         vm.expectRevert(Errors.InvalidCaller.selector);
@@ -113,7 +114,7 @@ contract StateT1_CreateIssuerAndVerifierTest is StateT1_CreateIssuerAndVerifier 
     }
 
 
-    function test_CreateSchema_RevertsWhenFeeTooLarge() public {
+    function testCannot_CreateSchema_WhenFeeTooLarge() public {
         // Use max uint128 as an obviously too large fee
         uint128 tooLargeFee = type(uint128).max; 
 
@@ -123,29 +124,103 @@ contract StateT1_CreateIssuerAndVerifierTest is StateT1_CreateIssuerAndVerifier 
     }
 
 
-    function test_CreateSchema_EmitsEventAndReturnsCorrectId() public {
+    function testCan_CreateSchema() public {
         uint128 fee = 1000;
-        bytes32 expectedSchemaId = PaymentsController_generateSchemaId(block.number, issuerId);
 
         // Expect the SchemaCreated event to be emitted with correct parameters
         vm.expectEmit(true, true, false, true, address(paymentsController));
-        emit Events.SchemaCreated(expectedSchemaId, issuerId, fee);
+        emit Events.SchemaCreated(expectedSchemaId1, issuerId, fee);
 
         vm.prank(issuer1);
         bytes32 schemaId = paymentsController.createSchema(issuerId, fee);
 
         // Assert
-        assertEq(schemaId, expectedSchemaId, "schemaId not set correctly");
+        assertEq(schemaId, expectedSchemaId1, "schemaId not set correctly");
         
         // Verify schema storage state
-        DataTypes.Schema memory schema = paymentsController.getSchema(expectedSchemaId);
+        DataTypes.Schema memory schema = paymentsController.getSchema(expectedSchemaId1);
 
-        assertEq(schema.schemaId, expectedSchemaId, "Schema ID not stored correctly");
+        assertEq(schema.schemaId, expectedSchemaId1, "Schema ID not stored correctly");
         assertEq(schema.issuerId, issuerId, "Issuer ID not stored correctly");
         assertEq(schema.currentFee, fee, "Current fee not stored correctly");
         assertEq(schema.nextFee, 0, "Next fee should be 0 for new schema");
         assertEq(schema.nextFeeTimestamp, 0, "Next fee timestamp should be 0 for new schema");
     }
 
+}
+
+abstract contract StateT2_UpdateSchemaFee is StateT1_CreateIssuerAndVerifier {
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        vm.prank(issuer1);
+        paymentsController.createSchema(issuerId, 1000);
+    }
+}
+
+contract StateT2_UpdateSchemaFeeTest is StateT2_UpdateSchemaFee {
+
+    function testCannot_UpdateSchemaFee_WhenCallerIsNotIssuerAdmin() public {
+        vm.expectRevert(Errors.InvalidCaller.selector);
+        vm.prank(address(0xdeadbeef)); // not the issuer admin
+        paymentsController.updateSchemaFee(issuerId, expectedSchemaId1, 1000);
+    }
+    
+    function testCannot_UpdateSchmeFee_InvalidId() public {
+        vm.expectRevert(Errors.InvalidId.selector);
+        vm.prank(issuer1);
+        paymentsController.updateSchemaFee(issuerId, bytes32(0), 1000);
+    }
+
+    function testCannot_UpdateSchemaFee_WhenNewFeeTooLarge() public {
+        vm.expectRevert(Errors.InvalidAmount.selector);
+        
+        uint128 newFee = type(uint128).max;
+     
+        vm.prank(issuer1);
+        paymentsController.updateSchemaFee(issuerId, expectedSchemaId1, newFee);
+    }
+
+
+
+    function testCan_UpdateSchemaFee_ReduceFee() public {
+        uint128 oldFee = 1000;
+        uint128 newFee = oldFee / 2;
+
+        // Expect the SchemaFeeReduced event to be emitted with correct parameters
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaFeeReduced(expectedSchemaId1, newFee, oldFee);
+
+        vm.prank(issuer1);
+        uint256 returnedFee = paymentsController.updateSchemaFee(issuerId, expectedSchemaId1, newFee);
+        assertEq(returnedFee, newFee, "newFee not set correctly");
+        
+        // Check storage state
+        DataTypes.Schema memory schema = paymentsController.getSchema(expectedSchemaId1);
+        assertEq(schema.currentFee, 500, "Schema currentFee not updated correctly");  // Should be 500 after reduction
+        assertEq(schema.nextFee, 0, "Schema nextFee should be 0 after fee reduction");
+        assertEq(schema.nextFeeTimestamp, 0, "Schema nextFeeTimestamp should be 0 after fee reduction");
+    }
+
+    function testCan_UpdateSchemaFee_IncreaseFee() public {
+        uint128 oldFee = 1000;
+        uint128 newFee = oldFee * 2;
+        uint256 nextFeeTimestamp = block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD();
+
+
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaNextFeeSet(expectedSchemaId1, newFee, nextFeeTimestamp, oldFee);
+
+        vm.prank(issuer1);
+        uint256 returnedFee = paymentsController.updateSchemaFee(issuerId, expectedSchemaId1, newFee);
+        assertEq(returnedFee, newFee, "newFee not set correctly");
+
+        // Check storage state
+        DataTypes.Schema memory schema = paymentsController.getSchema(expectedSchemaId1);
+        assertEq(schema.currentFee, oldFee, "Schema currentFee should remain unchanged until delay elapses");
+        assertEq(schema.nextFee, newFee, "Schema nextFee not set correctly");
+        assertEq(schema.nextFeeTimestamp, nextFeeTimestamp, "Schema nextFeeTimestamp not set correctly");
+    }
 
 }
