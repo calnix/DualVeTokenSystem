@@ -53,11 +53,13 @@ abstract contract TestingHarness is Test {
     address public issuer3Asset = makeAddr("issuer3Asset");
     address public verifier1 = makeAddr("verifier1");
     address public verifier1Asset = makeAddr("verifier1Asset");
+    address public verifier1Signer = makeAddr("verifier1Signer");
     address public verifier2 = makeAddr("verifier2");
     address public verifier2Asset = makeAddr("verifier2Asset");
+    address public verifier2Signer = makeAddr("verifier2Signer");
     address public verifier3 = makeAddr("verifier3");
     address public verifier3Asset = makeAddr("verifier3Asset");
-
+    address public verifier3Signer = makeAddr("verifier3Signer");
 
     // users
     //address public user1 = makeAddr("user1");

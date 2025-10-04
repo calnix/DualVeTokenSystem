@@ -147,14 +147,8 @@ contract PaymentsController is EIP712, Pausable {
      * @return schemaId The unique id assigned to the new schema.
      */
     function createSchema(bytes32 issuerId, uint128 fee) external whenNotPaused returns (bytes32) {
-
-        // cache pointers
-        DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
-        DataTypes.Verifier storage verifierPtr = _verifiers[issuerId];
-        DataTypes.Schema storage schemaPtr = _schemas[issuerId];
-
         // check if issuerId matches msg.sender
-        require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+        require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
 
         // sanity check: fee cannot be greater than 1000 USD8
         // fee is an absolute value expressed in USD8 terms | free credentials are allowed
@@ -166,12 +160,13 @@ contract PaymentsController is EIP712, Pausable {
             uint256 salt = block.number; 
             schemaId = _generateSchemaId(salt, issuerId);
             // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
-            while (schemaPtr.schemaId != bytes32(0) || verifierPtr.verifierId != bytes32(0) || issuerPtr.issuerId != bytes32(0)) {
+            while (_schemas[schemaId].schemaId != bytes32(0) || _verifiers[schemaId].verifierId != bytes32(0) || _issuers[schemaId].issuerId != bytes32(0)) {
                 schemaId = _generateSchemaId(++salt, issuerId);
             }
         }
 
         // STORAGE: create schema
+        DataTypes.Schema storage schemaPtr = _schemas[schemaId];
         schemaPtr.schemaId = schemaId;
         schemaPtr.issuerId = issuerId;
         schemaPtr.currentFee = fee;
