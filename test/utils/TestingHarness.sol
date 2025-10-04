@@ -44,6 +44,21 @@ abstract contract TestingHarness is Test {
     MockMoca public mockMoca;
     MockUSD8 public mockUSD8;
 
+    // actors
+    address public issuer1 = makeAddr("issuer1");
+    address public issuer1Asset = makeAddr("issuer1Asset");
+    address public issuer2 = makeAddr("issuer2");
+    address public issuer2Asset = makeAddr("issuer2Asset");
+    address public issuer3 = makeAddr("issuer3");
+    address public issuer3Asset = makeAddr("issuer3Asset");
+    address public verifier1 = makeAddr("verifier1");
+    address public verifier1Asset = makeAddr("verifier1Asset");
+    address public verifier2 = makeAddr("verifier2");
+    address public verifier2Asset = makeAddr("verifier2Asset");
+    address public verifier3 = makeAddr("verifier3");
+    address public verifier3Asset = makeAddr("verifier3Asset");
+
+
     // users
     //address public user1 = makeAddr("user1");
     //address public user2 = makeAddr("user2");
@@ -90,21 +105,23 @@ abstract contract TestingHarness is Test {
         accessController = new AccessController(address(addressBook));
 
         // initialize roles
-        accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin);
-        accessController.grantRole(accessController.MONITOR_ADMIN_ROLE(), monitorAdmin);
-        accessController.grantRole(accessController.CRON_JOB_ADMIN_ROLE(), cronJobAdmin);
-        accessController.grantRole(accessController.PAYMENTS_CONTROLLER_ADMIN_ROLE(), paymentsControllerAdmin);
-        accessController.grantRole(accessController.VOTING_CONTROLLER_ADMIN_ROLE(), votingControllerAdmin);
-        accessController.grantRole(accessController.VOTING_ESCROW_MOCA_ADMIN_ROLE(), votingEscrowMocaAdmin);
-        accessController.grantRole(accessController.ESCROWED_MOCA_ADMIN_ROLE(), escrowedMocaAdmin);
-        accessController.grantRole(accessController.ASSET_MANAGER_ROLE(), assetManager);
-        accessController.grantRole(accessController.EMERGENCY_EXIT_HANDLER_ROLE(), emergencyExitHandler);
-        accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), deployer);
-
-        // Deploy contracts + register in AddressBook
         vm.startPrank(globalAdmin);
-        addressBook.setAddress(addressBook.MOCA(), address(mockMoca));
-        addressBook.setAddress(addressBook.USD8(), address(mockUSD8));
+            accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin);
+            accessController.grantRole(accessController.MONITOR_ADMIN_ROLE(), monitorAdmin);
+            accessController.grantRole(accessController.CRON_JOB_ADMIN_ROLE(), cronJobAdmin);
+            accessController.grantRole(accessController.PAYMENTS_CONTROLLER_ADMIN_ROLE(), paymentsControllerAdmin);
+            accessController.grantRole(accessController.VOTING_CONTROLLER_ADMIN_ROLE(), votingControllerAdmin);
+            accessController.grantRole(accessController.VOTING_ESCROW_MOCA_ADMIN_ROLE(), votingEscrowMocaAdmin);
+            accessController.grantRole(accessController.ESCROWED_MOCA_ADMIN_ROLE(), escrowedMocaAdmin);
+            accessController.grantRole(accessController.ASSET_MANAGER_ROLE(), assetManager);
+            accessController.grantRole(accessController.EMERGENCY_EXIT_HANDLER_ROLE(), emergencyExitHandler);
+        vm.stopPrank();
+
+
+        // Deploy mock tokens + register in AddressBook
+        vm.startPrank(globalAdmin);
+            addressBook.setAddress(addressBook.MOCA(), address(mockMoca));
+            addressBook.setAddress(addressBook.USD8(), address(mockUSD8));
         vm.stopPrank();
 
 
@@ -112,8 +129,9 @@ abstract contract TestingHarness is Test {
         paymentsController = new PaymentsController(address(addressBook), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
              "PaymentsController", "1");
         
-        vm.prank(globalAdmin);
-        addressBook.setAddress(addressBook.PAYMENTS_CONTROLLER(), address(paymentsController));
+        vm.startPrank(globalAdmin);
+            addressBook.setAddress(addressBook.PAYMENTS_CONTROLLER(), address(paymentsController));
+        vm.stopPrank();
 
         // 2. veMoca
         //veMoca = new VotingEscrowMoca(address(addressBook));
@@ -127,5 +145,14 @@ abstract contract TestingHarness is Test {
 
     }
 
+// ------------------------------Helper functions-----------------------------------------
+
+    function PaymentsController_generateId(uint256 salt, address adminAddress, address assetAddress) public view returns (bytes32) {
+        return bytes32(keccak256(abi.encode(adminAddress, assetAddress, block.timestamp, salt)));
+    }
+
+    function PaymentsController_generateSchemaId(uint256 salt, bytes32 issuerId) public view returns (bytes32) {
+        return bytes32(keccak256(abi.encode(issuerId, block.timestamp, salt)));
+    }
 
 }
