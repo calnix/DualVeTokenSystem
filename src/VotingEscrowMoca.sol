@@ -103,12 +103,19 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @param delegate The address to delegate voting power to (optional).
          * @return lockId The unique identifier of the created lock.
         */
-        function createLock(uint128 expiry, uint256 moca, uint256 esMoca, address delegate) external whenNotPaused returns (bytes32) {
+        function createLock(uint128 expiry, uint128 moca, uint128 esMoca, address delegate) external whenNotPaused returns (bytes32) {
             return _createLockFor(msg.sender, expiry, moca, esMoca, delegate);
         }
 
-        // must have at least 2 Epoch left to increase amount; 
-        // Users can only stake more into locks that have at least 1 Epoch left
+        /**
+         * @notice Increases the amount of MOCA and/or esMOCA staked in an existing lock.
+         * @dev Users can only increase the amount for locks that have at least 2 epochs left before expiry.
+         *      The function updates the lock's staked amounts, recalculates veBalance, and mints additional veMoca to the account.
+         *      Only the lock owner can call this function.
+         * @param lockId The unique identifier of the lock to increase.
+         * @param mocaToIncrease The amount of MOCA to add to the lock.
+         * @param esMocaToIncrease The amount of esMOCA to add to the lock.
+         */
         function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external whenNotPaused {
             DataTypes.Lock memory oldLock = locks[lockId];
 
@@ -166,8 +173,15 @@ contract VotingEscrowMoca is ERC20, Pausable {
             }
         }
         
-        // must have at least 2 Epoch left to increase duration; 
-        // newExpiry must be on a epoch boundary
+
+        /**
+         * @notice Increases the duration of an existing lock.
+         * @dev Users can only increase the duration for locks that have at least 2 epochs left before expiry.
+         *      The function updates the lock's expiry, recalculates veBalance, and mints additional veMoca to the account.
+         *      Only the lock owner can call this function.
+         * @param lockId The unique identifier of the lock to increase.
+         * @param durationToIncrease The additional duration to add to the lock (must be on epoch boundary).
+         */
         function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external whenNotPaused {
             // cannot extend duration arbitrarily; must be step-wise matching epoch boundaries
             require(EpochMath.isValidEpochTime(durationToIncrease), Errors.InvalidEpochTime());
@@ -217,7 +231,12 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // emit event
         }
 
-        // Withdraws principals of an expired lock | ve will be burnt, altho veBalance will return 0 on expiry
+        /**
+         * @notice Withdraws principals of an expired lock 
+         * @dev ve will be burnt, altho veBalance will return 0 on expiry
+         * @dev Only the lock owner can call this function.
+         * @param lockId The unique identifier of the lock to unlock.
+         */
         function unlock(bytes32 lockId) external whenNotPaused {
             DataTypes.Lock memory lock = locks[lockId];
 
@@ -477,7 +496,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
 //-------------------------------Admin function: createLockFor()---------------------------------------------
 
         // when creating lock onBehalfOf - we will not delegate for the user
-        function createLockFor(address user, uint128 expiry, uint256 moca, uint256 esMoca) external onlyCronJobRole whenNotPaused returns (bytes32) { 
+        function createLockFor(address user, uint128 expiry, uint128 moca, uint128 esMoca) external onlyCronJobRole whenNotPaused returns (bytes32) { 
             return _createLockFor(user, expiry, moca, esMoca, address(0));
         }
 
@@ -507,7 +526,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         
         // delegate can be address(0)
         // lock must last for at least 2 Epochs: to meaningfully vote for the next epoch [we are sure] 
-        function _createLockFor(address user, uint128 expiry, uint256 moca, uint256 esMoca, address delegate) internal returns (bytes32) {
+        function _createLockFor(address user, uint128 expiry, uint128 moca, uint128 esMoca, address delegate) internal returns (bytes32) {
             require(user != address(0), Errors.InvalidUser());
             require(EpochMath.isValidEpochTime(expiry), Errors.InvalidExpiry());
 
@@ -544,8 +563,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
                     newLock.lockId = lockId; 
                     newLock.owner = user;
                     newLock.delegate = delegate;                //note: might be setting this to zero; but no point doing if(delegate != address(0))
-                    newLock.moca = uint128(moca);
-                    newLock.esMoca = uint128(esMoca);
+                    newLock.moca = moca;
+                    newLock.esMoca = esMoca;
                     newLock.expiry = expiry;
                 // STORAGE: book lock
                 locks[lockId] = newLock;
@@ -626,7 +645,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // there are updates to be done: update global veBalance
             while (lastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
-                unchecked { lastUpdatedAt += EpochMath.EPOCH_DURATION; }                  
+                lastUpdatedAt += EpochMath.EPOCH_DURATION;                  
 
                 // apply scheduled slope reductions and handle decay for expiring locks
                 veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
