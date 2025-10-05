@@ -1161,5 +1161,154 @@ contract StateT9_Verifier1StakeMOCA_Test is StateT9_Verifier1StakeMOCA {
         
         uint256 epochPoolVerifierSubsidies = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId1, verifier1_Id);
         assertEq(epochPoolVerifierSubsidies, subsidy, "Subsidy not booked correctly");
+    }   
+}
+
+abstract contract StateT10_AllVerifiersStakedMOCA is StateT9_Verifier1StakeMOCA {
+    bytes32 public poolId2 = bytes32("234");
+    bytes32 public poolId3 = bytes32("345");
+
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // verifier2: stakes 20 MOCA for 20% subsidy tier
+        vm.startPrank(verifier2Asset);
+            mockMoca.approve(address(paymentsController), 20 ether);
+            paymentsController.stakeMoca(verifier2_Id, 20 ether);
+            // for verification payments
+            mockUSD8.approve(address(paymentsController), 100 * 1e6);
+            paymentsController.deposit(verifier2_Id, 100 * 1e6);
+        vm.stopPrank();
+
+        // verifier3: stakes 30 MOCA for 30% subsidy tier
+        vm.startPrank(verifier3Asset);
+            mockMoca.approve(address(paymentsController), 30 ether);
+            paymentsController.stakeMoca(verifier3_Id, 30 ether);
+        vm.stopPrank();
+        
+        // paymentsControllerAdmin: associate schema2 and schema3 with pools
+        vm.startPrank(paymentsControllerAdmin);
+            paymentsController.updatePoolId(schemaId2, poolId2);
+            paymentsController.updatePoolId(schemaId3, poolId3);
+        vm.stopPrank();
+    }
+}
+
+// Check subsidies being booked for other tiers: verifier2 and verifier3
+// Check that no subsidies are booked for schema3 - zero-fee schema. even if schema is associated to a pool.
+contract StateT10_AllVerifiersStakedMOCA_Test is StateT10_AllVerifiersStakedMOCA {
+
+    //note: verifier 2: deposited 100 USD8 for verification payments. But did stake 20 MOCA for 20% subsidy tier.
+    function testCan_Verifier2DeductBalance_ShouldBookSubsidies() public {
+        // Record verifier's state before deduction
+        uint256 verifierCurrentBalanceBefore = paymentsController.getVerifier(verifier2_Id).currentBalance;
+        uint256 verifierTotalExpenditureBefore = paymentsController.getVerifier(verifier2_Id).totalExpenditure;
+        
+        // Record issuer's state before deduction
+        uint256 issuerTotalNetFeesAccruedBefore = paymentsController.getIssuer(issuer2_Id).totalNetFeesAccrued;
+        uint256 issuerTotalVerifiedBefore = paymentsController.getIssuer(issuer2_Id).totalVerified;
+        
+        // Record schema's state before deduction
+        uint256 schemaTotalGrossFeesAccruedBefore = paymentsController.getSchema(schemaId2).totalGrossFeesAccrued;
+        uint256 schemaTotalVerifiedBefore = paymentsController.getSchema(schemaId2).totalVerified;
+       
+        // Record epoch fees before deduction
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
+        uint256 protocolFeesBefore = epochFeesBefore.feesAccruedToProtocol;
+        uint256 votersFeesBefore = epochFeesBefore.feesAccruedToVoters;
+
+        // Generate signature
+        uint128 amount = issuer2SchemaFee;
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier2Signer);
+        bytes memory signature = generateDeductBalanceSignature(verifier2SignerPrivateKey, issuer2_Id, verifier2_Id, schemaId2, amount, expiry, nonce);
+        
+        // calc. subsidy (verifier2 staked 20 ether = 20% subsidy)
+        uint256 mocaStaked = paymentsController.getVerifier(verifier2_Id).mocaStaked;
+        assertEq(mocaStaked, 20 ether, "Verifier2 should have 20 ether staked");
+        uint256 subsidyPct = paymentsController.getVerifierSubsidyPercentage(mocaStaked);
+        assertEq(subsidyPct, 2000, "Verifier2 should have 20% subsidy");
+        uint256 subsidy = (amount * subsidyPct) / Constants.PRECISION_BASE;
+
+        // Expect event emission
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SubsidyBooked(verifier2_Id, poolId2, schemaId2, subsidy);
+
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.BalanceDeducted(verifier2_Id, schemaId2, issuer2_Id, amount); 
+
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaVerified(schemaId2);
+
+        vm.prank(verifier2Signer);
+        paymentsController.deductBalance(issuer2_Id, verifier2_Id, schemaId2, amount, expiry, signature);
+        
+        // Calculate fee splits
+        uint256 protocolFee = (amount * paymentsController.PROTOCOL_FEE_PERCENTAGE()) / Constants.PRECISION_BASE;
+        uint256 votingFee = (amount * paymentsController.VOTING_FEE_PERCENTAGE()) / Constants.PRECISION_BASE;
+        uint256 netFee = amount - protocolFee - votingFee;
+        
+        // Check epoch fees after deduction
+        DataTypes.FeesAccrued memory epochFeesAfter = paymentsController.getEpochFeesAccrued(currentEpoch);
+        assertEq(epochFeesAfter.feesAccruedToProtocol, protocolFeesBefore + protocolFee, "Protocol fees not updated correctly");
+        assertEq(epochFeesAfter.feesAccruedToVoters, votersFeesBefore + votingFee, "Voter fees not updated correctly");
+        assertEq(epochFeesAfter.isProtocolFeeWithdrawn, false, "epochFees.isProtocolFeeWithdrawn should be false");
+        assertEq(epochFeesAfter.isVotersFeeWithdrawn, false, "epochFees.isVotersFeeWithdrawn should be false");
+       
+        // Check storage state: verifier
+        DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier2_Id);
+        assertEq(verifier.currentBalance, verifierCurrentBalanceBefore - amount, "Verifier balance not updated correctly");
+        assertEq(verifier.totalExpenditure, verifierTotalExpenditureBefore + amount, "Verifier totalExpenditure not updated correctly");
+
+        // Check storage state: issuer
+        DataTypes.Issuer memory issuer = paymentsController.getIssuer(issuer2_Id);
+        assertEq(issuer.totalNetFeesAccrued, issuerTotalNetFeesAccruedBefore + netFee, "Issuer totalNetFeesAccrued not updated correctly");
+        assertEq(issuer.totalVerified, issuerTotalVerifiedBefore + 1, "Issuer totalVerified not updated correctly");
+
+        // Check storage state: schema
+        DataTypes.Schema memory schema = paymentsController.getSchema(schemaId2);
+        assertEq(schema.totalGrossFeesAccrued, schemaTotalGrossFeesAccruedBefore + amount, "Schema totalGrossFeesAccrued not updated correctly");
+        assertEq(schema.totalVerified, schemaTotalVerifiedBefore + 1, "Schema totalVerified not updated correctly");
+
+        // check subsidy booked correctly
+        uint256 epochPoolSubsidies = paymentsController.getEpochPoolSubsidies(currentEpoch, poolId2);
+        assertEq(epochPoolSubsidies, subsidy, "Subsidy not booked correctly for pool2");
+        
+        uint256 epochPoolVerifierSubsidies = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId2, verifier2_Id);
+        assertEq(epochPoolVerifierSubsidies, subsidy, "Subsidy not booked correctly for verifier2");
+    }
+
+
+    //note: verifier 3: deposited 0 USD8 for verification payments. But did stake 30 MOCA for 30% subsidy tier.
+    function testCan_Verifier3DeductBalance_ShouldBookSubsidies() public {
+        // For verifier3, we'll use the zero-fee schema (schemaId3) but still test subsidy booking
+        // Generate signature for zero-fee deduction
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier3Signer);
+        bytes memory signature = generateDeductBalanceZeroFeeSignature(verifier3SignerPrivateKey, issuer3_Id, verifier3_Id, schemaId3, expiry, nonce);
+        
+        // calc. subsidy (verifier3 staked 30 ether = 30% subsidy, but on 0 fee)
+        uint256 mocaStaked = paymentsController.getVerifier(verifier3_Id).mocaStaked;
+        assertEq(mocaStaked, 30 ether, "Verifier3 should have 30 ether staked");
+        uint256 subsidyPct = paymentsController.getVerifierSubsidyPercentage(mocaStaked);
+        assertEq(subsidyPct, 3000, "Verifier3 should have 30% subsidy");
+        // No subsidy for zero-fee schemas
+        uint256 subsidy = 0;
+
+        // Expect only SchemaVerifiedZeroFee event (no SubsidyBooked event for zero-fee)
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaVerifiedZeroFee(schemaId3);
+
+        vm.prank(verifier3Signer);
+        paymentsController.deductBalanceZeroFee(issuer3_Id, verifier3_Id, schemaId3, expiry, signature);
+
+        // Check that no subsidy was booked (zero-fee schemas don't generate subsidies)
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint256 epochPoolSubsidies = paymentsController.getEpochPoolSubsidies(currentEpoch, poolId3);
+        assertEq(epochPoolSubsidies, 0, "No subsidy should be booked for zero-fee schema");
+        
+        uint256 epochPoolVerifierSubsidies = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId3, verifier3_Id);
+        assertEq(epochPoolVerifierSubsidies, 0, "No subsidy should be booked for verifier3 with zero-fee schema");
     }
 }
