@@ -139,7 +139,7 @@ library Events {
     event FeeIncreaseDelayPeriodUpdated(uint256 newDelayPeriod);
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VotingFeePercentageUpdated(uint256 voterFeePercentage);
-    event VerifierStakingTierUpdated(uint256 stakingTier, uint256 stakingAmount);
+    event VerifierStakingTierUpdated(uint256 stakingAmount, uint256 subsidyPercentage);
     
     // withdrawProtocolFees, withdrawVotersFees
     event ProtocolFeesWithdrawn(uint256 epoch, uint256 protocolFees);

@@ -103,6 +103,7 @@ contract PaymentsController is EIP712, Pausable {
         require(delayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
         require(EpochMath.isValidEpochTime(delayPeriod), Errors.InvalidDelayPeriod());
         FEE_INCREASE_DELAY_PERIOD = delayPeriod;
+
     }
 
 //-------------------------------issuer functions-----------------------------------------
@@ -675,7 +676,7 @@ contract PaymentsController is EIP712, Pausable {
     
     // if zero address, reverts automatically
     function _usd8() internal view returns (IERC20) {
-        return IERC20(addressBook.getUSD8Token());
+        return IERC20(addressBook.getUSD8());
     }
     
     // if zero address, reverts automatically
@@ -687,15 +688,15 @@ contract PaymentsController is EIP712, Pausable {
 
     // add/update/remove | can be 0 
     function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin whenNotPaused {
-        require(_schemas[schemaId].schemaId != bytes32(0), "Schema does not exist");
+        require(_schemas[schemaId].schemaId != bytes32(0), Errors.InvalidSchema());
         _schemas[schemaId].poolId = poolId;
 
         emit Events.PoolIdUpdated(schemaId, poolId);
     }
 
     function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyPaymentsAdmin whenNotPaused {
-        require(newDelayPeriod > 0, "Invalid delay period");
-        require(newDelayPeriod % EpochMath.EPOCH_DURATION == 0, "Delay period must be a multiple of epoch duration");
+        require(newDelayPeriod > 0, Errors.InvalidDelayPeriod());
+        require(newDelayPeriod % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
 
         FEE_INCREASE_DELAY_PERIOD = newDelayPeriod;
 
@@ -705,9 +706,9 @@ contract PaymentsController is EIP712, Pausable {
     // protocol fee can be 0
     function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyPaymentsAdmin whenNotPaused {
         // protocol fee cannot be greater than 100%
-        require(protocolFeePercentage < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
+        require(protocolFeePercentage < Constants.PRECISION_BASE, Errors.InvalidPercentage());
         // total fee percentage cannot be greater than 100%
-        require(protocolFeePercentage + VOTING_FEE_PERCENTAGE < Constants.PRECISION_BASE, "Invalid protocol fee percentage");
+        require(protocolFeePercentage + VOTING_FEE_PERCENTAGE < Constants.PRECISION_BASE, Errors.InvalidPercentage());
 
         PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
 
@@ -717,9 +718,9 @@ contract PaymentsController is EIP712, Pausable {
     // voter fee can be 0
     function updateVotingFeePercentage(uint256 votingFeePercentage) external onlyPaymentsAdmin whenNotPaused {
         // voter fee cannot be greater than 100%
-        require(votingFeePercentage < Constants.PRECISION_BASE, "Invalid voting fee percentage");
+        require(votingFeePercentage < Constants.PRECISION_BASE, Errors.InvalidPercentage());
         // total fee percentage cannot be greater than 100%
-        require(votingFeePercentage + PROTOCOL_FEE_PERCENTAGE < Constants.PRECISION_BASE, "Invalid voting fee percentage");
+        require(votingFeePercentage + PROTOCOL_FEE_PERCENTAGE < Constants.PRECISION_BASE, Errors.InvalidPercentage());
         
         VOTING_FEE_PERCENTAGE = votingFeePercentage;
 
@@ -728,8 +729,8 @@ contract PaymentsController is EIP712, Pausable {
 
     // used to set/overwrite/update
     function updateVerifierSubsidyPercentages(uint256 mocaStaked, uint256 subsidyPercentage) external onlyPaymentsAdmin whenNotPaused {
-        require(mocaStaked > 0, "Invalid moca staked");
-        require(subsidyPercentage < Constants.PRECISION_BASE, "Invalid subsidy percentage");
+        require(mocaStaked > 0, Errors.InvalidAmount());
+        require(subsidyPercentage < Constants.PRECISION_BASE, Errors.InvalidPercentage());
 
         _verifiersSubsidyPercentages[mocaStaked] = subsidyPercentage;
 

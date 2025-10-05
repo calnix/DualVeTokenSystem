@@ -17,7 +17,7 @@ interface IAddressBook {
 
     /// @notice Returns the address of the USD8 token.
     /// @return The USD8 token address.
-    function getUSD8Token() external view returns (address);   // forge-lint: disable-line(mixed-case-function)
+    function getUSD8() external view returns (address);   // forge-lint: disable-line(mixed-case-function)
 
     /// @notice Returns the address of the MOCA token.
     /// @return The MOCA token address.

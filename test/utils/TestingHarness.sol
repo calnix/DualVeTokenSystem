@@ -44,29 +44,39 @@ abstract contract TestingHarness is Test {
     MockMoca public mockMoca;
     MockUSD8 public mockUSD8;
 
-    // actors
+// ------------ Actors ------------
+    // ------------ issuers ------------
     address public issuer1 = makeAddr("issuer1");
     address public issuer1Asset = makeAddr("issuer1Asset");
     address public issuer2 = makeAddr("issuer2");
     address public issuer2Asset = makeAddr("issuer2Asset");
     address public issuer3 = makeAddr("issuer3");
     address public issuer3Asset = makeAddr("issuer3Asset");
+
+    // ------------ verifiers ------------
+    //verifier1
     address public verifier1 = makeAddr("verifier1");
     address public verifier1Asset = makeAddr("verifier1Asset");
-    address public verifier1Signer = makeAddr("verifier1Signer");
+    address public verifier1Signer;
+    uint256 public verifier1SignerPrivateKey;
+    //verifier2
     address public verifier2 = makeAddr("verifier2");
     address public verifier2Asset = makeAddr("verifier2Asset");
-    address public verifier2Signer = makeAddr("verifier2Signer");
+    address public verifier2Signer;
+    uint256 public verifier2SignerPrivateKey;
+    //verifier3
     address public verifier3 = makeAddr("verifier3");
     address public verifier3Asset = makeAddr("verifier3Asset");
-    address public verifier3Signer = makeAddr("verifier3Signer");
+    address public verifier3Signer;
+    uint256 public verifier3SignerPrivateKey;
 
-    // users
+    // ------------ users ------------
     //address public user1 = makeAddr("user1");
     //address public user2 = makeAddr("user2");
     //address public user3 = makeAddr("user3");
-    
-    // privileged role addresses
+
+// ------------ Privileged Role Addresses ------------
+    // global admin
     address public globalAdmin = makeAddr("globalAdmin");
     // high-frequency role addresses
     address public monitorAdmin = makeAddr("monitorAdmin");
@@ -83,8 +93,10 @@ abstract contract TestingHarness is Test {
     // emergency exit handler addresses
     address public emergencyExitHandler = makeAddr("emergencyExitHandler");
     
-    // deployer addresses
+    // deployer
     address public deployer = makeAddr("deployer");
+
+// ------------ Contract Parameters ------------
 
     // PaymentsController parameters
     uint256 public protocolFeePercentage = 500;   // 5%
@@ -96,17 +108,30 @@ abstract contract TestingHarness is Test {
     uint256 public maxDelegateFeePct = 200;      // 20%
     uint256 public delayDuration = 14 days;      // 14 days
 
+// ------------ Contract Deployment ------------
     function setUp() public virtual {
+        
+        // ------------ Verifier Signers ------------
+        (verifier1Signer, verifier1SignerPrivateKey) = makeAddrAndKey("verifier1Signer");
+        (verifier2Signer, verifier2SignerPrivateKey) = makeAddrAndKey("verifier2Signer");
+        (verifier3Signer, verifier3SignerPrivateKey) = makeAddrAndKey("verifier3Signer");
 
-        // deploy mock contracts
+        // 0. Deploy mock contracts
         mockMoca = new MockMoca();
         mockUSD8 = new MockUSD8();
 
-        // deploy contracts
+        // 1. Deploy address book and access controller
         addressBook = new AddressBook(globalAdmin);
         accessController = new AccessController(address(addressBook));
 
-        // initialize roles
+        // 2. Register AccessController, MOCA, USD8 in AddressBook
+        vm.startPrank(globalAdmin);
+            addressBook.setAddress(addressBook.ACCESS_CONTROLLER(), address(accessController));
+            addressBook.setAddress(addressBook.MOCA(), address(mockMoca));
+            addressBook.setAddress(addressBook.USD8(), address(mockUSD8));
+        vm.stopPrank();
+
+        // 3. Initialize roles
         vm.startPrank(globalAdmin);
             accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin);
             accessController.grantRole(accessController.MONITOR_ADMIN_ROLE(), monitorAdmin);
@@ -120,14 +145,7 @@ abstract contract TestingHarness is Test {
         vm.stopPrank();
 
 
-        // Deploy mock tokens + register in AddressBook
-        vm.startPrank(globalAdmin);
-            addressBook.setAddress(addressBook.MOCA(), address(mockMoca));
-            addressBook.setAddress(addressBook.USD8(), address(mockUSD8));
-        vm.stopPrank();
-
-
-        // 1. PaymentsController
+        // 4. Deploy PaymentsController
         paymentsController = new PaymentsController(address(addressBook), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
              "PaymentsController", "1");
         
@@ -135,7 +153,7 @@ abstract contract TestingHarness is Test {
             addressBook.setAddress(addressBook.PAYMENTS_CONTROLLER(), address(paymentsController));
         vm.stopPrank();
 
-        // 2. veMoca
+        // 5. Deploy VotingEscrowMoca
         //veMoca = new VotingEscrowMoca(address(addressBook));
 
 
@@ -144,6 +162,16 @@ abstract contract TestingHarness is Test {
         //addressBook.setAddress(addressBook.VOTING_ESCROW_MOCA(), address(veMoca));
         //addressBook.setAddress(addressBook.ACCESS_CONTROLLER(), address(accessController));
         //addressBook.setAddress(addressBook.VOTING_CONTROLLER(), address(votingController));
+
+
+        // PaymentsController: minting tokens
+        mockUSD8.mint(verifier1Asset, 100 ether);
+        mockUSD8.mint(verifier2Asset, 100 ether);
+        mockUSD8.mint(verifier3Asset, 100 ether);
+        mockMoca.mint(verifier1Asset, 100 ether);
+        mockMoca.mint(verifier2Asset, 100 ether);
+        mockMoca.mint(verifier3Asset, 100 ether);
+
 
     }
 
@@ -155,6 +183,120 @@ abstract contract TestingHarness is Test {
 
     function PaymentsController_generateSchemaId(uint256 salt, bytes32 issuerId) public view returns (bytes32) {
         return bytes32(keccak256(abi.encode(issuerId, block.timestamp, salt)));
+    }
+
+    
+
+// ------------------------------Signature Helper Functions-----------------------------------------
+
+    /**
+     * @notice Generates an EIP-712 signature for deductBalance()
+     * @param signerPrivateKey The private key of the verifier's signer
+     * @param issuerId The unique identifier of the issuer
+     * @param verifierId The unique identifier of the verifier
+     * @param schemaId The unique identifier of the schema
+     * @param amount The fee amount to deduct
+     * @param expiry The signature expiry timestamp
+     * @param nonce The current nonce for the signer address
+     * @return signature The EIP-712 signature
+     */
+    function generateDeductBalanceSignature(
+        uint256 signerPrivateKey,
+        bytes32 issuerId,
+        bytes32 verifierId,
+        bytes32 schemaId,
+        uint128 amount,
+        uint256 expiry,
+        uint256 nonce
+    ) public view returns (bytes memory) {
+        // EIP-712 domain separator
+        bytes32 domainSeparator = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("PaymentsController")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(paymentsController)
+            )
+        );
+
+        // Struct hash
+        bytes32 structHash = keccak256(
+            abi.encode(
+                Constants.DEDUCT_BALANCE_TYPEHASH,
+                issuerId,
+                verifierId,
+                schemaId,
+                amount,
+                expiry,
+                nonce
+            )
+        );
+
+        // EIP-712 typed data hash
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+
+        // Sign the digest
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /**
+     * @notice Generates an EIP-712 signature for deductBalanceZeroFee()
+     * @param signerPrivateKey The private key of the verifier's signer
+     * @param issuerId The unique identifier of the issuer
+     * @param verifierId The unique identifier of the verifier
+     * @param schemaId The unique identifier of the schema
+     * @param expiry The signature expiry timestamp
+     * @param nonce The current nonce for the signer address
+     * @return signature The EIP-712 signature
+     */
+    function generateDeductBalanceZeroFeeSignature(
+        uint256 signerPrivateKey,
+        bytes32 issuerId,
+        bytes32 verifierId,
+        bytes32 schemaId,
+        uint256 expiry,
+        uint256 nonce
+    ) public view returns (bytes memory) {
+        // EIP-712 domain separator
+        bytes32 domainSeparator = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("PaymentsController")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(paymentsController)
+            )
+        );
+
+        // Struct hash
+        bytes32 structHash = keccak256(
+            abi.encode(
+                Constants.DEDUCT_BALANCE_ZERO_FEE_TYPEHASH,
+                issuerId,
+                verifierId,
+                schemaId,
+                expiry,
+                nonce
+            )
+        );
+
+        // EIP-712 typed data hash
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+
+        // Sign the digest
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /**
+     * @notice Helper to get verifier nonce
+     * @param signerAddress The signer address of the verifier
+     * @return nonce The current nonce
+     */
+    function getVerifierNonce(address signerAddress) public view returns (uint256) {
+        return paymentsController.getVerifierNonce(signerAddress);
     }
 
 }
