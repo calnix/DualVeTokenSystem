@@ -2026,4 +2026,181 @@ contract StateT14_PaymentsControllerAdminIncreasesProtocolFee_Test is StateT14_P
             paymentsController.updateProtocolFeePercentage(excessiveNewProtocolFee);
         }
 
+    // ---- state transition: updateVotingFeePercentage() ----------
+    
+        function testCan_PaymentsControllerAdmin_UpdateVotingFee() public {
+            // Arrange
+            uint256 currentVotingFee = paymentsController.VOTING_FEE_PERCENTAGE();
+            uint256 newVotingFee = currentVotingFee + 100;
+            uint256 protocolFee = paymentsController.PROTOCOL_FEE_PERCENTAGE();
+
+            // Ensure newVotingFee does not exceed max or total fee constraints
+            assertLt(newVotingFee, Constants.PRECISION_BASE, "Voting fee must be less than 100%");
+            assertLe(newVotingFee + protocolFee, Constants.PRECISION_BASE, "Total fee must not exceed 100%");
+
+            // Act & Assert: Expect event emission
+            vm.expectEmit(true, true, false, true, address(paymentsController));
+            emit Events.VotingFeePercentageUpdated(newVotingFee);
+
+            // Act: Only admin can update
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVotingFeePercentage(newVotingFee);
+
+            // Assert: Fee updated
+            assertEq(paymentsController.VOTING_FEE_PERCENTAGE(), newVotingFee, "Voting fee should be updated");
+
+            // Assert: Protocol fee remains unchanged
+            assertEq(paymentsController.PROTOCOL_FEE_PERCENTAGE(), protocolFee, "Protocol fee should remain unchanged");
+        }
+}
+
+abstract contract StateT15_PaymentsControllerAdminIncreasesVotingFee is StateT14_PaymentsControllerAdminIncreasesProtocolFee {
+
+    uint256 public newVotingFee;
+
+    function setUp() public virtual override {
+        super.setUp();
+        
+        newVotingFee = paymentsController.VOTING_FEE_PERCENTAGE() + 100;
+
+        vm.prank(paymentsControllerAdmin);
+        paymentsController.updateVotingFeePercentage(newVotingFee);
+    }
+}
+
+contract StateT15_PaymentsControllerAdminIncreasesVotingFee_Test is StateT15_PaymentsControllerAdminIncreasesVotingFee {
+    
+    function testCan_PaymentsControllerAdmin_UpdateVotingFee() public {
+        uint256 updatedVotingFee = paymentsController.VOTING_FEE_PERCENTAGE();
+        assertEq(updatedVotingFee, newVotingFee, "Voting fee should be updated to new value");
+    }
+
+    // check that deductBalance books the correct amount of voting fee when voting fee pct is increased     
+    function testCan_DeductBalance_WhenVotingFeeIsIncreased() public {
+        // Note: verifier2 has 100 USD8 deposited (from StateT10) and 20 MOCA staked for 20% subsidy
+        // schemaId2 fee is 20 USD8, and it's associated with poolId2
+        // Protocol fee was increased to 6% in StateT14, voting fee now increased to 11% in StateT15
+        
+        // Record initial states
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
+        DataTypes.FeesAccrued memory poolFeesBefore = paymentsController.getEpochPoolFeesAccrued(currentEpoch, poolId2);
+        
+        // Verify verifier2 has sufficient USD8 balance
+        uint256 verifier2USD8BalanceBefore = paymentsController.getVerifier(verifier2_Id).currentBalance;
+        assertGe(verifier2USD8BalanceBefore, issuer2SchemaFee, "Verifier2 should have sufficient USD8 balance");
+        
+        uint256 verifier2ExpenditureBefore = paymentsController.getVerifier(verifier2_Id).totalExpenditure;
+        uint256 issuer2NetFeesBefore = paymentsController.getIssuer(issuer2_Id).totalNetFeesAccrued;
+        
+        // Record subsidy data before
+        uint256 poolSubsidiesBefore = paymentsController.getEpochPoolSubsidies(currentEpoch, poolId2);
+        uint256 verifierSubsidiesBefore = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId2, verifier2_Id);
+        
+        // Use schemaId2 which has poolId2 associated
+        uint128 amount = issuer2SchemaFee; // 20 USD8 (to be paid from USD8 balance)
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier2Signer);
+        bytes memory signature = generateDeductBalanceSignature(verifier2SignerPrivateKey, issuer2_Id, verifier2_Id, schemaId2, amount, expiry, nonce);
+
+        // Calculate expected fees with increased voting fee (11% instead of 10%) and protocol fee (6% from StateT14)
+        uint256 currentProtocolFee = paymentsController.PROTOCOL_FEE_PERCENTAGE();
+        uint256 expectedProtocolFee = (amount * currentProtocolFee) / Constants.PRECISION_BASE;
+        uint256 expectedVotingFee = (amount * newVotingFee) / Constants.PRECISION_BASE;
+        uint256 expectedNetFee = amount - expectedProtocolFee - expectedVotingFee;
+        
+        // Calculate expected subsidy based on MOCA staked (verifier2 has 20 MOCA = 20% subsidy tier)
+        uint256 mocaStaked = paymentsController.getVerifier(verifier2_Id).mocaStaked;
+        assertEq(mocaStaked, 20 ether, "Verifier2 should have 20 MOCA staked");
+        uint256 expectedSubsidyPct = 2000; // 20%
+        uint256 expectedSubsidy = (amount * expectedSubsidyPct) / Constants.PRECISION_BASE;
+
+        // Expect events
+        vm.expectEmit(true, true, true, true, address(paymentsController));
+        emit Events.SubsidyBooked(verifier2_Id, poolId2, schemaId2, expectedSubsidy);
+        
+        vm.expectEmit(true, true, true, true, address(paymentsController));
+        emit Events.BalanceDeducted(verifier2_Id, schemaId2, issuer2_Id, amount);
+        
+        vm.expectEmit(true, false, false, true, address(paymentsController));
+        emit Events.SchemaVerified(schemaId2);
+
+        // Execute deductBalance - this deducts USD8, not MOCA
+        vm.prank(verifier2Signer);
+        paymentsController.deductBalance(issuer2_Id, verifier2_Id, schemaId2, amount, expiry, signature);
+
+        // Verify global epoch fees updated correctly with new voting fee
+        DataTypes.FeesAccrued memory epochFeesAfter = paymentsController.getEpochFeesAccrued(currentEpoch);
+        assertEq(epochFeesAfter.feesAccruedToProtocol, epochFeesBefore.feesAccruedToProtocol + expectedProtocolFee, "Protocol fees incorrectly updated w/ increased percentage");
+        assertEq(epochFeesAfter.feesAccruedToVoters, epochFeesBefore.feesAccruedToVoters + expectedVotingFee, "Voting fees incorrectly updated");
+        assertEq(epochFeesAfter.isProtocolFeeWithdrawn, false, "epochFees.isProtocolFeeWithdrawn should be false");
+        assertEq(epochFeesAfter.isVotersFeeWithdrawn, false, "epochFees.isVotersFeeWithdrawn should be false");
+        
+        // Verify pool-specific fees updated correctly
+        DataTypes.FeesAccrued memory poolFeesAfter = paymentsController.getEpochPoolFeesAccrued(currentEpoch, poolId2);
+        assertEq(poolFeesAfter.feesAccruedToProtocol, poolFeesBefore.feesAccruedToProtocol + expectedProtocolFee, "Pool protocol fees incorrectly updated w/ increased percentage");
+        assertEq(poolFeesAfter.feesAccruedToVoters, poolFeesBefore.feesAccruedToVoters + expectedVotingFee, "Pool voting fees incorrectly updated");
+        assertEq(poolFeesAfter.isProtocolFeeWithdrawn, false, "epochFees.isProtocolFeeWithdrawn should be false");
+        assertEq(epochFeesAfter.isVotersFeeWithdrawn, false, "epochFees.isVotersFeeWithdrawn should be false");
+        
+        assertEq(poolFeesAfter.feesAccruedToVoters, poolFeesBefore.feesAccruedToVoters + expectedVotingFee, "Pool voting fees not updated correctly with increased percentage");
+        
+        // Verify verifier USD8 balance decreased (not MOCA balance)
+        assertEq(paymentsController.getVerifier(verifier2_Id).currentBalance, verifier2USD8BalanceBefore - amount, "Verifier USD8 balance not decreased correctly");
+        assertEq(paymentsController.getVerifier(verifier2_Id).totalExpenditure,verifier2ExpenditureBefore + amount,"Verifier expenditure not increased correctly");
+        
+        // Verify MOCA balance unchanged
+        assertEq(paymentsController.getVerifier(verifier2_Id).mocaStaked, 20 ether, "MOCA staked should remain unchanged after deductBalance");
+        
+        
+        // Verify issuer received correct net fee (in USD8)
+        assertEq(paymentsController.getIssuer(issuer2_Id).totalNetFeesAccrued, issuer2NetFeesBefore + expectedNetFee, "Issuer net fees not updated correctly with increased voting fee");
+        
+        
+        // Verify subsidies booked correctly (based on MOCA staked percentage)
+        assertEq(paymentsController.getEpochPoolSubsidies(currentEpoch, poolId2), poolSubsidiesBefore + expectedSubsidy, "Pool subsidies not booked correctly");
+        assertEq(paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId2, verifier2_Id), verifierSubsidiesBefore + expectedSubsidy, "Verifier subsidies not booked correctly");
+    }
+
+    // ------- negative tests for updateVotingFeePercentage() ----------
+    
+        function testCannot_NonAdmin_UpdateVotingFee() public {
+            uint256 attemptedNewFee = paymentsController.VOTING_FEE_PERCENTAGE() + 200;
+            
+            vm.expectRevert(Errors.OnlyCallableByPaymentsControllerAdmin.selector);
+            vm.prank(verifier1);
+            paymentsController.updateVotingFeePercentage(attemptedNewFee);
+            
+            // Verify fee remains unchanged
+            assertEq(paymentsController.VOTING_FEE_PERCENTAGE(), newVotingFee, "Voting fee should remain unchanged");
+        }
+        
+        function testCannot_UpdateVotingFee_WhenFeeExceedsMax() public {
+            // Assuming max fee is 100% (10,000 in basis points)
+            uint256 exceedingMaxFee = Constants.PRECISION_BASE + 1;
+            
+            vm.expectRevert(Errors.InvalidPercentage.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVotingFeePercentage(exceedingMaxFee);
+            
+            // Verify fee remains unchanged
+            assertEq(paymentsController.VOTING_FEE_PERCENTAGE(), newVotingFee, "Voting fee should remain unchanged");
+        }
+        
+        function testCannot_UpdateVotingFee_WhenTotalFeeExceedsMax() public {
+            uint256 protocolFee = paymentsController.PROTOCOL_FEE_PERCENTAGE();
+            uint256 votingFee = paymentsController.VOTING_FEE_PERCENTAGE();
+            
+            uint256 totalFee = votingFee + protocolFee;
+            uint256 deltaToExceedTotal = Constants.PRECISION_BASE - totalFee + 1;
+            
+            uint256 excessiveNewVotingFee = votingFee + deltaToExceedTotal;
+            
+            vm.expectRevert(Errors.InvalidPercentage.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVotingFeePercentage(excessiveNewVotingFee);
+            
+            // Verify fee remains unchanged
+            assertEq(paymentsController.VOTING_FEE_PERCENTAGE(), newVotingFee, "Voting fee should remain unchanged");
+        }
 }
