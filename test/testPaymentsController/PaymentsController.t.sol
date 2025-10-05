@@ -1602,4 +1602,22 @@ contract StateT12_VerifierChangesAssetAddress_Test is StateT12_VerifierChangesAs
         paymentsController.withdraw(verifier1_Id, currentBalance);
     }
 
+    // --------------- negative tests for withdraw ------------------------
+    function testCannot_VerifierWithdraw_WhenAmountIsZero() public {
+        vm.expectRevert(Errors.InvalidAmount.selector);
+        vm.prank(verifier1_newAssetAddress);
+        paymentsController.withdraw(verifier1_Id, 0);
+    }
+
+    function testCannot_VerifierWithdraw_WhenAmountIsGreaterThanBalance() public {
+        vm.expectRevert(Errors.InvalidAmount.selector);
+        vm.prank(verifier1_newAssetAddress);
+        paymentsController.withdraw(verifier1_Id, 1000 ether);
+    }
+
+    function testCannot_VerifierWithdraw_WhenCallerIsNotVerifierAsset() public {
+        vm.expectRevert(Errors.InvalidCaller.selector);
+        vm.prank(verifier1);
+        paymentsController.withdraw(verifier1_Id, 1 ether);
+    }
 }
