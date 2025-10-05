@@ -1992,7 +1992,7 @@ contract StateT14_PaymentsControllerAdminIncreasesProtocolFee_Test is StateT14_P
         function testCannot_NonAdmin_UpdateProtocolFee() public {
             uint256 attemptedNewFee = paymentsController.PROTOCOL_FEE_PERCENTAGE() + 200;
             
-            vm.expectRevert(Errors.InvalidCaller.selector);
+            vm.expectRevert(Errors.OnlyCallableByPaymentsControllerAdmin.selector);
             vm.prank(verifier1);
             paymentsController.updateProtocolFeePercentage(attemptedNewFee);
             
