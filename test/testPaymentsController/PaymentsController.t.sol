@@ -2439,5 +2439,147 @@ contract StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod_Test is
         assertEq(paymentsController.FEE_INCREASE_DELAY_PERIOD(), newDelayPeriod, "Fee increase delay period not updated correctly");
     }
 
+    function testCan_IssuerIncreaseFee_AfterNewDelayPeriod() public {
+        uint128 issuer1IncreasedSchemaFeeV2 = issuer1IncreasedSchemaFee * 2;
 
+        //record schema state before
+        DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
+        assertEq(schemaBefore.nextFee, 0, "Next fee should be 0");
+        assertEq(schemaBefore.nextFeeTimestamp, 0, "Next fee timestamp should be 0");
+        assertEq(schemaBefore.currentFee, issuer1IncreasedSchemaFee, "Current fee should be increased");
+
+        //issuer1 increases fees
+        vm.prank(issuer1_newAdminAddress);
+        paymentsController.updateSchemaFee(issuer1_Id, schemaId1, issuer1IncreasedSchemaFeeV2);
+
+        //check that the fee is increased
+        assertEq(paymentsController.getSchema(schemaId1).currentFee, issuer1IncreasedSchemaFee, "Current fee unchanged");
+        assertEq(paymentsController.getSchema(schemaId1).nextFee, issuer1IncreasedSchemaFeeV2, "Next fee should be increased");
+        assertEq(paymentsController.getSchema(schemaId1).nextFeeTimestamp, block.timestamp + newDelayPeriod, "Next fee timestamp should be increased");
+    }
+
+    // ------- negative tests: updateFeeIncreaseDelayPeriod() ---------
+
+        function testCannot_NonAdmin_UpdateFeeIncreaseDelayPeriod() public {
+            uint256 newDelayPeriod = 28 days;
+            
+            vm.expectRevert(Errors.OnlyCallableByPaymentsControllerAdmin.selector);
+            vm.prank(verifier1);
+            paymentsController.updateFeeIncreaseDelayPeriod(newDelayPeriod);
+        }
+
+        function testCannot_UpdateFeeIncreaseDelayPeriod_WhenZero() public {
+            uint256 newDelayPeriod = 0;
+            
+            vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateFeeIncreaseDelayPeriod(newDelayPeriod);
+        }
+
+        function testCannot_UpdateFeeIncreaseWithNonEpochPeriod() public {
+            uint256 newDelayPeriod = 27 days;
+            
+            vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateFeeIncreaseDelayPeriod(newDelayPeriod);
+        }
+
+}
+
+abstract contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay is StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod {
+
+    uint128 public issuer1IncreasedSchemaFeeV2;
+    uint128 public newNextFeeTimestamp;
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        issuer1IncreasedSchemaFeeV2 = issuer1IncreasedSchemaFee * 2;
+
+        //issuer1 increases fees
+        vm.prank(issuer1_newAdminAddress);
+        paymentsController.updateSchemaFee(issuer1_Id, schemaId1, issuer1IncreasedSchemaFeeV2);
+        
+        newNextFeeTimestamp = uint128(block.timestamp + newDelayPeriod);
+
+        vm.warp(newNextFeeTimestamp);
+    }
+}
+
+contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test is StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay {
+
+    function testCan_Schema1_StorageState_AfterNewDelayPeriodAndFeeIncrease_BeforeDeductBalance() public {
+        //record schema state - the new fee should not be active yet, as deductBalance has not been called
+        DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
+        assertEq(schemaBefore.currentFee, issuer1IncreasedSchemaFee, "Current fee unchanged");
+        assertEq(schemaBefore.nextFee, issuer1IncreasedSchemaFeeV2, "Next fee should be increased");
+        assertEq(schemaBefore.nextFeeTimestamp, newNextFeeTimestamp, "Next fee timestamp should be increased");
+    }
+
+    function testCan_DeductBalanceForSchema1_AfterNewDelayPeriodAndFeeIncrease() public {
+        //record schema state - the new fee should now be active after the delay period
+        DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
+        assertEq(schemaBefore.currentFee, issuer1IncreasedSchemaFee, "Current fee should be updated to new fee");
+        assertEq(schemaBefore.nextFee, issuer1IncreasedSchemaFeeV2, "Next fee should be cleared");
+        assertEq(schemaBefore.nextFeeTimestamp, newNextFeeTimestamp, "Next fee timestamp should be cleared");
+        
+        // Record verifier balance before
+        uint128 verifierBalanceBefore = paymentsController.getVerifier(verifier1_Id).currentBalance;
+        // Record issuer's accumulated fees before
+        uint256 issuerNetFeesAccruedBefore = paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued;
+
+        // Record epoch fees before
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
+        uint256 protocolFeesBefore = epochFeesBefore.feesAccruedToProtocol;
+        uint256 votersFeesBefore = epochFeesBefore.feesAccruedToVoters;
+        
+        // Generate signature with the new fee amount
+        uint128 amount = issuer1IncreasedSchemaFeeV2;
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier1NewSigner);
+        bytes memory signature = generateDeductBalanceSignature(verifier1NewSignerPrivateKey, issuer1_Id, verifier1_Id, schemaId1, amount, expiry, nonce);  
+            
+        // Expect SchemaFeeIncreased event
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaFeeIncreased(schemaId1, issuer1IncreasedSchemaFee, issuer1IncreasedSchemaFeeV2);
+
+        // Expect BalanceDeducted event
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.BalanceDeducted(verifier1_Id, schemaId1, issuer1_Id, amount);
+        
+        // Expect SchemaVerified event
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaVerified(schemaId1);
+        
+        // Execute deductBalance with new fee
+        vm.prank(verifier1NewSigner);
+        paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
+        
+        // Calculate fee splits
+        uint256 protocolFee = (amount * paymentsController.PROTOCOL_FEE_PERCENTAGE()) / Constants.PRECISION_BASE;
+        uint256 votingFee = (amount * paymentsController.VOTING_FEE_PERCENTAGE()) / Constants.PRECISION_BASE;
+        uint256 issuerFee = amount - protocolFee - votingFee;
+        
+        // Verify verifier balance decreased by new fee amount
+        uint128 verifierBalanceAfter = paymentsController.getVerifier(verifier1_Id).currentBalance;
+        assertEq(verifierBalanceAfter, verifierBalanceBefore - amount, "Verifier balance not decreased correctly");
+        
+        // Verify fee splits
+        DataTypes.FeesAccrued memory epochFeesAfter = paymentsController.getEpochFeesAccrued(currentEpoch);
+        assertEq(epochFeesAfter.feesAccruedToProtocol, protocolFeesBefore + protocolFee, "Protocol fees not accrued correctly");
+        assertEq(epochFeesAfter.feesAccruedToVoters, votersFeesBefore + votingFee, "Voting fees not accrued correctly");
+        
+        // Verify issuer balance increased
+        assertEq(paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued, issuerNetFeesAccruedBefore + issuerFee, "Issuer balance not increased correctly");
+        
+        // Verify schema totalVerified increased
+
+        // Verify schema fee has been updated after deductBalance
+        DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
+        assertEq(schemaAfter.totalVerified, 3, "Schema totalVerified not incremented");
+        assertEq(schemaAfter.currentFee, issuer1IncreasedSchemaFeeV2, "Current fee should be updated after deductBalance");
+        assertEq(schemaAfter.nextFee, 0, "Next fee should be cleared after update");
+        assertEq(schemaAfter.nextFeeTimestamp, 0, "Next fee timestamp should be cleared after update");
+    }
 }
