@@ -40,4 +40,24 @@
 
 These tests target critical paths for small rewards handling and truncation avoidance. Use Foundry for fuzzing edge cases.
 Run with high coverage; use Slither for static analysis.
-// ... existing code ...
+
+## PaymentsController Admin Change Tests
+
+### Unit Tests
+- testCan_IssuerNewAdminAddress_CreateSchema: Verify new issuer admin can create schemas after admin change
+- testCan_IssuerNewAdminAddress_UpdateSchemaFee: Verify new issuer admin can update schema fees (both increase and decrease)
+- testCan_IssuerNewAdminAddress_UpdateAssetAddress: Verify new issuer admin can update asset addresses
+- testCan_VerifierNewAdminAddress_UpdateSignerAddress: Verify new verifier admin can update signer addresses
+- testCan_VerifierNewAdminAddress_UpdateAssetAddress: Verify new verifier admin can update asset addresses
+- testCannot_IssuerOldAdminAddress_CreateSchema: Ensure old issuer admin cannot create schemas after admin change
+- testCannot_IssuerOldAdminAddress_UpdateSchemaFee: Ensure old issuer admin cannot update schema fees
+- testCannot_IssuerOldAdminAddress_UpdateAssetAddress: Ensure old issuer admin cannot update asset addresses
+- testCannot_VerifierOldAdminAddress_UpdateSignerAddress: Ensure old verifier admin cannot update signer addresses
+- testCannot_VerifierOldAdminAddress_UpdateAssetAddress: Ensure old verifier admin cannot update asset addresses
+
+### Integration Tests
+- testAdminTransition_FullCycle: Create issuer/verifier, change admin, verify old admin locked out while new admin has full control
+- testMultipleAdminChanges: Chain multiple admin changes and verify access control at each step
+- testAdminChange_WithPendingOperations: Change admin while schema fee increase is pending, verify new admin inherits control
+
+These tests ensure proper access control during admin transitions, preventing unauthorized access while maintaining continuity of operations.
