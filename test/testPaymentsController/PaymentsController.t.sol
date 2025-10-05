@@ -877,70 +877,141 @@ contract StateT7_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT7_IssuerInc
         assertEq(schema.totalGrossFeesAccrued, schemaTotalGrossFeesAccruedBefore + amount, "Schema totalGrossFeesAccrued not updated correctly");
         assertEq(schema.totalVerified, schemaTotalVerifiedBefore + 1, "Schema totalVerified not updated correctly");
     }
+
+    // state transition: createa schema w/ 0 fees
+    function testCan_Issuer3CreatesSchemaWith0Fees() public {
+        uint128 fee = 0;
+
+        // expected schemaId
+        bytes32 expectedSchemaId3 = PaymentsController_generateSchemaId(block.number, issuer3_Id);
+
+        // Expect the SchemaCreated event to be emitted with correct parameters
+        vm.expectEmit(true, true, true, true, address(paymentsController));
+        emit Events.SchemaCreated(expectedSchemaId3, issuer3_Id, fee);
+        
+        vm.prank(issuer3);
+        bytes32 schemaId = paymentsController.createSchema(issuer3_Id, fee);
+        
+        // check schemaId
+        assertEq(schemaId, expectedSchemaId3, "schemaId not set correctly");
+        
+        // Check storage state
+        DataTypes.Schema memory schema = paymentsController.getSchema(schemaId3);
+        assertEq(schema.currentFee, fee, "Schema currentFee not updated correctly");
+        assertEq(schema.nextFee, 0, "Schema nextFee should be 0 for new schema");
+        assertEq(schema.nextFeeTimestamp, 0, "Schema nextFee timestamp should be 0 for new schema");
+    }
 }
 
+abstract contract StateT8_Issuer3CreatesSchemaWith0Fees is StateT7_IssuerIncreasedFeeIsAppliedAfterDelay {
+
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // Create schema with 0 fees
+        vm.prank(issuer3);
+        schemaId3 = paymentsController.createSchema(issuer3_Id, 0);
+    }
+}
+
+// issuer created schema with 0 fees: impact should be instant
+contract StateT8_Issuer3CreatesSchemaWith0Fees_Test is StateT8_Issuer3CreatesSchemaWith0Fees {
+
+    function testCan_Verifier2DeductBalance_With0FeeSchema() public {
+        // Record verifier's state before deduction
+        uint256 verifierCurrentBalanceBefore = paymentsController.getVerifier(verifier2_Id).currentBalance;
+        uint256 verifierTotalExpenditureBefore = paymentsController.getVerifier(verifier2_Id).totalExpenditure;
+
+        // Record issuer's state before deduction
+        uint256 issuerTotalNetFeesAccruedBefore = paymentsController.getIssuer(issuer3_Id).totalNetFeesAccrued;
+        uint256 issuerTotalVerifiedBefore = paymentsController.getIssuer(issuer3_Id).totalVerified;
+        
+        // Record schema's state before deduction
+        uint256 schemaTotalGrossFeesAccruedBefore = paymentsController.getSchema(schemaId3).totalGrossFeesAccrued;
+        uint256 schemaTotalVerifiedBefore = paymentsController.getSchema(schemaId3).totalVerified;
+        
+        
+        // Record epoch fees before deduction
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
+        uint256 protocolFeesBefore = epochFeesBefore.feesAccruedToProtocol;
+        uint256 votersFeesBefore = epochFeesBefore.feesAccruedToVoters;
+        
+        // Generate signature
+        uint128 amount = 0;
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier2Signer);
+        bytes memory signature = generateDeductBalanceZeroFeeSignature(verifier2SignerPrivateKey, issuer3_Id, verifier2_Id, schemaId3, expiry, nonce);
+
+        // Expect event emission
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaVerifiedZeroFee(schemaId3);
+
+        vm.prank(verifier2Signer);
+        paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, expiry, signature);
+
+        // Check storage state: verifier (no changes to balance or expenditure)
+        DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier2_Id);
+        assertEq(verifier.currentBalance, verifierCurrentBalanceBefore, "Verifier balance should remain unchanged for zero fee");
+        assertEq(verifier.totalExpenditure, verifierTotalExpenditureBefore, "Verifier totalExpenditure should remain unchanged for zero fee");
+
+        // Check storage state: issuer (only totalVerified increments)
+        DataTypes.Issuer memory issuer = paymentsController.getIssuer(issuer3_Id);
+        assertEq(issuer.totalNetFeesAccrued, issuerTotalNetFeesAccruedBefore, "Issuer totalNetFeesAccrued should remain unchanged for zero fee");
+        assertEq(issuer.totalVerified, issuerTotalVerifiedBefore + 1, "Issuer totalVerified should increment by 1");
+
+        // Check storage state: schema (only totalVerified increments)
+        DataTypes.Schema memory schema = paymentsController.getSchema(schemaId3);
+        assertEq(schema.totalGrossFeesAccrued, schemaTotalGrossFeesAccruedBefore, "Schema totalGrossFeesAccrued should remain unchanged for zero fee");
+        assertEq(schema.totalVerified, schemaTotalVerifiedBefore + 1, "Schema totalVerified should increment by 1");
+        assertEq(schema.currentFee, 0, "Schema currentFee should remain 0");
+
+        // Check epoch fees (no changes)
+        DataTypes.FeesAccrued memory epochFeesAfter = paymentsController.getEpochFeesAccrued(currentEpoch);
+        assertEq(epochFeesAfter.feesAccruedToProtocol, protocolFeesBefore, "Protocol fees should remain unchanged for zero fee");
+        assertEq(epochFeesAfter.feesAccruedToVoters, votersFeesBefore, "Voter fees should remain unchanged for zero fee");
+    }
+
+    //---- negative tests for deductBalanceZeroFee ---------
+
+    function testCannot_DeductBalanceZeroFee_WhenExpiryIsInThePast() public {
+        vm.expectRevert(Errors.SignatureExpired.selector);
+        vm.prank(verifier2Signer);
+        paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, block.timestamp, "");
+    }
 
 
-/*
-    // ---------- update schema fee ----------
+    function testCannot_DeductBalanceZeroFee_WhenSchemaDoesNotHave0Fee() public {
+        vm.expectRevert(Errors.InvalidSchemaFee.selector);
+        vm.prank(verifier2Signer);
+        paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId1, block.timestamp + 1000, "");
+    }
 
-    function testCannot_UpdateSchemaFee_WhenCallerIsNotIssuerAdmin() public {
-        vm.expectRevert(Errors.InvalidCaller.selector);
-        vm.prank(address(0xdeadbeef)); // not the issuer admin
-        paymentsController.updateSchemaFee(issuerId, schemaId1, issuer1SchemaFee);
+    function testCannot_DeductBalanceZeroFee_InvalidSignature() public {
+        vm.expectRevert(Errors.InvalidSignature.selector);
+        vm.prank(verifier2Signer);
+        paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, block.timestamp + 1000, "");
     }
     
-    function testCannot_UpdateSchemaFee_InvalidId() public {
-        vm.expectRevert(Errors.InvalidId.selector);
-        vm.prank(issuer1);
-        paymentsController.updateSchemaFee(issuerId, bytes32(0), issuer1SchemaFee);
-    }
+    // state transition: subsidies - verifiers stake MOCA
+    function testCan_Verifier1StakeMOCA() public {
+        uint128 amount = 10 ether;
 
-    function testCannot_UpdateSchemaFee_WhenNewFeeTooLarge() public {
-        vm.expectRevert(Errors.InvalidAmount.selector);
-        
-        uint128 newFee = type(uint128).max;
-     
-        vm.prank(issuer1);
-        paymentsController.updateSchemaFee(issuerId, expectedSchemaId1, newFee);
-    }
+        uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1_Id).mocaStaked;
 
-    function testCan_UpdateSchemaFee_ReduceFee() public {
-        uint128 oldFee = issuer1SchemaFee;
-        uint128 newFee = oldFee / 2;
+        vm.startPrank(verifier1Asset);
+            mockMoca.approve(address(paymentsController), amount);
 
-        // Expect the SchemaFeeReduced event to be emitted with correct parameters
-        vm.expectEmit(true, true, false, true, address(paymentsController));
-        emit Events.SchemaFeeReduced(expectedSchemaId1, newFee, oldFee);
+            // Expect event emission
+            vm.expectEmit(true, true, false, true, address(paymentsController));
+            emit Events.VerifierMocaStaked(verifier1_Id, verifier1Asset, amount);
 
-        vm.prank(issuer1);
-        uint256 returnedFee = paymentsController.updateSchemaFee(issuerId, expectedSchemaId1, newFee);
-        assertEq(returnedFee, newFee, "newFee not set correctly");
-        
-        // Check storage state
-        DataTypes.Schema memory schema = paymentsController.getSchema(expectedSchemaId1);
-        assertEq(schema.currentFee, newFee, "Schema currentFee not updated correctly");  // Should be 500 after reduction
-        assertEq(schema.nextFee, 0, "Schema nextFee should be 0 after fee reduction");
-        assertEq(schema.nextFeeTimestamp, 0, "Schema nextFeeTimestamp should be 0 after fee reduction");
-    }
-
-    function testCan_UpdateSchemaFee_IncreaseFee() public {
-        uint128 oldFee = issuer1SchemaFee;
-        uint128 newFee = oldFee * 2;
-        uint256 nextFeeTimestamp = block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD();
-
-
-        vm.expectEmit(true, true, false, true, address(paymentsController));
-        emit Events.SchemaNextFeeSet(expectedSchemaId1, newFee, nextFeeTimestamp, oldFee);
-
-        vm.prank(issuer1);
-        uint256 returnedFee = paymentsController.updateSchemaFee(issuerId, expectedSchemaId1, newFee);
-        assertEq(returnedFee, newFee, "newFee not set correctly");
+            paymentsController.stakeMoca(verifier1_Id, amount);
+        vm.stopPrank();
 
         // Check storage state
-        DataTypes.Schema memory schema = paymentsController.getSchema(expectedSchemaId1);
-        assertEq(schema.currentFee, oldFee, "Schema currentFee should remain unchanged until delay elapses");
-        assertEq(schema.nextFee, newFee, "Schema nextFee not set correctly");
-        assertEq(schema.nextFeeTimestamp, nextFeeTimestamp, "Schema nextFeeTimestamp not set correctly");
+        DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier1_Id);
+        assertEq(verifier.mocaStaked, verifier1MocaStakedBefore + amount, "Verifier mocaStaked not updated correctly");
     }
-*/
+}
+
