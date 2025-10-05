@@ -2573,8 +2573,6 @@ contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
         // Verify issuer balance increased
         assertEq(paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued, issuerNetFeesAccruedBefore + issuerFee, "Issuer balance not increased correctly");
         
-        // Verify schema totalVerified increased
-
         // Verify schema fee has been updated after deductBalance
         DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
         assertEq(schemaAfter.totalVerified, 3, "Schema totalVerified not incremented");
