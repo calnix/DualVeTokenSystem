@@ -1311,4 +1311,295 @@ contract StateT10_AllVerifiersStakedMOCA_Test is StateT10_AllVerifiersStakedMOCA
         uint256 epochPoolVerifierSubsidies = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId3, verifier3_Id);
         assertEq(epochPoolVerifierSubsidies, 0, "No subsidy should be booked for verifier3 with zero-fee schema");
     }
+
+    // state transition: issuer can claim fees
+    function testCan_IssuerClaimFees() public {
+        // Record issuer's state before claiming fees
+        uint256 issuerTotalNetFeesAccruedBefore = paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued;
+        uint256 issuerTotalClaimedBefore = paymentsController.getIssuer(issuer1_Id).totalClaimed;
+
+        uint256 claimableFees = paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued - paymentsController.getIssuer(issuer1_Id).totalClaimed;
+        assertGt(claimableFees, 0, "Claimable fees should be greater than 0");
+
+        // Record token balances before claim
+        uint256 issuerTokenBalanceBefore = mockUSD8.balanceOf(issuer1Asset);
+        uint256 controllerTokenBalanceBefore = mockUSD8.balanceOf(address(paymentsController));
+
+        // Expect event emission
+        vm.expectEmit(true, false, false, false, address(paymentsController));
+        emit Events.IssuerFeesClaimed(issuer1_Id, claimableFees);
+
+        vm.prank(issuer1Asset);
+        paymentsController.claimFees(issuer1_Id);
+
+        // Check storage state: issuer
+        DataTypes.Issuer memory issuer = paymentsController.getIssuer(issuer1_Id);
+        assertEq(issuer.totalNetFeesAccrued, issuerTotalNetFeesAccruedBefore, "Issuer totalNetFeesAccrued must be unchanged");
+        assertEq(issuer.totalClaimed, issuerTotalClaimedBefore + claimableFees, "Issuer totalClaimed must be increased by claimable fees");
+
+        // Check token balances after claim
+        uint256 issuerTokenBalanceAfter = mockUSD8.balanceOf(issuer1Asset);
+        uint256 controllerTokenBalanceAfter = mockUSD8.balanceOf(address(paymentsController));
+        assertEq(issuerTokenBalanceAfter, issuerTokenBalanceBefore + claimableFees, "Issuer should receive claimed fees in tokens");
+        assertEq(controllerTokenBalanceAfter, controllerTokenBalanceBefore - claimableFees, "Controller should send out claimed fees in tokens");
+    }
+}
+
+abstract contract StateT11_IssuerClaimsAllFees is StateT10_AllVerifiersStakedMOCA {   
+    function setUp() public virtual override {
+        super.setUp();
+        
+        vm.prank(issuer1Asset);
+        paymentsController.claimFees(issuer1_Id);
+    }
+}
+
+contract StateT11_IssuerClaimsAllFees_Test is StateT11_IssuerClaimsAllFees {
+    
+    //------------------------------ negative tests for claimFees ------------------------------
+
+    function testCannot_ClaimFees_WhenIssuerDoesNotHaveClaimableFees() public {     
+        vm.expectRevert(Errors.NoClaimableFees.selector);
+        vm.prank(issuer1Asset);
+        paymentsController.claimFees(issuer1_Id);
+    }
+
+    function testCannot_ClaimFees_WhenCallerIsNotIssuerAsset() public {
+        vm.expectRevert(Errors.InvalidCaller.selector);
+        vm.prank(issuer1);
+        paymentsController.claimFees(issuer1_Id);
+    }
+
+    // state transition: issuer change assetAddress
+    function testCan_IssuerUpdateAssetAddress() public{
+        // Record issuer's state before update
+        DataTypes.Issuer memory issuer1Before = paymentsController.getIssuer(issuer1_Id);
+        assertEq(issuer1Before.assetAddress, issuer1Asset, "Issuer asset address should be the same");
+        
+        // new addr
+        address issuer1_newAssetAddress = address(0x1234567890123456789012345678901234567890);
+
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.AssetAddressUpdated(issuer1_Id, issuer1_newAssetAddress);
+ 
+        vm.prank(issuer1);
+        paymentsController.updateAssetAddress(issuer1_Id, issuer1_newAssetAddress);
+
+        // Check storage state: issuer
+        DataTypes.Issuer memory issuer1After = paymentsController.getIssuer(issuer1_Id);
+        assertEq(issuer1After.assetAddress, issuer1_newAssetAddress, "Issuer asset address should be updated");
+    }
+}
+
+abstract contract StateT11_IssuerChangesAssetAddress is StateT11_IssuerClaimsAllFees {
+    
+    address public issuer1_newAssetAddress = address(0x1234567890123456789012345678901234567890);
+
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // issuer changes asset address
+        vm.prank(issuer1);
+        paymentsController.updateAssetAddress(issuer1_Id, issuer1_newAssetAddress);
+
+        // deductBalance called by verifier
+        uint256 expiry = block.timestamp + 100;
+        uint256 nonce = getVerifierNonce(verifier1NewSigner);
+        uint128 amount = issuer1IncreasedSchemaFee;
+        bytes memory signature = generateDeductBalanceSignature(verifier1NewSignerPrivateKey, issuer1_Id, verifier1_Id, schemaId1, amount, expiry, nonce);
+        
+        vm.prank(verifier1Asset);
+        paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
+    }
+}
+
+contract StateT11_IssuerChangesAssetAddress_Test is StateT11_IssuerChangesAssetAddress {
+
+    function testCan_Issuer1ClaimFees_WithNewAssetAddress() public {
+        // Record issuer's state before claim
+        DataTypes.Issuer memory issuerBefore = paymentsController.getIssuer(issuer1_Id);
+        uint256 issuerTotalNetFeesAccruedBefore = issuerBefore.totalNetFeesAccrued;
+        uint256 issuerTotalClaimedBefore = issuerBefore.totalClaimed;
+
+        // Record TOTAL_CLAIMED_VERIFICATION_FEES before claim
+        uint256 totalClaimedBefore = paymentsController.TOTAL_CLAIMED_VERIFICATION_FEES();
+        
+        // Calculate claimable fees (fees from the deductBalance in setup)
+        uint256 claimableFees = issuerTotalNetFeesAccruedBefore - issuerTotalClaimedBefore;
+        assertTrue(claimableFees > 0, "Issuer should have claimable fees");
+        
+        // Check token balances before claim
+        uint256 newAssetAddressTokenBalanceBefore = mockUSD8.balanceOf(issuer1_newAssetAddress);
+        uint256 oldAssetAddressTokenBalanceBefore = mockUSD8.balanceOf(issuer1Asset);
+        uint256 controllerTokenBalanceBefore = mockUSD8.balanceOf(address(paymentsController));
+        
+        // Expect event emission
+        vm.expectEmit(true, false, false, false, address(paymentsController));
+        emit Events.IssuerFeesClaimed(issuer1_Id, claimableFees);
+        
+        // Claim fees using new asset address
+        vm.prank(issuer1_newAssetAddress);
+        paymentsController.claimFees(issuer1_Id);
+        
+        // Check storage state: issuer
+        DataTypes.Issuer memory issuerAfter = paymentsController.getIssuer(issuer1_Id);
+        assertEq(issuerAfter.totalNetFeesAccrued, issuerTotalNetFeesAccruedBefore, "Issuer totalNetFeesAccrued should remain unchanged");
+        assertEq(issuerAfter.totalClaimed, issuerTotalNetFeesAccruedBefore, "Issuer totalClaimed should equal totalNetFeesAccrued after claim");
+        assertEq(issuerAfter.assetAddress, issuer1_newAssetAddress, "Issuer asset address should be the new address");
+        
+        // Check token balances after claim
+        uint256 newAssetAddressTokenBalanceAfter = mockUSD8.balanceOf(issuer1_newAssetAddress);
+        uint256 oldAssetAddressTokenBalanceAfter = mockUSD8.balanceOf(issuer1Asset);
+        uint256 controllerTokenBalanceAfter = mockUSD8.balanceOf(address(paymentsController));
+        
+        // Verify fees were transferred to new asset address, not old one
+        assertEq(newAssetAddressTokenBalanceAfter, newAssetAddressTokenBalanceBefore + claimableFees, "New asset address should receive claimed fees");
+        assertEq(oldAssetAddressTokenBalanceAfter, oldAssetAddressTokenBalanceBefore, "Old asset address should not receive any fees");
+        assertEq(controllerTokenBalanceAfter, controllerTokenBalanceBefore - claimableFees, "Controller should transfer out claimed fees");
+        
+        // Check global counter
+        assertEq(paymentsController.TOTAL_CLAIMED_VERIFICATION_FEES(), totalClaimedBefore + claimableFees, "TOTAL_CLAIMED_VERIFICATION_FEES should be updated");
+    }
+
+    function testCannot_Issuer1ClaimFees_WithOldAssetAddress() public {
+        // Verify issuer has claimable fees
+        DataTypes.Issuer memory issuer = paymentsController.getIssuer(issuer1_Id);
+        uint256 claimableFees = issuer.totalNetFeesAccrued - issuer.totalClaimed;
+        assertGt(claimableFees, 0, "Issuer should have claimable fees");
+        
+        // Attempt to claim with old asset address should fail
+        vm.expectRevert(Errors.InvalidCaller.selector);
+        vm.prank(issuer1Asset);
+        paymentsController.claimFees(issuer1_Id);
+    }
+
+    //------------------------------ negative tests for updateAssetAddress ------------------------------
+
+    function testCannot_UpdateAssetAddress_WhenAssetAddressIsZeroAddress() public {
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        vm.prank(issuer1);
+        paymentsController.updateAssetAddress(issuer1_Id, address(0));
+    }
+
+    function testCannot_UpdateAssetAddress_WhenCallerIsNotIssuerAdmin() public {
+        vm.expectRevert(Errors.InvalidCaller.selector);
+        vm.prank(issuer2);
+        paymentsController.updateAssetAddress(issuer1_Id, issuer1_newAssetAddress);
+    }
+
+    //------------------------------ state transition: verifier updateAssetAddress ------------------------------
+    function testCan_VerifierUpdateAssetAddress() public {
+        // Record verifier's state before update
+        DataTypes.Verifier memory verifierBefore = paymentsController.getVerifier(verifier1_Id);
+        assertEq(verifierBefore.assetAddress, verifier1Asset, "Verifier asset address should be the same");
+
+        // new addr
+        address verifier1_newAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAssetAddress", block.timestamp, block.prevrandao)))));
+
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.AssetAddressUpdated(verifier1_Id, verifier1_newAssetAddress);
+
+        vm.prank(verifier1);
+        paymentsController.updateAssetAddress(verifier1_Id, verifier1_newAssetAddress);
+        
+        // Check storage state: verifier
+        DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
+        assertEq(verifierAfter.assetAddress, verifier1_newAssetAddress, "Verifier asset address should be updated");
+        assertNotEq(verifierAfter.assetAddress, verifier1Asset, "Verifier asset address should be updated");
+    }
+}
+
+abstract contract StateT12_VerifierChangesAssetAddress is StateT11_IssuerChangesAssetAddress {
+
+    address public verifier1_newAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAssetAddress", block.timestamp, block.prevrandao)))));
+
+    function setUp() public virtual override {
+        super.setUp();
+        
+        vm.prank(verifier1);
+        paymentsController.updateAssetAddress(verifier1_Id, verifier1_newAssetAddress);
+    }
+}
+
+contract StateT12_VerifierChangesAssetAddress_Test is StateT12_VerifierChangesAssetAddress {
+    
+    function testCan_VerifierWithdrawUSD8_WithNewAssetAddress() public {
+        // Record verifier's state before withdraw
+        DataTypes.Verifier memory verifierBefore = paymentsController.getVerifier(verifier1_Id);
+        uint128 verifierCurrentBalanceBefore = verifierBefore.currentBalance;
+        assertGt(verifierCurrentBalanceBefore, 0, "Verifier should have balance");
+        assertEq(verifierBefore.assetAddress, verifier1_newAssetAddress, "Verifier asset address should be updated");
+
+        // Check token balances before withdraw
+        uint256 newAssetAddressTokenBalanceBefore = mockUSD8.balanceOf(verifier1_newAssetAddress);
+        uint256 oldAssetAddressTokenBalanceBefore = mockUSD8.balanceOf(verifier1Asset);
+        uint256 controllerTokenBalanceBefore = mockUSD8.balanceOf(address(paymentsController));
+
+        // event emission
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.VerifierWithdrew(verifier1_Id, verifier1_newAssetAddress, verifierCurrentBalanceBefore);
+
+        vm.prank(verifier1_newAssetAddress);
+        paymentsController.withdraw(verifier1_Id, verifierCurrentBalanceBefore);
+
+        // Check storage state: verifier
+        DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
+        assertEq(verifierAfter.currentBalance, 0, "Verifier balance should be zero after full withdraw");
+        assertEq(verifierAfter.assetAddress, verifier1_newAssetAddress, "Verifier asset address should remain unchanged");
+
+        // Check token balances after withdraw
+        uint256 newAssetAddressTokenBalanceAfter = mockUSD8.balanceOf(verifier1_newAssetAddress);
+        uint256 oldAssetAddressTokenBalanceAfter = mockUSD8.balanceOf(verifier1Asset);
+        uint256 controllerTokenBalanceAfter = mockUSD8.balanceOf(address(paymentsController));
+        
+        // Verify tokens were transferred to new asset address, not old one
+        assertEq(newAssetAddressTokenBalanceAfter, newAssetAddressTokenBalanceBefore + verifierCurrentBalanceBefore, "New asset address should receive withdrawn funds");
+        assertEq(oldAssetAddressTokenBalanceAfter, oldAssetAddressTokenBalanceBefore, "Old asset address should not receive any funds");
+        assertEq(controllerTokenBalanceAfter, controllerTokenBalanceBefore - verifierCurrentBalanceBefore, "Controller should transfer out withdrawn funds");
+    }
+
+    function testCan_VerifierPartialWithdraw_WithNewAssetAddress() public {
+        // Record verifier's state before withdraw
+        DataTypes.Verifier memory verifierBefore = paymentsController.getVerifier(verifier1_Id);
+        uint128 verifierCurrentBalanceBefore = verifierBefore.currentBalance;
+        assertGt(verifierCurrentBalanceBefore, 0, "Verifier should have non-zero balance");
+        
+        uint128 withdrawAmount = verifierCurrentBalanceBefore / 2;
+        
+        // Check token balances before withdraw
+        uint256 newAssetAddressTokenBalanceBefore = mockUSD8.balanceOf(verifier1_newAssetAddress);
+        uint256 controllerTokenBalanceBefore = mockUSD8.balanceOf(address(paymentsController));
+
+        // event emission
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.VerifierWithdrew(verifier1_Id, verifier1_newAssetAddress, withdrawAmount);
+
+        vm.prank(verifier1_newAssetAddress);
+        paymentsController.withdraw(verifier1_Id, withdrawAmount);
+
+        // Check storage state: verifier
+        DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
+        assertEq(verifierAfter.currentBalance, verifierCurrentBalanceBefore - withdrawAmount, "Verifier balance should be reduced by withdraw amount");
+
+        // Check token balances after withdraw
+        uint256 newAssetAddressTokenBalanceAfter = mockUSD8.balanceOf(verifier1_newAssetAddress);
+        uint256 controllerTokenBalanceAfter = mockUSD8.balanceOf(address(paymentsController));
+        
+        // Verify partial withdrawal
+        assertEq(newAssetAddressTokenBalanceAfter, newAssetAddressTokenBalanceBefore + withdrawAmount, "New asset address should receive withdrawn amount");
+        assertEq(controllerTokenBalanceAfter, controllerTokenBalanceBefore - withdrawAmount, "Controller should transfer out withdrawn amount");
+    }
+
+    function testCannot_VerifierWithdraw_WithOldAssetAddress() public {
+        // Verify verifier has balance to withdraw
+        DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier1_Id);
+        uint128 currentBalance = verifier.currentBalance;
+        assertGt(currentBalance, 0, "Verifier should have balance");
+        
+        // Attempt to withdraw with old asset address should fail
+        vm.expectRevert(Errors.InvalidCaller.selector);
+        vm.prank(verifier1Asset);
+        paymentsController.withdraw(verifier1_Id, currentBalance);
+    }
+
 }
