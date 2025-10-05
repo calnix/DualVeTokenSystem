@@ -2203,4 +2203,241 @@ contract StateT15_PaymentsControllerAdminIncreasesVotingFee_Test is StateT15_Pay
             // Verify fee remains unchanged
             assertEq(paymentsController.VOTING_FEE_PERCENTAGE(), newVotingFee, "Voting fee should remain unchanged");
         }
+
+    // ------- state transition: updateVerifierSubsidyPercentages() ----------
+    
+        function testCan_PaymentsControllerAdmin_UpdateVerifierSubsidyPercentages() public {
+            // change for tier1: 10 moca staked -> 11% subsidy
+            uint256 currentSubsidyPct = paymentsController.getVerifierSubsidyPercentage(10 ether);
+            uint256 newSubsidyPct = currentSubsidyPct + 100;
+            
+            vm.expectEmit(true, true, false, true, address(paymentsController));
+            emit Events.VerifierStakingTierUpdated(10 ether, newSubsidyPct);
+
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierSubsidyPercentages(10 ether, newSubsidyPct);
+
+            assertEq(paymentsController.getVerifierSubsidyPercentage(10 ether), newSubsidyPct, "Verifier subsidy percentage not updated correctly");
+        }
+}
+
+// change for tier1: 10 moca staked -> 11% subsidy
+abstract contract StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage is StateT15_PaymentsControllerAdminIncreasesVotingFee {
+
+    uint256 public newSubsidyPct;
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        uint256 currentSubsidyPct = paymentsController.getVerifierSubsidyPercentage(10 ether);
+        newSubsidyPct = currentSubsidyPct + 100;
+
+        vm.prank(paymentsControllerAdmin);
+        paymentsController.updateVerifierSubsidyPercentages(10 ether, newSubsidyPct);
+    }
+}
+
+contract StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test is StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage {
+
+    function testCan_PaymentsControllerAdmin_UpdateVerifierSubsidyPercentages() public {
+        assertEq(paymentsController.getVerifierSubsidyPercentage(10 ether), newSubsidyPct, "Verifier subsidy percentage not updated correctly");    
+    }
+
+    // check that deductBalance books the correct amount of subsidy when subsidy percentage is increased
+    function testCan_DeductBalance_WhenVerifierSubsidyPercentageIsIncreased() public {
+        // Note: verifier1 has 10 MOCA staked (tier1) which now gives 11% subsidy instead of 10%
+        // verifier1 has 100 USD8 deposited, schemaId1 fee is 10 USD8, poolId1 associated
+        
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        
+        // Cache initial subsidy states
+        uint256 poolSubsidiesBefore = paymentsController.getEpochPoolSubsidies(currentEpoch, poolId1);
+        uint256 verifierSubsidiesBefore = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId1, verifier1_Id);
+        
+        // Prepare deductBalance call
+        uint128 amount = issuer1IncreasedSchemaFee; // 10 USD8
+        uint256 expiry = block.timestamp + 1000;
+        bytes memory signature = generateDeductBalanceSignature(verifier1NewSignerPrivateKey, issuer1_Id, verifier1_Id, schemaId1, amount, expiry, getVerifierNonce(verifier1NewSigner));
+
+        // Verify subsidy percentage is 11% for 10 MOCA stake
+        assertEq(paymentsController.getVerifierSubsidyPercentage(10 ether), 1100, "Subsidy should be 11%");
+        
+        // Calculate expected subsidy with new 11% rate
+        uint256 expectedSubsidy = (amount * 1100) / Constants.PRECISION_BASE;
+
+        // Expect events
+        vm.expectEmit(true, true, true, true, address(paymentsController));
+        emit Events.SubsidyBooked(verifier1_Id, poolId1, schemaId1, expectedSubsidy);
+        
+        vm.expectEmit(true, true, true, true, address(paymentsController));
+        emit Events.BalanceDeducted(verifier1_Id, schemaId1, issuer1_Id, amount);
+
+        // Execute deductBalance
+        vm.prank(verifier1NewSigner);
+        paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
+
+        // Verify subsidies increased with new percentage
+        assertEq(paymentsController.getEpochPoolSubsidies(currentEpoch, poolId1), poolSubsidiesBefore + expectedSubsidy, "Pool subsidies not booked correctly");
+        assertEq(paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId1, verifier1_Id), verifierSubsidiesBefore + expectedSubsidy, "Verifier subsidies not booked correctly");
+        
+        // Verify fees distributed correctly (protocol 6%, voting 11%, net 83%)
+        uint256 expectedProtocolFee = (amount * 600) / Constants.PRECISION_BASE;  // 6%
+        uint256 expectedVotingFee = (amount * 1100) / Constants.PRECISION_BASE;   // 11%
+        
+        DataTypes.FeesAccrued memory epochFees = paymentsController.getEpochFeesAccrued(currentEpoch);
+        DataTypes.FeesAccrued memory poolFees = paymentsController.getEpochPoolFeesAccrued(currentEpoch, poolId1);
+        
+        // Verify fees accumulated (these would be cumulative from previous tests)
+        assertGe(epochFees.feesAccruedToProtocol, expectedProtocolFee, "Protocol fees should include this transaction");
+        assertGe(epochFees.feesAccruedToVoters, expectedVotingFee, "Voting fees should include this transaction");
+        assertGe(poolFees.feesAccruedToProtocol, expectedProtocolFee, "Pool protocol fees should include this transaction");
+        assertGe(poolFees.feesAccruedToVoters, expectedVotingFee, "Pool voting fees should include this transaction");
+    }
+
+    // test verifier with non-tier MOCA amount receives no subsidy
+    function testCan_DeductBalance_WhenVerifierStakedMocaNotInAnyTier() public {
+        // Create new verifier4 with 15 MOCA staked (not in any tier)
+        address verifier4 = makeAddr("verifier4");
+        address verifier4Asset = makeAddr("verifier4Asset");
+        address verifier4Signer;
+        uint256 verifier4SignerPrivateKey;
+        (verifier4Signer, verifier4SignerPrivateKey) = makeAddrAndKey("verifier4Signer");
+        
+        // Mint tokens to verifier4Asset
+        mockUSD8.mint(verifier4Asset, 100 * 1e6);
+        mockMoca.mint(verifier4Asset, 100 ether);
+        
+        // Create verifier4 - fix parameter order: (signerAddress, assetAddress)
+        vm.prank(verifier4);
+        bytes32 verifier4_Id = paymentsController.createVerifier(verifier4Signer, verifier4Asset);
+        
+        // Stake 15 MOCA (between tier1=10 and tier2=20, so no subsidy)
+        uint128 nonTierMocaAmount = 15 ether;
+        vm.startPrank(verifier4Asset);
+            mockMoca.approve(address(paymentsController), nonTierMocaAmount);
+            paymentsController.stakeMoca(verifier4_Id, nonTierMocaAmount);
+            // Deposit USD8 for verification payments
+            mockUSD8.approve(address(paymentsController), 50 * 1e6);
+            paymentsController.deposit(verifier4_Id, 50 * 1e6);
+        vm.stopPrank();
+        
+        // Verify no subsidy percentage for this amount
+        uint256 subsidyPct = paymentsController.getVerifierSubsidyPercentage(nonTierMocaAmount);
+        assertEq(subsidyPct, 0, "Subsidy percentage should be 0 for non-tier amount");
+        
+        // Record initial states
+        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint256 poolSubsidiesBefore = paymentsController.getEpochPoolSubsidies(currentEpoch, poolId1);
+        uint256 verifierSubsidiesBefore = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId1, verifier4_Id);
+        assertEq(verifierSubsidiesBefore, 0, "Verifier should have no subsidies initially");
+        
+        // Prepare deductBalance - MUST use issuer1IncreasedSchemaFee (20 USD8) not issuer1SchemaFee
+        uint128 amount = issuer1IncreasedSchemaFee; // 20 USD8 - changed from issuer1SchemaFee
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier4Signer);
+        bytes memory signature = generateDeductBalanceSignature(verifier4SignerPrivateKey, issuer1_Id, verifier4_Id, schemaId1, amount, expiry, nonce);
+        
+        // Note: SubsidyBooked event should NOT be emitted since subsidy is 0
+        
+        vm.expectEmit(true, true, true, true, address(paymentsController));
+        emit Events.BalanceDeducted(verifier4_Id, schemaId1, issuer1_Id, amount);
+        
+        vm.expectEmit(true, false, false, true, address(paymentsController));
+        emit Events.SchemaVerified(schemaId1);
+        
+        // Execute deductBalance
+        vm.prank(verifier4Signer);
+        paymentsController.deductBalance(issuer1_Id, verifier4_Id, schemaId1, amount, expiry, signature);
+        
+        // Verify no subsidies were booked
+        uint256 poolSubsidiesAfter = paymentsController.getEpochPoolSubsidies(currentEpoch, poolId1);
+        assertEq(poolSubsidiesAfter, poolSubsidiesBefore, "Pool subsidies should not change for non-tier verifier");
+        
+        uint256 verifierSubsidiesAfter = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId1, verifier4_Id);
+        assertEq(verifierSubsidiesAfter, 0, "Verifier should receive no subsidies for non-tier stake");
+        
+        // Verify fees are still distributed correctly
+        DataTypes.Verifier memory verifier4Data = paymentsController.getVerifier(verifier4_Id);
+        assertEq(verifier4Data.currentBalance, 50 * 1e6 - amount, "Verifier USD8 balance should be reduced by amount");
+        assertEq(verifier4Data.totalExpenditure, amount, "Verifier expenditure should equal amount");
+        assertEq(verifier4Data.mocaStaked, nonTierMocaAmount, "MOCA staked should remain unchanged");
+    }
+
+    // ------- negative tests for updateVerifierSubsidyPercentages() ----------
+    
+        function testCannot_NonAdmin_UpdateVerifierSubsidyPercentages() public {
+            uint256 mocaAmount = 15 ether;
+            uint256 attemptedSubsidyPct = 1500; // 15%
+            
+            vm.expectRevert(Errors.OnlyCallableByPaymentsControllerAdmin.selector);
+            vm.prank(verifier1);
+            paymentsController.updateVerifierSubsidyPercentages(mocaAmount, attemptedSubsidyPct);
+            
+            // Verify subsidy percentage remains unchanged for new tier
+            assertEq(paymentsController.getVerifierSubsidyPercentage(mocaAmount), 0, "Subsidy percentage should remain 0 for unapproved tier");
+        }
+        
+        function testCannot_UpdateVerifierSubsidyPercentage_WhenExceedsMax() public {
+            uint256 mocaAmount = 40 ether;
+            uint256 exceedingMaxSubsidy = Constants.PRECISION_BASE + 1; // 100.01%
+            
+            vm.expectRevert(Errors.InvalidPercentage.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierSubsidyPercentages(mocaAmount, exceedingMaxSubsidy);
+            
+            // Verify subsidy percentage remains unchanged
+            assertEq(paymentsController.getVerifierSubsidyPercentage(mocaAmount), 0, "Subsidy percentage should remain 0");
+        }
+        
+        function testCan_UpdateVerifierSubsidyPercentage_ToZero() public {
+            // Test that admin can set subsidy to 0 (remove a tier)
+            uint256 mocaAmount = 10 ether;
+            
+            // Verify current subsidy is non-zero
+            assertGt(paymentsController.getVerifierSubsidyPercentage(mocaAmount), 0, "Subsidy should be non-zero initially");
+            
+            vm.expectEmit(true, true, false, true, address(paymentsController));
+            emit Events.VerifierStakingTierUpdated(mocaAmount, 0);
+            
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierSubsidyPercentages(mocaAmount, 0);
+            
+            // Verify subsidy is now 0
+            assertEq(paymentsController.getVerifierSubsidyPercentage(mocaAmount), 0, "Subsidy percentage should be 0");
+        }
+    
+    // ------- state transition: updateFeeIncreaseDelayPeriod() ---------
+    
+        function testCan_PaymentsControllerAdmin_UpdateFeeIncreaseDelayPeriod() public {
+            uint256 newDelayPeriod = 28 days;
+            
+            vm.expectEmit(true, true, false, true, address(paymentsController));
+            emit Events.FeeIncreaseDelayPeriodUpdated(newDelayPeriod);
+            
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateFeeIncreaseDelayPeriod(newDelayPeriod);
+        }
+}
+
+abstract contract StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod is StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage {
+
+    uint256 public newDelayPeriod;
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        newDelayPeriod = 28 days;
+
+        vm.prank(paymentsControllerAdmin);
+        paymentsController.updateFeeIncreaseDelayPeriod(newDelayPeriod);
+    }
+}
+
+contract StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod_Test is StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod {
+
+    function testCan_PaymentsControllerAdmin_UpdateFeeIncreaseDelayPeriod() public {
+        assertEq(paymentsController.FEE_INCREASE_DELAY_PERIOD(), newDelayPeriod, "Fee increase delay period not updated correctly");
+    }
+
+
 }

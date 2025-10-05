@@ -4,6 +4,7 @@ out = "out"
 libs = ["lib"]
 optimizer = true
 via_ir = true
+dynamic_test_linking = true
 
 [lint]
     exclude_lints = ["mixed-case-function", "unwrapped-modifier-logic", "unsafe-typecast"]
