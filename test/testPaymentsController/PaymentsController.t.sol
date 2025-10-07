@@ -2,6 +2,7 @@
 pragma solidity 0.8.27;
 
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 import "../utils/TestingHarness.sol";
 
@@ -972,28 +973,28 @@ contract StateT8_Issuer3CreatesSchemaWith0Fees_Test is StateT8_Issuer3CreatesSch
         assertEq(epochFeesAfter.feesAccruedToVoters, votersFeesBefore, "Voter fees should remain unchanged for zero fee");
     }
 
-//------------------------------ negative tests for deductBalanceZeroFee ------------------------------
+    //------------------------------ negative tests for deductBalanceZeroFee ------------------------------
 
-    function testCannot_DeductBalanceZeroFee_WhenExpiryIsInThePast() public {
-        vm.expectRevert(Errors.SignatureExpired.selector);
-        vm.prank(verifier2Signer);
-        paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, block.timestamp, "");
-    }
+        function testCannot_DeductBalanceZeroFee_WhenExpiryIsInThePast() public {
+            vm.expectRevert(Errors.SignatureExpired.selector);
+            vm.prank(verifier2Signer);
+            paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, block.timestamp, "");
+        }
 
 
-    function testCannot_DeductBalanceZeroFee_WhenSchemaDoesNotHave0Fee() public {
-        vm.expectRevert(Errors.InvalidSchemaFee.selector);
-        vm.prank(verifier2Signer);
-        paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId1, block.timestamp + 1000, "");
-    }
+        function testCannot_DeductBalanceZeroFee_WhenSchemaDoesNotHave0Fee() public {
+            vm.expectRevert(Errors.InvalidSchemaFee.selector);
+            vm.prank(verifier2Signer);
+            paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId1, block.timestamp + 1000, "");
+        }
 
-    function testCannot_DeductBalanceZeroFee_InvalidSignature() public {
-        vm.expectRevert(Errors.InvalidSignature.selector);
-        vm.prank(verifier2Signer);
-        paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, block.timestamp + 1000, "");
-    }
-    
-//------------------------------ state transition: subsidies - verifiers stake MOCA ------------------------------
+        function testCannot_DeductBalanceZeroFee_InvalidSignature() public {
+            vm.expectRevert(Errors.InvalidSignature.selector);
+            vm.prank(verifier2Signer);
+            paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, block.timestamp + 1000, "");
+        }
+        
+    //------------------------------ state transition: subsidies - verifiers stake MOCA ------------------------------
     function testCan_Verifier1StakeMOCA() public {
         uint128 amount = 10 ether;
 
@@ -1058,33 +1059,33 @@ abstract contract StateT9_Verifier1StakeMOCA is StateT8_Issuer3CreatesSchemaWith
 
 contract StateT9_Verifier1StakeMOCA_Test is StateT9_Verifier1StakeMOCA {
 
-//------------------------------ negative tests for stakeMoca ------------------------------
-    function testCannot_StakeMoca_WhenAmountIsZero() public {
-        vm.expectRevert(Errors.InvalidAmount.selector);
-        vm.prank(verifier1Asset);
-        paymentsController.stakeMoca(verifier1_Id, 0);
-    }
-    
-    function testCannot_StakeMoca_WhenCallerIsNotVerifierAsset() public {
-        vm.expectRevert(Errors.InvalidCaller.selector);
-        vm.prank(verifier1);
-        paymentsController.stakeMoca(verifier1_Id, 10 ether);
-    }
+    //------------------------------ negative tests for stakeMoca ------------------------------
+        function testCannot_StakeMoca_WhenAmountIsZero() public {
+            vm.expectRevert(Errors.InvalidAmount.selector);
+            vm.prank(verifier1Asset);
+            paymentsController.stakeMoca(verifier1_Id, 0);
+        }
+        
+        function testCannot_StakeMoca_WhenCallerIsNotVerifierAsset() public {
+            vm.expectRevert(Errors.InvalidCaller.selector);
+            vm.prank(verifier1);
+            paymentsController.stakeMoca(verifier1_Id, 10 ether);
+        }
 
-//------------------------------ negative tests for updatePoolId ------------------------------
-    function testCannot_UpdatePoolId_WhenSchemaDoesNotExist() public {
-        vm.expectRevert(Errors.InvalidSchema.selector);
-        vm.prank(paymentsControllerAdmin);
-        paymentsController.updatePoolId(bytes32("456"), bytes32("123"));
-    }
-    
-    function testCannot_UpdatePoolId_WhenCallerIsNotPaymentsControllerAdmin() public {
-        vm.expectRevert(Errors.OnlyCallableByPaymentsControllerAdmin.selector);
-        vm.prank(verifier1);
-        paymentsController.updatePoolId(schemaId1, bytes32("123"));
-    }
+    //------------------------------ negative tests for updatePoolId ------------------------------
+        function testCannot_UpdatePoolId_WhenSchemaDoesNotExist() public {
+            vm.expectRevert(Errors.InvalidSchema.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updatePoolId(bytes32("456"), bytes32("123"));
+        }
+        
+        function testCannot_UpdatePoolId_WhenCallerIsNotPaymentsControllerAdmin() public {
+            vm.expectRevert(Errors.OnlyCallableByPaymentsControllerAdmin.selector);
+            vm.prank(verifier1);
+            paymentsController.updatePoolId(schemaId1, bytes32("123"));
+        }
 
-//------------------------------ deductBalance should book subsidies for verifier ------------------------------
+    //------------------------------ deductBalance should book subsidies for verifier ------------------------------
     function testCan_Verifier1DeductBalance_ShouldBookSubsidies() public {
         // Record verifier's state before deduction
         uint256 verifierCurrentBalanceBefore = paymentsController.getVerifier(verifier1_Id).currentBalance;
@@ -2580,4 +2581,402 @@ contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
         assertEq(schemaAfter.nextFee, 0, "Next fee should be cleared after update");
         assertEq(schemaAfter.nextFeeTimestamp, 0, "Next fee timestamp should be cleared after update");
     }
+
+    // state transition
+    function testCannot_PaymentsControllerAdmin_WithdrawProtocolFees_NoTreasuryAddressSet() public {
+
+        uint256 protocolFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToProtocol;
+        assertTrue(protocolFees > 0, "Protocol fees should be greater than 0");
+
+        // Move to next epoch (required for withdrawal)
+        skip(14 days);
+
+        vm.expectRevert(Errors.InvalidAddress.selector);
+
+        // Execute deduction
+        vm.prank(assetManager);
+        paymentsController.withdrawProtocolFees(0);
+    }
+
+    function testCannot_PaymentsControllerAdmin_WithdrawVotingFees_NoTreasuryAddressSet() public {
+
+        uint256 votersFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToVoters;
+        assertTrue(votersFees > 0, "Voters fees should be greater than 0");
+
+        // Move to next epoch (required for withdrawal)
+        skip(14 days);
+
+        vm.expectRevert(Errors.InvalidAddress.selector);
+
+        // Execute deduction
+        vm.prank(assetManager);
+        paymentsController.withdrawVotersFees(0);
+    }
+
 }
+
+
+// set treasury address, test admin withdraw functions
+abstract contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees is StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay {
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        vm.startPrank(globalAdmin);
+            addressBook.setAddress(addressBook.TREASURY(), treasury);
+        vm.stopPrank();
+
+    }
+}
+
+contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees_Test is StateT19_PaymentsControllerAdminWithdrawsProtocolFees {
+    
+    function testCan_PaymentsControllerAdmin_WithdrawProtocolFees() public {
+        // before
+        uint256 protocolFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToProtocol;
+        assertTrue(protocolFees > 0, "Protocol fees should be greater than 0");
+        assertEq(mockUSD8.balanceOf(treasury), 0, "treasury has 0 USD8");
+        assertEq(paymentsController.getEpochFeesAccrued(0).isProtocolFeeWithdrawn, false, "Protocol fees should not be withdrawn");
+
+        // Expect event emission
+        vm.expectEmit(true, true, true, true);
+        emit Events.ProtocolFeesWithdrawn(0, protocolFees);
+
+        vm.prank(assetManager);
+        paymentsController.withdrawProtocolFees(0);
+
+        assertEq(paymentsController.getEpochFeesAccrued(0).feesAccruedToProtocol, protocolFees, "Protocol fees should be non-zero");
+        assertEq(paymentsController.getEpochFeesAccrued(0).isProtocolFeeWithdrawn, true, "Protocol fees should be withdrawn");
+
+        assertEq(mockUSD8.balanceOf(treasury), protocolFees, "Protocol fees should be transferred to treasury");
+    }
+
+    function testCan_PaymentsControllerAdmin_WithdrawVotersFees() public {
+        // before
+        uint256 votersFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToVoters;
+        assertTrue(votersFees > 0, "Voters fees should be greater than 0");
+        assertEq(mockUSD8.balanceOf(treasury), 0, "treasury has 0 USD8");
+        assertEq(paymentsController.getEpochFeesAccrued(0).isVotersFeeWithdrawn, false, "Voters fees should not be withdrawn");
+
+        // Expect event emission
+        vm.expectEmit(true, true, true, true);
+        emit Events.VotersFeesWithdrawn(0, votersFees);
+
+        vm.prank(assetManager);
+        paymentsController.withdrawVotersFees(0);
+
+        assertEq(paymentsController.getEpochFeesAccrued(0).feesAccruedToVoters, votersFees, "Voters fees should be non-zero");
+        assertEq(paymentsController.getEpochFeesAccrued(0).isVotersFeeWithdrawn, true, "Voters fees should be withdrawn");
+
+        assertEq(mockUSD8.balanceOf(treasury), votersFees, "Voters fees should be transferred to treasury");
+    }
+
+    // ------ negative tests: withdrawProtocolFees -------
+
+        // withdrawing for future epoch
+        function testCannot_PaymentsControllerAdmin_WithdrawProtocolFees_InvalidEpoch() public {
+            
+            vm.expectRevert(Errors.InvalidEpoch.selector);
+            vm.prank(assetManager);
+            paymentsController.withdrawProtocolFees(10);
+        }
+
+        function testCannot_PaymentsControllerAdmin_WithdrawProtocolFees_AlreadyWithdrawn() public {
+            testCan_PaymentsControllerAdmin_WithdrawProtocolFees();
+
+            vm.expectRevert(Errors.ProtocolFeeAlreadyWithdrawn.selector);
+            vm.prank(assetManager);
+            paymentsController.withdrawProtocolFees(0);
+        }
+
+        function testCannot_PaymentsControllerAdmin_WithdrawProtocolFees_ZeroProtocolFees() public {
+            vm.expectRevert(Errors.ZeroProtocolFee.selector);
+            vm.prank(assetManager);
+            paymentsController.withdrawProtocolFees(EpochMath.getCurrentEpochNumber() - 1);
+        }
+
+    // ------ negative tests: withdrawVotersFees -------
+
+        // withdrawing for future epoch
+        function testCannot_PaymentsControllerAdmin_WithdrawVotersFees_InvalidEpoch() public {
+            
+            vm.expectRevert(Errors.InvalidEpoch.selector);
+            vm.prank(assetManager);
+            paymentsController.withdrawVotersFees(10);
+        }
+
+        function testCannot_PaymentsControllerAdmin_WithdrawVotersFees_AlreadyWithdrawn() public {
+            testCan_PaymentsControllerAdmin_WithdrawVotersFees();
+
+            vm.expectRevert(Errors.VotersFeeAlreadyWithdrawn.selector);
+            vm.prank(assetManager);
+            paymentsController.withdrawVotersFees(0);
+        }
+
+        function testCannot_PaymentsControllerAdmin_WithdrawVotersFees_ZeroVotersFees() public {
+            vm.expectRevert(Errors.ZeroVotersFee.selector);
+            vm.prank(assetManager);
+            paymentsController.withdrawVotersFees(EpochMath.getCurrentEpochNumber() - 1);
+        }
+
+
+    
+    // ----- state transition: pause -------
+
+        function testCannot_ArbitraryAddressCannotPauseContract() public {
+            vm.expectRevert(Errors.OnlyCallableByMonitor.selector);
+            vm.prank(verifier1);
+            paymentsController.pause();
+        }
+
+        function testCan_MonitorPauseContract() public {
+            assertFalse(paymentsController.paused(), "Contract should NOT be paused");
+
+            vm.prank(monitor);
+            paymentsController.pause();
+
+            assertTrue(paymentsController.paused(), "Contract should be paused");
+        }
+}
+
+abstract contract StateT20_PaymentsControllerAdminFreezesContract is StateT19_PaymentsControllerAdminWithdrawsProtocolFees {
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        vm.prank(monitor);
+        paymentsController.pause();
+    }
+}
+
+contract StateT20_PaymentsControllerAdminFreezesContract_Test is StateT20_PaymentsControllerAdminFreezesContract {
+
+    // ------ Contract paused: no fns can be called except: unpause or freeze -------
+        
+        // ---- Issuer functions ----
+        function test_createIssuer_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(issuer1);
+            paymentsController.createIssuer(issuer1Asset);
+        }
+
+        function test_createSchema_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(issuer1);
+            paymentsController.createSchema(issuer1_Id, 100 * 1e6);
+        }
+
+        function test_updateSchemaFee_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(issuer1);
+            paymentsController.updateSchemaFee(issuer1_Id, schemaId1, 200 * 1e6);
+        }
+
+        function test_claimFees_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(issuer1Asset);
+            paymentsController.claimFees(issuer1_Id);
+        }
+
+        // ---- Verifier functions ----
+        function test_createVerifier_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(verifier1);
+            paymentsController.createVerifier(verifier1Signer, verifier1Asset);
+        }
+
+        function test_deposit_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(verifier1Asset);
+            paymentsController.deposit(verifier1_Id, 100 * 1e6);
+        }
+
+        function test_withdraw_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(verifier1Asset);
+            paymentsController.withdraw(verifier1_Id, 50 * 1e6);
+        }
+
+        function test_updateSignerAddress_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(verifier1);
+            paymentsController.updateSignerAddress(verifier1_Id, makeAddr("newSigner"));
+        }
+
+        function test_stakeMoca_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(verifier1Asset);
+            paymentsController.stakeMoca(verifier1_Id, 10 ether);
+        }
+
+        function test_unstakeMoca_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(verifier1Asset);
+            paymentsController.unstakeMoca(verifier1_Id, 5 ether);
+        }
+
+        // ---- Common functions for issuer and verifier ----
+        function test_updateAssetAddress_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(issuer1);
+            paymentsController.updateAssetAddress(issuer1_Id, makeAddr("newAsset"));
+        }
+
+        function test_updateAdminAddress_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(issuer1);
+            paymentsController.updateAdminAddress(issuer1_Id, makeAddr("newAdmin"));
+        }
+
+        // ---- UniversalVerificationContract functions ----
+        function test_deductBalance_revertsWhenPaused() public {
+            // Generate a valid signature
+            uint128 amount = issuer1SchemaFee;
+            uint256 expiry = block.timestamp + 1000;
+            uint256 nonce = getVerifierNonce(verifier1Signer);
+            bytes memory signature = generateDeductBalanceSignature(
+                verifier1SignerPrivateKey,
+                issuer1_Id,
+                verifier1_Id,
+                schemaId1,
+                amount,
+                expiry,
+                nonce
+            );
+
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(verifier1Signer);
+            paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
+        }
+
+        function test_deductBalanceZeroFee_revertsWhenPaused() public {
+            // Generate a valid signature
+            uint256 expiry = block.timestamp + 1000;
+            uint256 nonce = getVerifierNonce(verifier1Signer);
+            bytes memory signature = generateDeductBalanceZeroFeeSignature(
+                verifier1SignerPrivateKey,
+                issuer1_Id,
+                verifier1_Id,
+                schemaId3, // assuming schemaId3 has zero fee
+                expiry,
+                nonce
+            );
+
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(verifier1Signer);
+            paymentsController.deductBalanceZeroFee(issuer1_Id, verifier1_Id, schemaId3, expiry, signature);
+        }
+
+        // ---- Admin update functions ----
+        function test_updatePoolId_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updatePoolId(schemaId1, bytes32("pool1"));
+        }
+
+        function test_updateFeeIncreaseDelayPeriod_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateFeeIncreaseDelayPeriod(28 days);
+        }
+
+        function test_updateProtocolFeePercentage_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateProtocolFeePercentage(600); // 6%
+        }
+
+        function test_updateVotingFeePercentage_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVotingFeePercentage(1100); // 11%
+        }
+
+        function test_updateVerifierSubsidyPercentages_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierSubsidyPercentages(40 ether, 4000);
+        }
+
+        // ---- Admin withdraw functions ----
+        function test_withdrawProtocolFees_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(assetManager);
+            paymentsController.withdrawProtocolFees(0);
+        }
+
+        function test_withdrawVotersFees_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(assetManager);
+            paymentsController.withdrawVotersFees(0);
+        }
+
+        // ---- The pause function itself should also revert when called if already paused ----
+        function test_pause_revertsWhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(monitor);
+            paymentsController.pause();
+        }
+
+    // ------ Functions that should NOT revert when paused -------
+
+        // View functions should still work when paused
+        function test_viewFunctions_workWhenPaused() public view {
+            // These should not revert
+            paymentsController.getIssuer(issuer1_Id);
+            paymentsController.getSchema(schemaId1);
+            paymentsController.getVerifier(verifier1_Id);
+            paymentsController.getVerifierNonce(verifier1Signer);
+            paymentsController.getVerifierSubsidyPercentage(10 ether);
+            paymentsController.getEpochPoolSubsidies(0, bytes32("pool1"));
+            paymentsController.getEpochPoolVerifierSubsidies(0, bytes32("pool1"), verifier1_Id);
+            paymentsController.getEpochPoolFeesAccrued(0, bytes32("pool1"));
+            paymentsController.getEpochFeesAccrued(0);
+            
+            // Also check immutable/state variables can be read
+            paymentsController.addressBook();
+            paymentsController.PROTOCOL_FEE_PERCENTAGE();
+            paymentsController.VOTING_FEE_PERCENTAGE();
+            paymentsController.FEE_INCREASE_DELAY_PERIOD();
+            paymentsController.TOTAL_CLAIMED_VERIFICATION_FEES();
+            paymentsController.TOTAL_MOCA_STAKED();
+            paymentsController.isFrozen();
+            paymentsController.paused();
+        }
+
+        // can unpause
+        function testCan_unpause_WhenPaused() public {
+            // Check contract is paused
+            assertTrue(paymentsController.paused(), "Contract should be paused");
+
+            // Unpause should work
+            vm.prank(globalAdmin);
+            paymentsController.unpause();
+
+            // Check contract is unpaused
+            assertFalse(paymentsController.paused(), "Contract should be unpaused");
+        }
+
+
+    // ------ state transition: freeze ------
+
+        function testCan_freeze_WhenPaused() public {
+            // Check contract is paused but not frozen
+            assertTrue(paymentsController.paused(), "Contract should be paused");
+            assertEq(paymentsController.isFrozen(), 0, "Contract should not be frozen");
+
+            // Expect freeze event
+            vm.expectEmit(true, true, true, true);
+            emit Events.ContractFrozen();
+
+            // Freeze should work when paused
+            vm.prank(globalAdmin);
+            paymentsController.freeze();
+
+            // Check contract is frozen
+            assertEq(paymentsController.isFrozen(), 1, "Contract should be frozen");
+        }
+}
+
+abstract 
+

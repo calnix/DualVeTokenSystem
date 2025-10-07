@@ -4,8 +4,8 @@ pragma solidity 0.8.27;
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 
 // import all contracts
-import {AccessController} from "../../src/AccessController.sol";
 import {AddressBook} from "../../src/AddressBook.sol";
+import {AccessController} from "../../src/AccessController.sol";
 import {PaymentsController} from "../../src/PaymentsController.sol";
 import {VotingController} from "../../src/VotingController.sol";
 import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
@@ -45,6 +45,7 @@ abstract contract TestingHarness is Test {
     MockUSD8 public mockUSD8;
 
 // ------------ Actors ------------
+
     // ------------ issuers ------------
     address public issuer1 = makeAddr("issuer1");
     address public issuer1Asset = makeAddr("issuer1Asset");
@@ -69,6 +70,9 @@ abstract contract TestingHarness is Test {
     address public verifier3Asset = makeAddr("verifier3Asset");
     address public verifier3Signer;
     uint256 public verifier3SignerPrivateKey;
+
+    // ------------ misc. ------------
+    address public treasury = makeAddr("treasury");
 
     // ------------ users ------------
     //address public user1 = makeAddr("user1");
@@ -143,6 +147,11 @@ abstract contract TestingHarness is Test {
             accessController.grantRole(accessController.ASSET_MANAGER_ROLE(), assetManager);
             accessController.grantRole(accessController.EMERGENCY_EXIT_HANDLER_ROLE(), emergencyExitHandler);
         vm.stopPrank();
+
+        vm.prank(monitorAdmin);
+            accessController.addMonitor(monitor);
+        vm.prank(cronJobAdmin);
+            accessController.addCronJob(cronJob);
 
 
         // 4. Deploy PaymentsController
