@@ -3072,15 +3072,26 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             verifierIds[1] = verifier2_Id;
             verifierIds[2] = verifier3_Id;
 
-            // Record pre-exit balances for each verifier asset
-            uint256 beforeBalance1 = mockUSD8.balanceOf(verifier1Asset);
-            uint256 beforeBalance2 = mockUSD8.balanceOf(verifier2Asset);
-            uint256 beforeBalance3 = mockUSD8.balanceOf(verifier3Asset);
+            // Get current asset addresses from the contract (they may have been updated)
+            address currentAsset1 = paymentsController.getVerifier(verifier1_Id).assetAddress;
+            address currentAsset2 = paymentsController.getVerifier(verifier2_Id).assetAddress;
+            address currentAsset3 = paymentsController.getVerifier(verifier3_Id).assetAddress;
 
             // Record pre-exit contract balances for each verifier
-            uint256 beforeContractBalance1 = paymentsController.getVerifier(verifier1_Id).currentBalance;
-            uint256 beforeContractBalance2 = paymentsController.getVerifier(verifier2_Id).currentBalance;
-            uint256 beforeContractBalance3 = paymentsController.getVerifier(verifier3_Id).currentBalance;
+            uint256 beforeVerifier1ContractBalance = paymentsController.getVerifier(verifier1_Id).currentBalance;
+            uint256 beforeVerifier2ContractBalance = paymentsController.getVerifier(verifier2_Id).currentBalance;
+            uint256 beforeVerifier3ContractBalance = paymentsController.getVerifier(verifier3_Id).currentBalance;
+
+            // Record pre-exit USD8 balances for each verifier
+            uint256 beforeVerifier1USD8Balance = mockUSD8.balanceOf(verifier1Asset);
+            uint256 beforeVerifier2USD8Balance = mockUSD8.balanceOf(verifier2Asset);
+            uint256 beforeVerifier3USD8Balance = mockUSD8.balanceOf(verifier3Asset);
+
+            // Record pre-exit MOCA staked for each verifier
+            uint256 beforeVerifier1MocaStaked = paymentsController.getVerifier(verifier1_Id).mocaStaked;
+            uint256 beforeVerifier2MocaStaked = paymentsController.getVerifier(verifier2_Id).mocaStaked;
+            uint256 beforeVerifier3MocaStaked = paymentsController.getVerifier(verifier3_Id).mocaStaked;
+
 
             // Expect the EmergencyExitVerifiers event to be emitted
             vm.expectEmit(true, false, false, true, address(paymentsController));
@@ -3090,26 +3101,38 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             vm.prank(emergencyExitHandler);
             paymentsController.emergencyExitVerifiers(verifierIds);
 
-            // Record post-exit balances for each verifier asset
-            uint256 afterBalance1 = mockUSD8.balanceOf(verifier1Asset);
-            uint256 afterBalance2 = mockUSD8.balanceOf(verifier2Asset);
-            uint256 afterBalance3 = mockUSD8.balanceOf(verifier3Asset);
-
             // Record post-exit contract balances for each verifier
-            uint256 afterContractBalance1 = paymentsController.getVerifier(verifier1_Id).currentBalance;
-            uint256 afterContractBalance2 = paymentsController.getVerifier(verifier2_Id).currentBalance;
-            uint256 afterContractBalance3 = paymentsController.getVerifier(verifier3_Id).currentBalance;
+            uint256 afterVerifier1ContractBalance = paymentsController.getVerifier(verifier1_Id).currentBalance;
+            uint256 afterVerifier2ContractBalance = paymentsController.getVerifier(verifier2_Id).currentBalance;
+            uint256 afterVerifier3ContractBalance = paymentsController.getVerifier(verifier3_Id).currentBalance;
 
-            // Check that tokens were transferred from contract to verifier assets
-            assertEq(afterBalance1, beforeBalance1 + beforeContractBalance1, "verifier1Asset should receive all contract-held tokens");
-            assertEq(afterBalance2, beforeBalance2 + beforeContractBalance2, "verifier2Asset should receive all contract-held tokens");
-            assertEq(afterBalance3, beforeBalance3 + beforeContractBalance3, "verifier3Asset should receive all contract-held tokens");
+            // Record post-exit USD8 balances for each verifier
+            uint256 afterVerifier1USD8Balance = mockUSD8.balanceOf(verifier1Asset);
+            uint256 afterVerifier2USD8Balance = mockUSD8.balanceOf(verifier2Asset);
+            uint256 afterVerifier3USD8Balance = mockUSD8.balanceOf(verifier3Asset);
+
+            // Record post-exit Moca balances for each verifier
+            uint256 afterVerifier1MOCABalance = mockMoca.balanceOf(verifier1Asset);
+            uint256 afterVerifier2MOCABalance = mockMoca.balanceOf(verifier2Asset);
+            uint256 afterVerifier3MOCABalance = mockMoca.balanceOf(verifier3Asset);
+
+            // Check that contract-state balances for verifiers are now zero
+            assertEq(afterVerifier1ContractBalance, 0, "verifier1 contract-state USD8_balance should be zero after emergency exit");
+            assertEq(afterVerifier2ContractBalance, 0, "verifier2 contract-state USD8_balance should be zero after emergency exit");
+            assertEq(afterVerifier3ContractBalance, 0, "verifier3 contract-state USD8_balance should be zero after emergency exit");
+            assertEq(afterVerifier1ContractBalance, 0, "verifier1 contract-state Moca_staked should be zero after emergency exit");
+            assertEq(afterVerifier2ContractBalance, 0, "verifier2 contract-state Moca_staked should be zero after emergency exit");
+            assertEq(afterVerifier3ContractBalance, 0, "verifier3 contract-state Moca_staked should be zero after emergency exit");
+
+            // Check that USD8 balances were transferred from contract to verifiers
+            assertEq(afterVerifier1USD8Balance, beforeVerifier1USD8Balance + beforeVerifier1ContractBalance, "verifier1Asset should receive all contract-state USD8_balance tokens");
+            assertEq(afterVerifier2USD8Balance, beforeVerifier2USD8Balance + beforeVerifier2ContractBalance, "verifier2Asset should receive all contract-state USD8_balance tokens");
+            assertEq(afterVerifier3USD8Balance, beforeVerifier3USD8Balance + beforeVerifier3ContractBalance, "verifier3Asset should receive all contract-state USD8_balance tokens");
             
-            // Check that contract-held balances for verifiers are now zero
-            assertEq(afterContractBalance1, 0,"verifier1 contract balance should be zero after emergency exit");
-            assertEq(afterContractBalance2, 0,"verifier2 contract balance should be zero after emergency exit");
-            assertEq(afterContractBalance3, 0,"verifier3 contract balance should be zero after emergency exit");
+            // Check that Moca balances were transferred from contract to verifiers
+            assertEq(afterVerifier1MOCABalance, beforeVerifier1MocaStaked + beforeVerifier1MocaStaked, "verifier1Asset should receive all contract-state Moca_staked tokens");
+            assertEq(afterVerifier2MOCABalance, beforeVerifier1MocaStaked + beforeVerifier2MocaStaked, "verifier2Asset should receive all contract-state Moca_staked tokens");
+            assertEq(afterVerifier3MOCABalance, beforeVerifier1MocaStaked + beforeVerifier3MocaStaked, "verifier3Asset should receive all contract-state Moca_staked tokens");
         }
-
 }
 

@@ -842,14 +842,17 @@ contract PaymentsController is EIP712, Pausable {
 
             // get balance: if 0, skip
             uint256 verifierBalance = verifierPtr.currentBalance;
-            if(verifierBalance == 0) continue;
+            uint256 verifierMocaStaked = verifierPtr.mocaStaked;
+            if(verifierBalance == 0 && verifierMocaStaked == 0) continue;
 
             // get asset address
             address verifierAssetAddress = verifierPtr.assetAddress;
 
             // transfer balance to verifier
-            _usd8().safeTransfer(verifierAssetAddress, verifierBalance);
+            if(verifierBalance > 0) _usd8().safeTransfer(verifierAssetAddress, verifierBalance);
+            if(verifierMocaStaked > 0) _moca().safeTransfer(verifierAssetAddress, verifierMocaStaked);
             delete verifierPtr.currentBalance;
+            delete verifierPtr.mocaStaked;
         }
 
         emit Events.EmergencyExitVerifiers(verifierIds);
