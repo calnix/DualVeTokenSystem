@@ -823,7 +823,6 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.ContractFrozen();
     }  
 
-
     /**
      * @notice Transfers all verifiers' remaining balances to their registered asset addresses during emergency exit.
      * @dev Callable only by the emergency exit handler when the contract is frozen.
@@ -835,7 +834,7 @@ contract PaymentsController is EIP712, Pausable {
         if(isFrozen == 0) revert Errors.NotFrozen();
         if(verifierIds.length == 0) revert Errors.InvalidArray();
    
-        // if issuerId is given, will retrieve either empty or wrong struct
+        // if anything other than a valid verifierId is given, will retrieve either empty struct and skip
         for(uint256 i; i < verifierIds.length; ++i) {
             
             // cache pointer
@@ -850,6 +849,7 @@ contract PaymentsController is EIP712, Pausable {
 
             // transfer balance to verifier
             _usd8().safeTransfer(verifierAssetAddress, verifierBalance);
+            delete verifierPtr.currentBalance;
         }
 
         emit Events.EmergencyExitVerifiers(verifierIds);
@@ -866,7 +866,7 @@ contract PaymentsController is EIP712, Pausable {
         if(isFrozen == 0) revert Errors.NotFrozen();
         if(issuerIds.length == 0) revert Errors.InvalidArray();
 
-        // if issuerId is given, will retrieve either empty or wrong struct
+        // if anything other than a valid issuerId is given, will retrieve either empty struct and skip
         for(uint256 i; i < issuerIds.length; ++i) {
             
             // cache pointer
@@ -881,6 +881,7 @@ contract PaymentsController is EIP712, Pausable {
 
             // transfer balance to issuer
             _usd8().safeTransfer(issuerAssetAddress, issuerBalance);
+            issuerPtr.totalClaimed = issuerPtr.totalNetFeesAccrued;
         }
 
         emit Events.EmergencyExitIssuers(issuerIds);
