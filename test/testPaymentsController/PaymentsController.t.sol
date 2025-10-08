@@ -2638,6 +2638,10 @@ contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees_Test is StateT19_
         assertEq(mockUSD8.balanceOf(treasury), 0, "treasury has 0 USD8");
         assertEq(paymentsController.getEpochFeesAccrued(0).isProtocolFeeWithdrawn, false, "Protocol fees should not be withdrawn");
 
+        // Check TOTAL_PROTOCOL_FEES_UNCLAIMED before
+        uint256 beforeTotalProtocolFeesUnclaimed = paymentsController.TOTAL_PROTOCOL_FEES_UNCLAIMED();
+        assertTrue(beforeTotalProtocolFeesUnclaimed >= protocolFees, "TOTAL_PROTOCOL_FEES_UNCLAIMED should be >= protocolFees");
+
         // Expect event emission
         vm.expectEmit(true, true, true, true);
         emit Events.ProtocolFeesWithdrawn(0, protocolFees);
@@ -2649,6 +2653,10 @@ contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees_Test is StateT19_
         assertEq(paymentsController.getEpochFeesAccrued(0).isProtocolFeeWithdrawn, true, "Protocol fees should be withdrawn");
 
         assertEq(mockUSD8.balanceOf(treasury), protocolFees, "Protocol fees should be transferred to treasury");
+
+        // Check TOTAL_PROTOCOL_FEES_UNCLAIMED after
+        uint256 afterTotalProtocolFeesUnclaimed = paymentsController.TOTAL_PROTOCOL_FEES_UNCLAIMED();
+        assertEq(afterTotalProtocolFeesUnclaimed, beforeTotalProtocolFeesUnclaimed - protocolFees, "TOTAL_PROTOCOL_FEES_UNCLAIMED should decrease by protocolFees");
     }
 
     function testCan_PaymentsControllerAdmin_WithdrawVotersFees() public {
@@ -2657,6 +2665,10 @@ contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees_Test is StateT19_
         assertTrue(votersFees > 0, "Voters fees should be greater than 0");
         assertEq(mockUSD8.balanceOf(treasury), 0, "treasury has 0 USD8");
         assertEq(paymentsController.getEpochFeesAccrued(0).isVotersFeeWithdrawn, false, "Voters fees should not be withdrawn");
+
+        // Check TOTAL_VOTING_FEES_UNCLAIMED before
+        uint256 beforeTotalVotingFeesUnclaimed = paymentsController.TOTAL_VOTING_FEES_UNCLAIMED();
+        assertTrue(beforeTotalVotingFeesUnclaimed >= votersFees, "TOTAL_VOTING_FEES_UNCLAIMED should be >= votersFees");
 
         // Expect event emission
         vm.expectEmit(true, true, true, true);
@@ -2669,6 +2681,10 @@ contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees_Test is StateT19_
         assertEq(paymentsController.getEpochFeesAccrued(0).isVotersFeeWithdrawn, true, "Voters fees should be withdrawn");
 
         assertEq(mockUSD8.balanceOf(treasury), votersFees, "Voters fees should be transferred to treasury");
+
+        // Check TOTAL_VOTING_FEES_UNCLAIMED after
+        uint256 afterTotalVotingFeesUnclaimed = paymentsController.TOTAL_VOTING_FEES_UNCLAIMED();
+        assertEq(afterTotalVotingFeesUnclaimed, beforeTotalVotingFeesUnclaimed - votersFees, "TOTAL_VOTING_FEES_UNCLAIMED should decrease by votersFees");
     }
 
     // ------ negative tests: withdrawProtocolFees -------
@@ -3291,6 +3307,72 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             assertEq(afterIssuer1UnclaimedFees, 0, "issuer1 should have zero unclaimed fees after emergency exit");
             assertEq(afterIssuer2UnclaimedFees, 0, "issuer2 should have zero unclaimed fees after emergency exit");
             assertEq(afterIssuer3UnclaimedFees, 0, "issuer3 should have zero unclaimed fees after emergency exit");
+        }
+
+    // ------ emergencyExitFees ------
+
+        function testCannot_ArbitraryAddressCall_EmergencyExitFees() public {
+            vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
+            vm.prank(assetManager);
+            paymentsController.emergencyExitFees();
+        }
+
+        function testCannot_EmergencyExitHandlerCall_EmergencyExitFees_NoFeesToClaim() public {
+            // First ensure all fees have been claimed
+            testCan_EmergencyExitHandler_EmergencyExitFees();
+            
+            // Try to call emergencyExitFees again when no fees remain
+            vm.expectRevert(Errors.NoFeesToClaim.selector);
+            vm.prank(emergencyExitHandler);
+            paymentsController.emergencyExitFees();
+        }
+
+        function testCan_EmergencyExitHandler_EmergencyExitFees() public {
+            // Get treasury address
+            address treasuryAddress = addressBook.getTreasury();
+            require(treasuryAddress != address(0), "Treasury address should not be zero");
+
+            // Record pre-exit unclaimed fees
+            uint256 beforeProtocolFeesUnclaimed = paymentsController.TOTAL_PROTOCOL_FEES_UNCLAIMED();
+            uint256 beforeVotingFeesUnclaimed = paymentsController.TOTAL_VOTING_FEES_UNCLAIMED();
+            uint256 totalUnclaimedFees = beforeProtocolFeesUnclaimed + beforeVotingFeesUnclaimed;
+            
+            // Ensure there are fees to claim (from previous state transitions)
+            assertGt(totalUnclaimedFees, 0, "Should have unclaimed fees from previous transactions");
+
+            // Record pre-exit treasury balance
+            uint256 beforeTreasuryBalance = mockUSD8.balanceOf(treasuryAddress);
+
+            // Record contract balance before
+            uint256 beforeContractBalance = mockUSD8.balanceOf(address(paymentsController));
+
+            // Expect the EmergencyExitFees event to be emitted
+            vm.expectEmit(true, false, false, true, address(paymentsController));
+            emit Events.EmergencyExitFees(treasuryAddress, totalUnclaimedFees);
+
+            // Call as emergencyExitHandler
+            vm.prank(emergencyExitHandler);
+            paymentsController.emergencyExitFees();
+
+            // Record post-exit unclaimed fees
+            uint256 afterProtocolFeesUnclaimed = paymentsController.TOTAL_PROTOCOL_FEES_UNCLAIMED();
+            uint256 afterVotingFeesUnclaimed = paymentsController.TOTAL_VOTING_FEES_UNCLAIMED();
+
+            // Record post-exit treasury balance
+            uint256 afterTreasuryBalance = mockUSD8.balanceOf(treasuryAddress);
+
+            // Record contract balance after
+            uint256 afterContractBalance = mockUSD8.balanceOf(address(paymentsController));
+
+            // Check that unclaimed fee counters are now zero
+            assertEq(afterProtocolFeesUnclaimed, 0, "TOTAL_PROTOCOL_FEES_UNCLAIMED should be zero after emergency exit");
+            assertEq(afterVotingFeesUnclaimed, 0, "TOTAL_VOTING_FEES_UNCLAIMED should be zero after emergency exit");
+
+            // Check that treasury received the fees
+            assertEq(afterTreasuryBalance, beforeTreasuryBalance + totalUnclaimedFees, "Treasury should receive all unclaimed fees");
+
+            // Check that contract balance decreased by the transferred amount
+            assertEq(afterContractBalance, beforeContractBalance - totalUnclaimedFees, "Contract balance should decrease by totalUnclaimedFees");
         }
 
 }

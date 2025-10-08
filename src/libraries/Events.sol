@@ -148,6 +148,7 @@ library Events {
     // emergencyExit
     event EmergencyExitIssuers(bytes32[] issuerIds);
     event EmergencyExitVerifiers(bytes32[] verifierIds);
+    event EmergencyExitFees(address indexed treasury, uint256 totalUnclaimedFees);
 
 // --------- AddressBook.sol ---------
     event AddressSet(bytes32 indexed identifier, address registeredAddress);

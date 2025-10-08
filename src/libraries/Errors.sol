@@ -24,7 +24,8 @@ library Errors {
     error InvalidDelayPeriod();
     error NotFrozen();
     error IsFrozen();
-    
+    error NoFeesToClaim();
+
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
     error InvalidIssuer();
@@ -65,7 +66,6 @@ library Errors {
     // delegation
     error DelegateAlreadyRegistered();
     error DelegateNotRegistered();
-    error NoFeesToClaim();
     error CannotUnregisterWithActiveVotes();
     //voterClaimRewards
     error NoRewardsToClaim();

@@ -49,6 +49,10 @@ contract PaymentsController is EIP712, Pausable {
     // staked by verifiers
     uint256 public TOTAL_MOCA_STAKED;
 
+    // total fees unclaimed: for emergency withdrawal [USD8 terms]
+    uint256 public TOTAL_PROTOCOL_FEES_UNCLAIMED;
+    uint256 public TOTAL_VOTING_FEES_UNCLAIMED;
+
     // risk management
     uint256 public isFrozen;
 
@@ -588,10 +592,13 @@ contract PaymentsController is EIP712, Pausable {
             poolFees.feesAccruedToVoters += votingFee;
         }
 
-        // Global epoch fees [for AssetManager]
+        // Book fees: global + epoch [for AssetManager]
         DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[currentEpoch];
         epochFees.feesAccruedToProtocol += protocolFee;
         epochFees.feesAccruedToVoters += votingFee;
+        // for emergency withdrawal
+        TOTAL_PROTOCOL_FEES_UNCLAIMED += protocolFee;
+        TOTAL_VOTING_FEES_UNCLAIMED += votingFee;
 
         emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
         
@@ -752,6 +759,7 @@ contract PaymentsController is EIP712, Pausable {
 
         require(!epochFees.isProtocolFeeWithdrawn, Errors.ProtocolFeeAlreadyWithdrawn());
 
+        // sanity check: there must be protocol fees to withdraw
         uint256 protocolFees = epochFees.feesAccruedToProtocol;
         require(protocolFees > 0, Errors.ZeroProtocolFee());
 
@@ -761,6 +769,7 @@ contract PaymentsController is EIP712, Pausable {
 
         // update flag
         epochFees.isProtocolFeeWithdrawn = true;
+        TOTAL_PROTOCOL_FEES_UNCLAIMED -= protocolFees;
         emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
 
         _usd8().safeTransfer(treasury, protocolFees);
@@ -779,6 +788,7 @@ contract PaymentsController is EIP712, Pausable {
 
         require(!epochFees.isVotersFeeWithdrawn, Errors.VotersFeeAlreadyWithdrawn());
 
+        // sanity check: there must be voters fees to withdraw
         uint256 votersFees = epochFees.feesAccruedToVoters;
         require(votersFees > 0, Errors.ZeroVotersFee());
 
@@ -788,6 +798,7 @@ contract PaymentsController is EIP712, Pausable {
 
         // update flag
         epochFees.isVotersFeeWithdrawn = true;
+        TOTAL_VOTING_FEES_UNCLAIMED -= votersFees;
         emit Events.VotersFeesWithdrawn(epoch, votersFees);
 
         _usd8().safeTransfer(treasury, votersFees);
@@ -890,6 +901,33 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.EmergencyExitIssuers(issuerIds);
     }
 
+    /**
+     * @notice Transfers all unclaimed protocol and voting fees to the treasury during emergency exit.
+     * @dev Callable only by the emergency exit handler when the contract is frozen.
+     *      Transfers the sum of TOTAL_PROTOCOL_FEES_UNCLAIMED and TOTAL_VOTING_FEES_UNCLAIMED to the treasury address.
+     *      Resets the unclaimed fee counters to zero after transfer.
+     *      Emits EmergencyExitFees event with the treasury address and the total unclaimed fees.
+     */
+    function emergencyExitFees() external onlyEmergencyExitHandler {
+        if(isFrozen == 0) revert Errors.NotFrozen();
+
+        uint256 totalUnclaimedFees = TOTAL_PROTOCOL_FEES_UNCLAIMED + TOTAL_VOTING_FEES_UNCLAIMED;
+        if(totalUnclaimedFees == 0) revert Errors.NoFeesToClaim();
+        
+        // get treasury address
+        address treasury = addressBook.getTreasury();
+        require(treasury != address(0), Errors.InvalidAddress());
+
+        // transfer fees to treasury
+        _usd8().safeTransfer(treasury, totalUnclaimedFees);
+
+        // reset counters
+        delete TOTAL_PROTOCOL_FEES_UNCLAIMED;
+        delete TOTAL_VOTING_FEES_UNCLAIMED;
+
+        emit Events.EmergencyExitFees(treasury, totalUnclaimedFees);
+    }
+    
 
 //------------------------------- modifiers -------------------------------------------------------
 
