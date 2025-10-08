@@ -2598,7 +2598,7 @@ contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
         paymentsController.withdrawProtocolFees(0);
     }
 
-    function testCannot_PaymentsControllerAdmin_WithdrawVotingFees_NoTreasuryAddressSet() public {
+    function testCannot_PaymentsControllerAdmin_WithdrawVotersFees_NoTreasuryAddressSet() public {
 
         uint256 votersFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToVoters;
         assertTrue(votersFees > 0, "Voters fees should be greater than 0");
@@ -3027,15 +3027,32 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             paymentsController.emergencyExitVerifiers(new bytes32[](0));
         }
 
-        function testCannot_EmergencyExitHandlerCall_EmergencyExitVerifiers_InvalidVerifierId() public {
+        //Note: invalid ids get skipped, but are emitted in the event
+        function testCan_EmergencyExitHandlerCall_EmergencyExitVerifiers_InvalidVerifierId() public {
             // Provide a verifierId that is not registered (e.g., random bytes32)
             bytes32 invalidVerifierId = keccak256("invalidVerifierId");
             bytes32[] memory verifierIds = new bytes32[](1);
             verifierIds[0] = invalidVerifierId;
 
-            vm.expectRevert();
+            // Record contract's token balance before
+            uint256 beforeUSD8Balance = mockUSD8.balanceOf(address(paymentsController));
+            uint256 beforeMocaBalance = mockMoca.balanceOf(address(paymentsController));
+
+            // Expect the EmergencyExitVerifiers event to be emitted with the invalid verifierId
+            vm.expectEmit(true, false, false, true, address(paymentsController));
+            emit Events.EmergencyExitVerifiers(verifierIds);
+
+            // Call as emergencyExitHandler
             vm.prank(emergencyExitHandler);
             paymentsController.emergencyExitVerifiers(verifierIds);
+
+            // Record contract's token balance after
+            uint256 afterUSD8Balance = mockUSD8.balanceOf(address(paymentsController));
+            uint256 afterMocaBalance = mockMoca.balanceOf(address(paymentsController));
+
+            // Assert that no tokens were transferred
+            assertEq(afterUSD8Balance, beforeUSD8Balance, "No tokens should be transferred for invalid verifierId");
+            assertEq(afterMocaBalance, beforeMocaBalance, "No tokens should be transferred for invalid verifierId");
         }
 
         function testCannot_EmergencyExitVerifiers_ValidVerifierId_ButZeroBalance() public {
@@ -3083,15 +3100,19 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             uint256 beforeVerifier3ContractBalance = paymentsController.getVerifier(verifier3_Id).currentBalance;
 
             // Record pre-exit USD8 balances for each verifier
-            uint256 beforeVerifier1USD8Balance = mockUSD8.balanceOf(verifier1Asset);
-            uint256 beforeVerifier2USD8Balance = mockUSD8.balanceOf(verifier2Asset);
-            uint256 beforeVerifier3USD8Balance = mockUSD8.balanceOf(verifier3Asset);
+            uint256 beforeVerifier1USD8Balance = mockUSD8.balanceOf(currentAsset1);
+            uint256 beforeVerifier2USD8Balance = mockUSD8.balanceOf(currentAsset2);
+            uint256 beforeVerifier3USD8Balance = mockUSD8.balanceOf(currentAsset3);
 
             // Record pre-exit MOCA staked for each verifier
             uint256 beforeVerifier1MocaStaked = paymentsController.getVerifier(verifier1_Id).mocaStaked;
             uint256 beforeVerifier2MocaStaked = paymentsController.getVerifier(verifier2_Id).mocaStaked;
             uint256 beforeVerifier3MocaStaked = paymentsController.getVerifier(verifier3_Id).mocaStaked;
 
+            // Record pre-exit MOCA balances for each verifier
+            uint256 beforeVerifier1MOCABalance = mockMoca.balanceOf(currentAsset1);
+            uint256 beforeVerifier2MOCABalance = mockMoca.balanceOf(currentAsset2);
+            uint256 beforeVerifier3MOCABalance = mockMoca.balanceOf(currentAsset3);
 
             // Expect the EmergencyExitVerifiers event to be emitted
             vm.expectEmit(true, false, false, true, address(paymentsController));
@@ -3107,14 +3128,14 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             uint256 afterVerifier3ContractBalance = paymentsController.getVerifier(verifier3_Id).currentBalance;
 
             // Record post-exit USD8 balances for each verifier
-            uint256 afterVerifier1USD8Balance = mockUSD8.balanceOf(verifier1Asset);
-            uint256 afterVerifier2USD8Balance = mockUSD8.balanceOf(verifier2Asset);
-            uint256 afterVerifier3USD8Balance = mockUSD8.balanceOf(verifier3Asset);
+            uint256 afterVerifier1USD8Balance = mockUSD8.balanceOf(currentAsset1);
+            uint256 afterVerifier2USD8Balance = mockUSD8.balanceOf(currentAsset2);
+            uint256 afterVerifier3USD8Balance = mockUSD8.balanceOf(currentAsset3);
 
             // Record post-exit Moca balances for each verifier
-            uint256 afterVerifier1MOCABalance = mockMoca.balanceOf(verifier1Asset);
-            uint256 afterVerifier2MOCABalance = mockMoca.balanceOf(verifier2Asset);
-            uint256 afterVerifier3MOCABalance = mockMoca.balanceOf(verifier3Asset);
+            uint256 afterVerifier1MOCABalance = mockMoca.balanceOf(currentAsset1);
+            uint256 afterVerifier2MOCABalance = mockMoca.balanceOf(currentAsset2);
+            uint256 afterVerifier3MOCABalance = mockMoca.balanceOf(currentAsset3);
 
             // Check that contract-state balances for verifiers are now zero
             assertEq(afterVerifier1ContractBalance, 0, "verifier1 contract-state USD8_balance should be zero after emergency exit");
@@ -3130,9 +3151,147 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             assertEq(afterVerifier3USD8Balance, beforeVerifier3USD8Balance + beforeVerifier3ContractBalance, "verifier3Asset should receive all contract-state USD8_balance tokens");
             
             // Check that Moca balances were transferred from contract to verifiers
-            assertEq(afterVerifier1MOCABalance, beforeVerifier1MocaStaked + beforeVerifier1MocaStaked, "verifier1Asset should receive all contract-state Moca_staked tokens");
-            assertEq(afterVerifier2MOCABalance, beforeVerifier1MocaStaked + beforeVerifier2MocaStaked, "verifier2Asset should receive all contract-state Moca_staked tokens");
-            assertEq(afterVerifier3MOCABalance, beforeVerifier1MocaStaked + beforeVerifier3MocaStaked, "verifier3Asset should receive all contract-state Moca_staked tokens");
+            assertEq(afterVerifier1MOCABalance, beforeVerifier1MocaStaked + beforeVerifier1MOCABalance, "verifier1Asset should receive all contract-state Moca_staked tokens");
+            assertEq(afterVerifier2MOCABalance, beforeVerifier2MocaStaked + beforeVerifier2MOCABalance, "verifier2Asset should receive all contract-state Moca_staked tokens");
+            assertEq(afterVerifier3MOCABalance, beforeVerifier3MocaStaked + beforeVerifier3MOCABalance, "verifier3Asset should receive all contract-state Moca_staked tokens");
         }
+
+    // ------ emergencyExitIssuers ------
+
+        function testCannot_ArbitraryAddressCall_EmergencyExitIssuers() public {
+            vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
+            vm.prank(issuer1);
+            paymentsController.emergencyExitIssuers(new bytes32[](1));
+        }
+
+        function testCannot_EmergencyExitHandlerCall_EmergencyExitIssuers_InvalidArray() public {
+            vm.expectRevert(Errors.InvalidArray.selector);
+            vm.prank(emergencyExitHandler);
+            paymentsController.emergencyExitIssuers(new bytes32[](0));
+        }
+
+        //Note: invalid ids get skipped, but are emitted in the event
+        function testCan_EmergencyExitHandlerCall_EmergencyExitIssuers_InvalidIssuerId() public {
+            // Provide an issuerId that is not registered (e.g., random bytes32)
+            bytes32 invalidIssuerId = keccak256("invalidIssuerId");
+            bytes32[] memory issuerIds = new bytes32[](1);
+            issuerIds[0] = invalidIssuerId;
+
+            // Record contract's token balance before
+            uint256 beforeUSD8Balance = mockUSD8.balanceOf(address(paymentsController));
+
+            // Expect the EmergencyExitIssuers event to be emitted with the invalid issuerId
+            vm.expectEmit(true, false, false, true, address(paymentsController));
+            emit Events.EmergencyExitIssuers(issuerIds);
+
+            // Call as emergencyExitHandler
+            vm.prank(emergencyExitHandler);
+            paymentsController.emergencyExitIssuers(issuerIds);
+
+            // Record contract's token balance after
+            uint256 afterUSD8Balance = mockUSD8.balanceOf(address(paymentsController));
+
+            // Assert that no tokens were transferred
+            assertEq(afterUSD8Balance, beforeUSD8Balance, "No tokens should be transferred for invalid issuerId");
+        }
+
+        function testCannot_EmergencyExitIssuers_ValidIssuerId_ButZeroUnclaimedBalance() public {
+            // First run emergency exit to ensure issuers have zero unclaimed balance
+            testCan_EmergencyExitHandler_EmergencyExitIssuers();
+            
+            // Prepare the issuerIds array
+            bytes32[] memory issuerIds = new bytes32[](3);
+            issuerIds[0] = issuer1_Id;
+            issuerIds[1] = issuer2_Id;
+            issuerIds[2] = issuer3_Id;
+
+            // Record balances before
+            uint256 beforeBalance = mockUSD8.balanceOf(address(paymentsController));
+
+            // Expect the EmergencyExitIssuers event to be emitted even if balance is zero
+            vm.expectEmit(true, false, false, true, address(paymentsController));
+            emit Events.EmergencyExitIssuers(issuerIds);
+
+            // Call as emergencyExitHandler
+            vm.prank(emergencyExitHandler);
+            paymentsController.emergencyExitIssuers(issuerIds);
+
+            // Record balances after
+            uint256 afterBalance = mockUSD8.balanceOf(address(paymentsController));
+
+            // Assert that no tokens were transferred
+            assertEq(afterBalance, beforeBalance, "No tokens should be transferred for zero unclaimed balance");
+        }
+
+        function testCan_EmergencyExitHandler_EmergencyExitIssuers() public {
+            // Prepare issuerIds array with issuer1, issuer2, issuer3
+            bytes32[] memory issuerIds = new bytes32[](3);
+            issuerIds[0] = issuer1_Id;
+            issuerIds[1] = issuer2_Id;
+            issuerIds[2] = issuer3_Id;
+
+            // Get current asset addresses from the contract (they may have been updated)
+            address currentAsset1 = paymentsController.getIssuer(issuer1_Id).assetAddress;
+            address currentAsset2 = paymentsController.getIssuer(issuer2_Id).assetAddress;
+            address currentAsset3 = paymentsController.getIssuer(issuer3_Id).assetAddress;
+
+            // Record pre-exit unclaimed fees for each issuer
+            uint256 beforeIssuer1UnclaimedFees = paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued - paymentsController.getIssuer(issuer1_Id).totalClaimed;
+            uint256 beforeIssuer2UnclaimedFees = paymentsController.getIssuer(issuer2_Id).totalNetFeesAccrued - paymentsController.getIssuer(issuer2_Id).totalClaimed;
+            uint256 beforeIssuer3UnclaimedFees = paymentsController.getIssuer(issuer3_Id).totalNetFeesAccrued - paymentsController.getIssuer(issuer3_Id).totalClaimed;
+
+            // Record pre-exit USD8 balances for each issuer asset address
+            uint256 beforeIssuer1USD8Balance = mockUSD8.balanceOf(currentAsset1);
+            uint256 beforeIssuer2USD8Balance = mockUSD8.balanceOf(currentAsset2);
+            uint256 beforeIssuer3USD8Balance = mockUSD8.balanceOf(currentAsset3);
+
+            // Record pre-exit totalClaimed for each issuer
+            uint256 beforeIssuer1TotalClaimed = paymentsController.getIssuer(issuer1_Id).totalClaimed;
+            uint256 beforeIssuer2TotalClaimed = paymentsController.getIssuer(issuer2_Id).totalClaimed;
+            uint256 beforeIssuer3TotalClaimed = paymentsController.getIssuer(issuer3_Id).totalClaimed;
+
+            // Record totalNetFeesAccrued for verification after
+            uint256 issuer1TotalNetFeesAccrued = paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued;
+            uint256 issuer2TotalNetFeesAccrued = paymentsController.getIssuer(issuer2_Id).totalNetFeesAccrued;
+            uint256 issuer3TotalNetFeesAccrued = paymentsController.getIssuer(issuer3_Id).totalNetFeesAccrued;
+
+            // Expect the EmergencyExitIssuers event to be emitted
+            vm.expectEmit(true, false, false, true, address(paymentsController));
+            emit Events.EmergencyExitIssuers(issuerIds);
+
+            // Call as emergencyExitHandler
+            vm.prank(emergencyExitHandler);
+            paymentsController.emergencyExitIssuers(issuerIds);
+
+            // Record post-exit totalClaimed for each issuer
+            uint256 afterIssuer1TotalClaimed = paymentsController.getIssuer(issuer1_Id).totalClaimed;
+            uint256 afterIssuer2TotalClaimed = paymentsController.getIssuer(issuer2_Id).totalClaimed;
+            uint256 afterIssuer3TotalClaimed = paymentsController.getIssuer(issuer3_Id).totalClaimed;
+
+            // Record post-exit USD8 balances for each issuer
+            uint256 afterIssuer1USD8Balance = mockUSD8.balanceOf(currentAsset1);
+            uint256 afterIssuer2USD8Balance = mockUSD8.balanceOf(currentAsset2);
+            uint256 afterIssuer3USD8Balance = mockUSD8.balanceOf(currentAsset3);
+
+            // Check that totalClaimed now equals totalNetFeesAccrued for each issuer
+            assertEq(afterIssuer1TotalClaimed, issuer1TotalNetFeesAccrued, "issuer1 totalClaimed should equal totalNetFeesAccrued after emergency exit");
+            assertEq(afterIssuer2TotalClaimed, issuer2TotalNetFeesAccrued, "issuer2 totalClaimed should equal totalNetFeesAccrued after emergency exit");
+            assertEq(afterIssuer3TotalClaimed, issuer3TotalNetFeesAccrued, "issuer3 totalClaimed should equal totalNetFeesAccrued after emergency exit");
+
+            // Check that USD8 balances were transferred from contract to issuers
+            assertEq(afterIssuer1USD8Balance, beforeIssuer1USD8Balance + beforeIssuer1UnclaimedFees, "issuer1Asset should receive all unclaimed fees");
+            assertEq(afterIssuer2USD8Balance, beforeIssuer2USD8Balance + beforeIssuer2UnclaimedFees, "issuer2Asset should receive all unclaimed fees");
+            assertEq(afterIssuer3USD8Balance, beforeIssuer3USD8Balance + beforeIssuer3UnclaimedFees, "issuer3Asset should receive all unclaimed fees");
+            
+            // Verify unclaimed balances are now zero
+            uint256 afterIssuer1UnclaimedFees = paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued - paymentsController.getIssuer(issuer1_Id).totalClaimed;
+            uint256 afterIssuer2UnclaimedFees = paymentsController.getIssuer(issuer2_Id).totalNetFeesAccrued - paymentsController.getIssuer(issuer2_Id).totalClaimed;
+            uint256 afterIssuer3UnclaimedFees = paymentsController.getIssuer(issuer3_Id).totalNetFeesAccrued - paymentsController.getIssuer(issuer3_Id).totalClaimed;
+            
+            assertEq(afterIssuer1UnclaimedFees, 0, "issuer1 should have zero unclaimed fees after emergency exit");
+            assertEq(afterIssuer2UnclaimedFees, 0, "issuer2 should have zero unclaimed fees after emergency exit");
+            assertEq(afterIssuer3UnclaimedFees, 0, "issuer3 should have zero unclaimed fees after emergency exit");
+        }
+
 }
 
