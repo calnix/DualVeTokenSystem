@@ -23,6 +23,8 @@ library DataTypes {
         // USD8 | 6dp precision
         uint128 totalNetFeesAccrued;    // net of protocol and voter fees
         uint128 totalClaimed;
+
+        uint128 totalSchemas;       // track schemas created by issuer
     }
 
     struct Verifier {

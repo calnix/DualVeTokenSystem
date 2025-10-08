@@ -121,16 +121,17 @@ contract PaymentsController is EIP712, Pausable {
     function createIssuer(address assetAddress) external whenNotPaused returns (bytes32) {
         require(assetAddress != address(0), Errors.InvalidAddress());
 
-        // generate issuerId
-        bytes32 issuerId;
-        {
-            uint256 salt = block.number; 
-            issuerId = _generateId(salt, msg.sender, assetAddress);
-            // generated id must be unique: if used by issuer, verifier or schema, generate new Id
-            while (_issuers[issuerId].issuerId != bytes32(0) || _verifiers[issuerId].verifierId != bytes32(0) || _schemas[issuerId].schemaId != bytes32(0)) {
-                issuerId = _generateId(++salt, msg.sender, assetAddress); 
-            }
-        }
+        // Generate deterministic issuerId based on msg.sender
+        bytes32 issuerId = keccak256(abi.encode("ISSUER", msg.sender));
+
+        // Check if this ID already exists in ANY of the three mappings
+        require(
+            _issuers[issuerId].issuerId == bytes32(0) && 
+            _verifiers[issuerId].verifierId == bytes32(0) && 
+            _schemas[issuerId].schemaId == bytes32(0), 
+            Errors.InvalidId()
+        );
+
 
         // STORAGE: setup issuer
         DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
@@ -159,16 +160,20 @@ contract PaymentsController is EIP712, Pausable {
         // fee is an absolute value expressed in USD8 terms | free credentials are allowed
         require(fee < 1000 * Constants.USD8_PRECISION, Errors.InvalidAmount());
 
-        // generate schemaId
-        bytes32 schemaId;
-        {
-            uint256 salt = block.number; 
-            schemaId = _generateSchemaId(salt, issuerId);
-            // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
-            while (_schemas[schemaId].schemaId != bytes32(0) || _verifiers[schemaId].verifierId != bytes32(0) || _issuers[schemaId].issuerId != bytes32(0)) {
-                schemaId = _generateSchemaId(++salt, issuerId);
-            }
-        }
+        // Generate deterministic schemaId based on msg.sender and count
+        uint256 totalSchemas = _issuers[issuerId].totalSchemas;
+        bytes32 schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas));
+
+        // Check if this ID already exists in ANY of the three mappings
+        require(
+            _schemas[schemaId].schemaId == bytes32(0) && 
+            _verifiers[schemaId].verifierId == bytes32(0) && 
+            _issuers[schemaId].issuerId == bytes32(0), 
+            Errors.InvalidId()
+        );
+
+        // Increment schema count for issuer
+        ++_issuers[issuerId].totalSchemas;
 
         // STORAGE: create schema
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
@@ -270,16 +275,17 @@ contract PaymentsController is EIP712, Pausable {
         require(signerAddress != address(0), Errors.InvalidAddress());
         require(assetAddress != address(0), Errors.InvalidAddress());
 
-        // generate verifierId
-        bytes32 verifierId;
-        {
-            uint256 salt = block.number; 
-            verifierId = _generateId(salt, msg.sender, assetAddress);
-            // If generated id must be unique: if used by issuer, verifier or schema, generate new Id
-            while (_verifiers[verifierId].verifierId != bytes32(0) || _issuers[verifierId].issuerId != bytes32(0) || _schemas[verifierId].schemaId != bytes32(0)) {
-                verifierId = _generateId(++salt, msg.sender, assetAddress); 
-            }
-        }
+        // Generate deterministic verifierId based on msg.sender
+        bytes32 verifierId = keccak256(abi.encode("VERIFIER", msg.sender));
+
+        // Check if this ID already exists in ANY of the three mappings
+        require(
+            _verifiers[verifierId].verifierId == bytes32(0) && 
+            _issuers[verifierId].issuerId == bytes32(0) && 
+            _schemas[verifierId].schemaId == bytes32(0), 
+            Errors.InvalidId()
+        );
+
 
         // STORAGE: create verifier
         DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
@@ -430,7 +436,7 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.VerifierMocaUnstaked(verifierId, assetAddress, amount);
     }
 
-//-------------------------------updateAssetAddress: common to both issuer and verifier -----------------------------------------
+//-------------------------------updateAssetAddress: common to both issuer and verifier --------------------------
 
     /**
      * @notice Generic function to update the asset address for either an issuer or a verifier.
@@ -648,7 +654,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
  
-//-------------------------------internal functions---------------------------------------------
+//-------------------------------Internal functions--------------------------------------------------------------
 
     // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
     // expectation: amount is non-zero
@@ -669,18 +675,7 @@ contract PaymentsController is EIP712, Pausable {
             }
         }
     }
-
-    ///@dev Generate a issuer or verifier id. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
-    // adminAddress: msg.sender
-    function _generateId(uint256 salt, address adminAddress, address assetAddress) internal view returns (bytes32) {
-        return bytes32(keccak256(abi.encode(adminAddress, assetAddress, block.timestamp, salt)));
-    }
-
-
-    function _generateSchemaId(uint256 salt, bytes32 issuerId) internal view returns (bytes32) {
-        return bytes32(keccak256(abi.encode(issuerId, block.timestamp, salt)));
-    }
-    
+   
     // if zero address, reverts automatically
     function _usd8() internal view returns (IERC20) {
         return IERC20(addressBook.getUSD8());

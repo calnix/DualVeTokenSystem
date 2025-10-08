@@ -123,6 +123,18 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             assertEq(issuer.totalClaimed, 0, "totalClaimed should be 0");
         }
 
+        // test duplicate ID creation scenario
+        function testCannot_CreateIssuer_DuplicateId() public {
+            // Create issuer
+            vm.prank(issuer1);
+            paymentsController.createIssuer(issuer1Asset);
+            
+            // Try to create same issuer again
+            vm.expectRevert();
+            vm.prank(issuer1);
+            paymentsController.createIssuer(issuer1Asset);
+        }
+
     // ---- verifier fns ----
         function testCannot_CreateVerifier_WhenAssetAddressIsZeroAddress() public {
             vm.expectRevert(Errors.InvalidAddress.selector);
