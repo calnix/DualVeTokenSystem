@@ -690,6 +690,7 @@ contract StateT4_DeductBalanceExecuted_Test is StateT4_DeductBalanceExecuted {
 
 }
 
+
 abstract contract StateT5_VerifierChangesSignerAddress is StateT4_DeductBalanceExecuted {
 
     address public verifier1NewSigner;
@@ -874,24 +875,62 @@ contract StateT6_IssuerDecreasesFee_Test is StateT6_IssuerDecreasesFee {
 
         // Record schema state before
         DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
-        uint128 oldFee = schemaBefore.currentFee;
 
         // Expect event emissions: SchemaNextFeeSet, SchemaFeeIncreased
         vm.expectEmit(true, true, false, true, address(paymentsController));
-        emit Events.SchemaNextFeeSet(schemaId1,newFee, block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD(), oldFee);
+        emit Events.SchemaNextFeeSet(schemaId1, newFee, block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD(), schemaBefore.currentFee);
 
         vm.prank(issuer1);
         paymentsController.updateSchemaFee(issuer1_Id, schemaId1, newFee);
 
-        // Check schema state after
+        // Check schema state after: nextFee and nextFeeTimestamp updated
         DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
         assertEq(schemaAfter.currentFee, schemaBefore.currentFee, "Schema currentFee should be unchanged");
         assertEq(schemaAfter.nextFee, newFee, "Schema nextFee should be updated correctly");
         assertEq(schemaAfter.nextFeeTimestamp, block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD(), "Schema nextFeeTimestamp should be updated correctly");
+
+        console2.log("deductBalance should be operating on currentFee not nextFee");
+        // ---- deductBalance should be operating on currentFee not nextFee --------
+        console2.log("First, Test: deductBalance should revert on nextFee");
+
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier1NewSigner);
+        
+        // First, try to deduct with the new fee - should revert
+        bytes memory signatureNewFee = generateDeductBalanceSignature(verifier1NewSignerPrivateKey,issuer1_Id,verifier1_Id,schemaId1,newFee,expiry,nonce);
+        
+        vm.expectRevert(Errors.InvalidSchemaFee.selector);
+        vm.prank(verifier1Signer);
+        paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, newFee, expiry, signatureNewFee);
+        
+        console2.log("Next, Test: deductBalance should be operating on currentFee");
+        // Now verify deductBalance succeeds with the current fee
+        bytes memory signatureCurrentFee = generateDeductBalanceSignature(verifier1NewSignerPrivateKey,issuer1_Id,verifier1_Id,schemaId1,schemaBefore.currentFee,expiry,nonce);
+        
+        // Record balance before deduction
+        uint128 balanceBefore = paymentsController.getVerifier(verifier1_Id).currentBalance;
+        
+        // Expect successful deduction event
+        vm.expectEmit(true, true, true, true, address(paymentsController));
+        emit Events.BalanceDeducted(verifier1_Id, schemaId1, issuer1_Id, schemaBefore.currentFee);
+        
+        vm.prank(verifier1Signer);
+        paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, schemaBefore.currentFee, expiry, signatureCurrentFee);
+        
+        // Verify balance was deducted with current fee
+        uint128 balanceAfter = paymentsController.getVerifier(verifier1_Id).currentBalance;
+        assertEq(balanceAfter, balanceBefore - schemaBefore.currentFee, "Balance should be deducted by current fee amount");
+        
+        // Verify schema still shows nextFee is pending
+        DataTypes.Schema memory schemaFinal = paymentsController.getSchema(schemaId1);
+        assertEq(schemaFinal.currentFee, schemaBefore.currentFee, "Current fee should remain unchanged");
+        assertEq(schemaFinal.nextFee, newFee, "Next fee should still be pending");
+        assertEq(schemaFinal.nextFeeTimestamp, block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD(), "Next fee timestamp should be unchanged");
     }
 }
 
-abstract contract StateT7_IssuerIncreasedFeeIsAppliedAfterDelay is StateT6_IssuerDecreasesFee {
+//note: increase fee, but nextFeeTimestamp not yet passed
+abstract contract StateT7_IssuerIncreasedFee_FeeNotYetApplied is StateT6_IssuerDecreasesFee {
 
     uint128 public issuer1IncreasedSchemaFee = issuer1SchemaFee * 2;
 
@@ -901,13 +940,129 @@ abstract contract StateT7_IssuerIncreasedFeeIsAppliedAfterDelay is StateT6_Issue
         // Increase fee
         vm.prank(issuer1);
         paymentsController.updateSchemaFee(issuer1_Id, schemaId1, issuer1IncreasedSchemaFee);
+    }
+}
 
-        vm.warp(block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD());
+
+contract StateT7_IssuerIncreasedFee_FeeNotYetApplied_Test is StateT7_IssuerIncreasedFee_FeeNotYetApplied {
+
+    function testCan_DeductBalanceStillDeductsCurrentFee_NewFeeNotYetApplied() public {
+        // Record verifier's state before deduction
+        DataTypes.Verifier memory verifierBefore = paymentsController.getVerifier(verifier1_Id);
+        
+        // Record issuer's state before deduction
+        DataTypes.Issuer memory issuerBefore = paymentsController.getIssuer(issuer1_Id);
+        
+        // Record schema's state before deduction
+        DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
+
+        // Generate signature
+        uint128 amount = schemaBefore.currentFee;  // old fee
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier1NewSigner);
+        bytes memory signature = generateDeductBalanceSignature(verifier1NewSignerPrivateKey, issuer1_Id, verifier1_Id, schemaId1, amount, expiry, nonce);
+
+        // Expect event emission
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.BalanceDeducted(verifier1_Id, schemaId1, issuer1_Id, amount);
+        
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaVerified(schemaId1);
+        
+        // deduct
+        vm.prank(verifier1Signer);
+        paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
+        
+        // Record verifier's state before deduction
+        DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
+        
+        // Record issuer's state before deduction
+        DataTypes.Issuer memory issuerAfter = paymentsController.getIssuer(issuer1_Id);
+        
+        // Record schema's state before deduction
+        DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
+
+        // calc. fee splits
+        uint128 protocolFee = uint128((amount * paymentsController.PROTOCOL_FEE_PERCENTAGE()) / Constants.PRECISION_BASE);
+        uint128 votingFee = uint128((amount * paymentsController.VOTING_FEE_PERCENTAGE()) / Constants.PRECISION_BASE);
+        uint128 netFee = amount - protocolFee - votingFee;
+
+        // Check verifier state: balance should be deducted
+        assertEq(verifierAfter.currentBalance, verifierBefore.currentBalance - amount, "Balance should be deducted by current fee amount");
+        assertEq(verifierAfter.totalExpenditure, verifierBefore.totalExpenditure + amount, "Verifier totalExpenditure not updated correctly");
+        
+        // Check issuer state: totalVerified should be incremented
+        assertEq(issuerAfter.totalNetFeesAccrued, issuerBefore.totalNetFeesAccrued + netFee, "Issuer totalNetFeesAccrued not updated correctly");
+        assertEq(issuerAfter.totalVerified, issuerBefore.totalVerified + 1, "Issuer totalVerified not updated correctly");
+        assertEq(issuerAfter.totalClaimed, issuerBefore.totalClaimed, "Issuer totalClaimed not updated correctly");
+        
+        // Check schema state: currentFee should remain unchanged
+        assertEq(schemaAfter.totalGrossFeesAccrued, schemaBefore.totalGrossFeesAccrued + amount, "Schema totalGrossFeesAccrued not updated correctly");
+        assertEq(schemaAfter.totalVerified, schemaBefore.totalVerified + 1, "Schema totalVerified not updated correctly");
+        assertEq(schemaAfter.currentFee, amount, "Current fee should remain unchanged");
+        // nextFee checks
+        assertEq(schemaAfter.nextFee, schemaBefore.nextFee, "Next fee should be unchanged");
+        assertEq(schemaAfter.nextFeeTimestamp, schemaBefore.nextFeeTimestamp, "Next fee timestamp should be unchanged");
+    }
+
+    function testCan_IssuerIncreaseFeeAgain_OverwritesPriorSetNextFeeToLatestSetNextFee() public {
+        // Record verifier's state before deduction
+        DataTypes.Verifier memory verifierBefore = paymentsController.getVerifier(verifier1_Id);
+        
+        // Record issuer's state before deduction
+        DataTypes.Issuer memory issuerBefore = paymentsController.getIssuer(issuer1_Id);
+        
+        // Record schema's state before deduction
+        DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
+        assertTrue(schemaBefore.nextFee > 0, "Next fee should be greater than 0");
+        assertTrue(schemaBefore.nextFeeTimestamp > 0, "Next fee timestamp should be greater than 0");
+
+        /**note
+            in the first increase of fee, the nextFee = issuer1SchemaFee * 2
+            it was doubled
+            we are doing to increase the fee relative to currentFee, but be lesser than the initial nextFee
+            therefore, 2nd newFee = 200 / 110 * currentFee [< nextFee]
+         */
+        uint128 secondNewFee = schemaBefore.currentFee * 200 / 110; 
+        assertTrue(secondNewFee < schemaBefore.nextFee, "2nd newFee should be less than nextFee");
+        assertTrue(secondNewFee > schemaBefore.currentFee, "2nd newFee should be greater than currentFee");
+
+        // Expect event emission
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaNextFeeSet(schemaId1, secondNewFee, block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD() + 1, schemaBefore.currentFee);
+        
+        // advance time by 1 second
+        vm.warp(block.timestamp + 1);
+        
+        // Increase fee
+        vm.prank(issuer1);
+        paymentsController.updateSchemaFee(issuer1_Id, schemaId1, secondNewFee);
+
+        // Record schema's state after deduction
+        DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
+        assertEq(schemaAfter.nextFee, secondNewFee, "Next fee should be updated correctly");
+        assertEq(schemaAfter.nextFeeTimestamp, block.timestamp + paymentsController.FEE_INCREASE_DELAY_PERIOD(), "Next fee timestamp should be updated correctly");
+
+        // compare nextFees before and after
+        assertTrue(schemaAfter.nextFee < schemaBefore.nextFee, "Next fee should be decreased, on overwriting the prior nextFee");
+        assertTrue(schemaAfter.nextFeeTimestamp > schemaBefore.nextFeeTimestamp, "Next fee timestamp should be increased");
     }
 }
 
 // issuer increased fee: impact should applied now that delay has passed
-contract StateT7_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT7_IssuerIncreasedFeeIsAppliedAfterDelay {
+abstract contract StateT8_IssuerIncreasedFeeIsAppliedAfterDelay is StateT7_IssuerIncreasedFee_FeeNotYetApplied {
+
+    function setUp() public virtual override {
+        super.setUp();
+        
+        DataTypes.Schema memory schema1 = paymentsController.getSchema(schemaId1);
+
+        // warp to nextFeeTimestamp
+        vm.warp(schema1.nextFeeTimestamp);
+    }
+}
+
+contract StateT8_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT8_IssuerIncreasedFeeIsAppliedAfterDelay {
 
     function testCan_Verifier1DeductBalance_WithIncreasedFee() public {
         // Record verifier's state before deduction
@@ -976,7 +1131,7 @@ contract StateT7_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT7_IssuerInc
         assertEq(schema.totalVerified, schemaTotalVerifiedBefore + 1, "Schema totalVerified not updated correctly");
     }
 
-    // state transition: createa schema w/ 0 fees
+    // state transition: create schema w/ 0 fees
     function testCan_Issuer3CreatesSchemaWith0Fees() public {
         uint128 fee = 0;
 
@@ -1003,7 +1158,8 @@ contract StateT7_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT7_IssuerInc
     }
 }
 
-abstract contract StateT8_Issuer3CreatesSchemaWith0Fees is StateT7_IssuerIncreasedFeeIsAppliedAfterDelay {
+
+abstract contract StateT9_Issuer3CreatesSchemaWith0Fees is StateT8_IssuerIncreasedFeeIsAppliedAfterDelay {
 
     function setUp() public virtual override {
         super.setUp();
@@ -1015,7 +1171,7 @@ abstract contract StateT8_Issuer3CreatesSchemaWith0Fees is StateT7_IssuerIncreas
 }
 
 // issuer created schema with 0 fees: impact should be instant
-contract StateT8_Issuer3CreatesSchemaWith0Fees_Test is StateT8_Issuer3CreatesSchemaWith0Fees {
+contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSchemaWith0Fees {
 
     function testCan_Verifier2DeductBalance_With0FeeSchema() public {
         // Record verifier's state before deduction
@@ -1136,7 +1292,8 @@ contract StateT8_Issuer3CreatesSchemaWith0Fees_Test is StateT8_Issuer3CreatesSch
     }
 }
 
-abstract contract StateT9_Verifier1StakeMOCA is StateT8_Issuer3CreatesSchemaWith0Fees {
+
+abstract contract StateT10_Verifier1StakeMOCA is StateT9_Issuer3CreatesSchemaWith0Fees {
     bytes32 public poolId1 = bytes32("123");
         
     function setUp() public virtual override {
@@ -1156,7 +1313,7 @@ abstract contract StateT9_Verifier1StakeMOCA is StateT8_Issuer3CreatesSchemaWith
     }
 }
 
-contract StateT9_Verifier1StakeMOCA_Test is StateT9_Verifier1StakeMOCA {
+contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
 
     //------------------------------ tests for unstakeMoca ------------------------------
 
@@ -1332,7 +1489,8 @@ contract StateT9_Verifier1StakeMOCA_Test is StateT9_Verifier1StakeMOCA {
     }
 }
 
-abstract contract StateT10_AllVerifiersStakedMOCA is StateT9_Verifier1StakeMOCA {
+
+abstract contract StateT11_AllVerifiersStakedMOCA is StateT10_Verifier1StakeMOCA {
     bytes32 public poolId2 = bytes32("234");
     bytes32 public poolId3 = bytes32("345");
 
@@ -1364,7 +1522,7 @@ abstract contract StateT10_AllVerifiersStakedMOCA is StateT9_Verifier1StakeMOCA 
 
 // Check subsidies being booked for other tiers: verifier2 and verifier3
 // Check that no subsidies are booked for schema3 - zero-fee schema. even if schema is associated to a pool.
-contract StateT10_AllVerifiersStakedMOCA_Test is StateT10_AllVerifiersStakedMOCA {
+contract StateT11_AllVerifiersStakedMOCA_Test is StateT11_AllVerifiersStakedMOCA {
 
     //note: verifier 2: deposited 100 USD8 for verification payments. But did stake 20 MOCA for 20% subsidy tier.
     function testCan_Verifier2DeductBalance_ShouldBookSubsidies() public {
@@ -1513,7 +1671,8 @@ contract StateT10_AllVerifiersStakedMOCA_Test is StateT10_AllVerifiersStakedMOCA
     }
 }
 
-abstract contract StateT11_IssuerClaimsAllFees is StateT10_AllVerifiersStakedMOCA {   
+
+abstract contract StateT12_IssuerClaimsAllFees is StateT11_AllVerifiersStakedMOCA {   
     function setUp() public virtual override {
         super.setUp();
         
@@ -1522,7 +1681,7 @@ abstract contract StateT11_IssuerClaimsAllFees is StateT10_AllVerifiersStakedMOC
     }
 }
 
-contract StateT11_IssuerClaimsAllFees_Test is StateT11_IssuerClaimsAllFees {
+contract StateT12_IssuerClaimsAllFees_Test is StateT12_IssuerClaimsAllFees {
     
     //------------------------------ negative tests for claimFees ------------------------------
 
@@ -1560,7 +1719,8 @@ contract StateT11_IssuerClaimsAllFees_Test is StateT11_IssuerClaimsAllFees {
     }
 }
 
-abstract contract StateT11_IssuerChangesAssetAddress is StateT11_IssuerClaimsAllFees {
+
+abstract contract StateT13_IssuerChangesAssetAddress is StateT12_IssuerClaimsAllFees {
     
     address public issuer1_newAssetAddress = address(0x1234567890123456789012345678901234567890);
 
@@ -1582,7 +1742,7 @@ abstract contract StateT11_IssuerChangesAssetAddress is StateT11_IssuerClaimsAll
     }
 }
 
-contract StateT11_IssuerChangesAssetAddress_Test is StateT11_IssuerChangesAssetAddress {
+contract StateT13_IssuerChangesAssetAddress_Test is StateT13_IssuerChangesAssetAddress {
 
     function testCan_Issuer1ClaimFees_WithNewAssetAddress() public {
         // Record issuer's state before claim
@@ -1690,7 +1850,8 @@ contract StateT11_IssuerChangesAssetAddress_Test is StateT11_IssuerChangesAssetA
         }
 }
 
-abstract contract StateT12_VerifierChangesAssetAddress is StateT11_IssuerChangesAssetAddress {
+
+abstract contract StateT14_VerifierChangesAssetAddress is StateT13_IssuerChangesAssetAddress {
 
     address public verifier1_newAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAssetAddress", block.timestamp, block.prevrandao)))));
 
@@ -1702,7 +1863,7 @@ abstract contract StateT12_VerifierChangesAssetAddress is StateT11_IssuerChanges
     }
 }
 
-contract StateT12_VerifierChangesAssetAddress_Test is StateT12_VerifierChangesAssetAddress {
+contract StateT14_VerifierChangesAssetAddress_Test is StateT14_VerifierChangesAssetAddress {
     
     function testCan_VerifierWithdrawUSD8_WithNewAssetAddress() public {
         // Record verifier's state before withdraw
@@ -1822,8 +1983,9 @@ contract StateT12_VerifierChangesAssetAddress_Test is StateT12_VerifierChangesAs
         }
 }
 
+
 // protocol fee is increased
-abstract contract StateT14_PaymentsControllerAdminIncreasesProtocolFee is StateT12_VerifierChangesAssetAddress {
+abstract contract StateT15_PaymentsControllerAdminIncreasesProtocolFee is StateT14_VerifierChangesAssetAddress {
 
     uint256 public newProtocolFee;
 
@@ -1837,12 +1999,11 @@ abstract contract StateT14_PaymentsControllerAdminIncreasesProtocolFee is StateT
     }
 }   
 
-contract StateT14_PaymentsControllerAdminIncreasesProtocolFee_Test is StateT14_PaymentsControllerAdminIncreasesProtocolFee {
+contract StateT15_PaymentsControllerAdminIncreasesProtocolFee_Test is StateT15_PaymentsControllerAdminIncreasesProtocolFee {
     
     function testCan_PaymentsControllerAdmin_UpdateProtocolFee() public {
         uint256 updatedProtocolFee = paymentsController.PROTOCOL_FEE_PERCENTAGE();
-        assertEq(updatedProtocolFee, newProtocolFee, "Protocol fee should be updated to new value");
-    }
+        assertEq(updatedProtocolFee, newProtocolFee, "Protocol fee should be updated to new value");    }
 
     // check that deductBalance books the correct amount of protocol fee when protocol fee is increased     
     function testCan_DeductBalance_WhenProtocolFeeIsIncreased() public {
@@ -1989,7 +2150,8 @@ contract StateT14_PaymentsControllerAdminIncreasesProtocolFee_Test is StateT14_P
         }
 }
 
-abstract contract StateT15_PaymentsControllerAdminIncreasesVotingFee is StateT14_PaymentsControllerAdminIncreasesProtocolFee {
+
+abstract contract StateT16_PaymentsControllerAdminIncreasesVotingFee is StateT15_PaymentsControllerAdminIncreasesProtocolFee {
 
     uint256 public newVotingFee;
 
@@ -2003,7 +2165,7 @@ abstract contract StateT15_PaymentsControllerAdminIncreasesVotingFee is StateT14
     }
 }
 
-contract StateT15_PaymentsControllerAdminIncreasesVotingFee_Test is StateT15_PaymentsControllerAdminIncreasesVotingFee {
+contract StateT16_PaymentsControllerAdminIncreasesVotingFee_Test is StateT16_PaymentsControllerAdminIncreasesVotingFee {
     
     function testCan_PaymentsControllerAdmin_UpdateVotingFee() public {
         uint256 updatedVotingFee = paymentsController.VOTING_FEE_PERCENTAGE();
@@ -2156,8 +2318,9 @@ contract StateT15_PaymentsControllerAdminIncreasesVotingFee_Test is StateT15_Pay
         }
 }
 
+
 // change for tier1: 10 moca staked -> 11% subsidy
-abstract contract StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage is StateT15_PaymentsControllerAdminIncreasesVotingFee {
+abstract contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage is StateT16_PaymentsControllerAdminIncreasesVotingFee {
 
     uint256 public newSubsidyPct;
 
@@ -2172,7 +2335,7 @@ abstract contract StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercen
     }
 }
 
-contract StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test is StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage {
+contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test is StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage {
 
     function testCan_PaymentsControllerAdmin_UpdateVerifierSubsidyPercentages() public {
         assertEq(paymentsController.getVerifierSubsidyPercentage(10 ether), newSubsidyPct, "Verifier subsidy percentage not updated correctly");    
@@ -2354,7 +2517,8 @@ contract StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test
         }
 }
 
-abstract contract StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod is StateT16_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage {
+
+abstract contract StateT18_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod is StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage {
 
     uint256 public newDelayPeriod;
 
@@ -2368,7 +2532,7 @@ abstract contract StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPerio
     }
 }
 
-contract StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod_Test is StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod {
+contract StateT18_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod_Test is StateT18_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod {
 
     function testCan_PaymentsControllerAdmin_UpdateFeeIncreaseDelayPeriod() public {
         assertEq(paymentsController.FEE_INCREASE_DELAY_PERIOD(), newDelayPeriod, "Fee increase delay period not updated correctly");
@@ -2421,7 +2585,8 @@ contract StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod_Test is
 
 }
 
-abstract contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay is StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod {
+
+abstract contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay is StateT18_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod {
 
     uint128 public issuer1IncreasedSchemaFeeV2;
     uint128 public newNextFeeTimestamp;
@@ -2441,7 +2606,7 @@ abstract contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDe
     }
 }
 
-contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test is StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay {
+contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test is StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay {
 
     function testCan_Schema1_StorageState_AfterNewDelayPeriodAndFeeIncrease_BeforeDeductBalance() public {
         //record schema state - the new fee should not be active yet, as deductBalance has not been called
@@ -2551,7 +2716,7 @@ contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
 
 
 // set treasury address, test admin withdraw functions
-abstract contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees is StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay {
+abstract contract StateT20_PaymentsControllerAdminWithdrawsProtocolFees is StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay {
 
     function setUp() public virtual override {
         super.setUp();
@@ -2563,7 +2728,7 @@ abstract contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees is State
     }
 }
 
-contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees_Test is StateT19_PaymentsControllerAdminWithdrawsProtocolFees {
+contract StateT20_PaymentsControllerAdminWithdrawsProtocolFees_Test is StateT20_PaymentsControllerAdminWithdrawsProtocolFees {
     
     function testCan_PaymentsControllerAdmin_WithdrawProtocolFees() public {
         // before
@@ -2689,7 +2854,8 @@ contract StateT19_PaymentsControllerAdminWithdrawsProtocolFees_Test is StateT19_
         }
 }
 
-abstract contract StateT20_PaymentsControllerAdminFreezesContract is StateT19_PaymentsControllerAdminWithdrawsProtocolFees {
+
+abstract contract StateT21_PaymentsControllerAdminFreezesContract is StateT20_PaymentsControllerAdminWithdrawsProtocolFees {
 
     function setUp() public virtual override {
         super.setUp();
@@ -2699,7 +2865,7 @@ abstract contract StateT20_PaymentsControllerAdminFreezesContract is StateT19_Pa
     }
 }
 
-contract StateT20_PaymentsControllerAdminFreezesContract_Test is StateT20_PaymentsControllerAdminFreezesContract {
+contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_PaymentsControllerAdminFreezesContract {
 
     // ------ Contract paused: no fns can be called except: unpause or freeze -------
         
@@ -2937,7 +3103,8 @@ contract StateT20_PaymentsControllerAdminFreezesContract_Test is StateT20_Paymen
         }
 }
 
-abstract contract StateT21_PaymentsControllerAdminFreezesContract is StateT20_PaymentsControllerAdminFreezesContract {
+
+abstract contract StateT22_PaymentsControllerAdminFreezesContract is StateT21_PaymentsControllerAdminFreezesContract {
 
     function setUp() public virtual override {
         super.setUp();
@@ -2947,7 +3114,7 @@ abstract contract StateT21_PaymentsControllerAdminFreezesContract is StateT20_Pa
     }
 }
 
-contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_PaymentsControllerAdminFreezesContract {
+contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_PaymentsControllerAdminFreezesContract {
     
     // ------ Contract frozen: no fns can be called except: emergencyExits -------
         
@@ -3316,4 +3483,5 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             paymentsController.unpause();
         }
 }
+
 
