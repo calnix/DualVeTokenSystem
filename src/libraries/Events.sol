@@ -126,7 +126,6 @@ library Events {
 
     // updateAssetAddress + updateAdminAddress
     event AssetAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
-    event AdminAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAdminAddress);
 
     // deductBalance()
     event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
