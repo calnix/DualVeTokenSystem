@@ -170,6 +170,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             assertEq(verifier.totalExpenditure, 0, "totalExpenditure should be 0");
         }
 
+
 }
 
 abstract contract StateT1_CreateIssuerVerifiers is StateT1_SubsidyTiersCreated {

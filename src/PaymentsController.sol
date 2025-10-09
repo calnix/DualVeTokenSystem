@@ -112,6 +112,7 @@ contract PaymentsController is EIP712, Pausable {
 
 //-------------------------------issuer functions-----------------------------------------
 
+
     /**
      * @notice Generates and registers a new issuer with a unique issuerId.
      * @dev The issuerId is derived from the sender and asset address, ensuring uniqueness across issuers, verifiers, and schemas.
@@ -471,39 +472,6 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.AssetAddressUpdated(id, newAssetAddress);
         return newAssetAddress;
     }
-
-    /**
-     * @notice Generic function to update the admin address for either an issuer or a verifier.
-     * @dev Caller must be the current admin of the provided ID. IDs are unique across types, preventing cross-updates.
-     * @param id The unique identifier (issuerId or verifierId).
-     * @param newAdminAddress The new admin address to set.
-     * @return newAdminAddress The updated admin address.
-     */
-    function updateAdminAddress(bytes32 id, address newAdminAddress) external whenNotPaused returns (address) {
-        require(newAdminAddress != address(0), Errors.InvalidAddress());
-
-        // cache pointer
-        DataTypes.Issuer storage issuerPtr = _issuers[id];
-        DataTypes.Verifier storage verifierPtr = _verifiers[id];
-
-        if (issuerPtr.issuerId != bytes32(0)) {
-            // Issuer admin update
-            require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
-            _issuers[id].adminAddress = newAdminAddress;
-            
-        } else if (verifierPtr.verifierId != bytes32(0)) {
-            // Verifier admin update
-            require(verifierPtr.adminAddress == msg.sender, Errors.InvalidCaller());
-            verifierPtr.adminAddress = newAdminAddress;
-            
-        } else {
-            revert Errors.InvalidId();
-        }
-
-        emit Events.AdminAddressUpdated(id, newAdminAddress);
-        return newAdminAddress;
-    }
-
 
 //-------------------------------UniversalVerificationContract functions-----------------------------------------
 
