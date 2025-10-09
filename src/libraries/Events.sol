@@ -124,7 +124,7 @@ library Events {
     event VerifierMocaUnstaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
     event VerifierSignerAddressUpdated(bytes32 indexed verifierId, address signerAddress);
 
-    // updateAssetAddress + updateAdminAddress
+    // updateAssetAddress
     event AssetAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
 
     // deductBalance()
