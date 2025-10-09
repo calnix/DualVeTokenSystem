@@ -186,15 +186,7 @@ abstract contract TestingHarness is Test {
 
 // ------------------------------Helper functions-----------------------------------------
 
-    function PaymentsController_generateId(uint256 salt, address adminAddress, address assetAddress) public view returns (bytes32) {
-        return bytes32(keccak256(abi.encode(adminAddress, assetAddress, block.timestamp, salt)));
-    }
 
-    function PaymentsController_generateSchemaId(uint256 salt, bytes32 issuerId) public view returns (bytes32) {
-        return bytes32(keccak256(abi.encode(issuerId, block.timestamp, salt)));
-    }
-
-    
 
 // ------------------------------Signature Helper Functions-----------------------------------------
 

@@ -103,7 +103,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
         }
 
         function testCan_CreateIssuer() public {
-            bytes32 expectedIssuerId = PaymentsController_generateId(block.number, issuer1, issuer1Asset);
+            bytes32 expectedIssuerId = keccak256(abi.encode("ISSUER", issuer1));
 
             // Expect the IssuerCreated event to be emitted with correct parameters
             vm.expectEmit(true, false, false, false, address(paymentsController));
@@ -130,7 +130,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             paymentsController.createIssuer(issuer1Asset);
             
             // Try to create same issuer again
-            vm.expectRevert();
+            vm.expectRevert(Errors.InvalidId.selector);
             vm.prank(issuer1);
             paymentsController.createIssuer(issuer1Asset);
         }
@@ -148,8 +148,20 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             paymentsController.createVerifier(address(0), verifier1Asset);
         }
 
+        // test duplicate ID creation scenario
+        function testCannot_CreateVerifier_DuplicateId() public {
+            // Create verifier
+            vm.prank(verifier1);
+            paymentsController.createVerifier(verifier1Signer, verifier1Asset);
+            
+            // Try to create same verifier again
+            vm.expectRevert(Errors.InvalidId.selector);
+            vm.prank(verifier1);
+            paymentsController.createVerifier(verifier1Signer, verifier1Asset);
+        }
+
         function testCan_CreateVerifier() public {
-            bytes32 expectedVerifierId = PaymentsController_generateId(block.number, verifier1, verifier1Asset);
+            bytes32 expectedVerifierId = keccak256(abi.encode("VERIFIER", verifier1));
 
             // Expect the VerifierCreated event to be emitted with correct parameters
             vm.expectEmit(true, false, false, false, address(paymentsController));
@@ -169,20 +181,18 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             assertEq(verifier.currentBalance, 0, "currentBalance should be 0");
             assertEq(verifier.totalExpenditure, 0, "totalExpenditure should be 0");
         }
-
-
 }
 
 abstract contract StateT1_CreateIssuerVerifiers is StateT1_SubsidyTiersCreated {
 
     // issuers
-    bytes32 public issuer1_Id = PaymentsController_generateId(block.number, issuer1, issuer1Asset);
-    bytes32 public issuer2_Id = PaymentsController_generateId(block.number, issuer2, issuer2Asset);
-    bytes32 public issuer3_Id = PaymentsController_generateId(block.number, issuer3, issuer3Asset);
+    bytes32 public issuer1_Id = keccak256(abi.encode("ISSUER", issuer1));
+    bytes32 public issuer2_Id = keccak256(abi.encode("ISSUER", issuer2));
+    bytes32 public issuer3_Id = keccak256(abi.encode("ISSUER", issuer3));
     // verifiers
-    bytes32 public verifier1_Id = PaymentsController_generateId(block.number, verifier1, verifier1Asset);
-    bytes32 public verifier2_Id = PaymentsController_generateId(block.number, verifier2, verifier2Asset);
-    bytes32 public verifier3_Id = PaymentsController_generateId(block.number, verifier3, verifier3Asset);
+    bytes32 public verifier1_Id = keccak256(abi.encode("VERIFIER", verifier1));
+    bytes32 public verifier2_Id = keccak256(abi.encode("VERIFIER", verifier2));
+    bytes32 public verifier3_Id = keccak256(abi.encode("VERIFIER", verifier3));
 
     function setUp() public virtual override {
         super.setUp();
@@ -211,6 +221,7 @@ abstract contract StateT1_CreateIssuerVerifiers is StateT1_SubsidyTiersCreated {
 
 // test schema creation
 contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
+    using stdStorage for StdStorage;
 
     function testCannot_CreateSchema_WhenCallerIsNotIssuerAdmin() public {
         uint128 fee = 1000;
@@ -230,12 +241,44 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
         paymentsController.createSchema(issuer1_Id, tooLargeFee);
     }
 
+    // test storage collision scenario for schemaId (InvalidId)
+    function testCannot_CreateSchema_InvalidIdCollision() public {
+        uint128 fee = 1000;
+
+        // Get the current totalSchemas for issuer1: should be 0
+        uint256 totalSchemas = paymentsController.getIssuer(issuer1_Id).totalSchemas;
+        assertEq(totalSchemas, 0, "totalSchemas should be 0");
+        bytes32 expectedSchemaId = keccak256(abi.encode("SCHEMA", issuer1_Id, totalSchemas));
+
+        // Create the first schema normally
+        vm.prank(issuer1);
+        paymentsController.createSchema(issuer1_Id, fee);
+
+        // totalSchemas incremented to 1
+        assertEq(paymentsController.getIssuer(issuer1_Id).totalSchemas, 1, "totalSchemas should be 1");
+        
+        // set totalSchemas to 0
+        stdstore    
+            .enable_packed_slots()
+            .target(address(paymentsController))
+            .sig("getIssuer(bytes32)")
+            .with_key(issuer1_Id)
+            .depth(6)
+            .checked_write(uint256(0));
+
+        // Now, the next createSchema will try to create the same schemaId as before
+        vm.expectRevert(Errors.InvalidId.selector);
+        vm.prank(issuer1);
+        paymentsController.createSchema(issuer1_Id, fee);
+    }
 
     function testCan_CreateSchema() public {
         uint128 fee = 1000;
         
         // generate expected schemaId
-        bytes32 expectedSchemaId1 = PaymentsController_generateSchemaId(block.number, issuer1_Id);   
+        uint256 totalSchemas = paymentsController.getIssuer(issuer1_Id).totalSchemas;
+        assertTrue(totalSchemas == 0, "totalSchemas should be 0");
+        bytes32 expectedSchemaId1 = keccak256(abi.encode("SCHEMA", issuer1_Id, totalSchemas)); 
 
         // Expect the SchemaCreated event to be emitted with correct parameters
         vm.expectEmit(true, true, false, true, address(paymentsController));
@@ -262,9 +305,9 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
 abstract contract StateT2_CreateSchemas is StateT1_CreateIssuerVerifiers {
 
     // schemas
-    bytes32 public schemaId1 = PaymentsController_generateSchemaId(block.number, issuer1_Id);
-    bytes32 public schemaId2 = PaymentsController_generateSchemaId(block.number, issuer2_Id);
-    bytes32 public schemaId3 = PaymentsController_generateSchemaId(block.number, issuer3_Id);
+    bytes32 public schemaId1 = keccak256(abi.encode("SCHEMA", issuer1_Id, 0));
+    bytes32 public schemaId2 = keccak256(abi.encode("SCHEMA", issuer2_Id, 0));
+    bytes32 public schemaId3 = keccak256(abi.encode("SCHEMA", issuer3_Id, 0));
 
 
     uint128 public issuer1SchemaFee = 10 * 1e6;  // 10 USD8 (6 decimals) instead of 1 ether
@@ -925,7 +968,9 @@ contract StateT7_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT7_IssuerInc
         uint128 fee = 0;
 
         // expected schemaId
-        bytes32 expectedSchemaId3 = PaymentsController_generateSchemaId(block.number, issuer3_Id);
+        uint256 totalSchemas = paymentsController.getIssuer(issuer3_Id).totalSchemas;
+        assertTrue(totalSchemas == 1, "issuer3 totalSchemas should be 1");
+        bytes32 expectedSchemaId3 = keccak256(abi.encode("SCHEMA", issuer3_Id, totalSchemas));
 
         // Expect the SchemaCreated event to be emitted with correct parameters
         vm.expectEmit(true, true, true, true, address(paymentsController));
@@ -1743,260 +1788,7 @@ contract StateT12_VerifierChangesAssetAddress_Test is StateT12_VerifierChangesAs
             paymentsController.withdraw(verifier1_Id, 1 ether);
         }
 
-    // --------------- state transition: updateAdminAddress ------------------------
-
-        function testCannot_UpdateAssetAddress_WhenInvalidIdIsGiven() public {
-            vm.expectRevert(Errors.InvalidId.selector);
-            vm.prank(issuer1);
-            paymentsController.updateAssetAddress(bytes32(0), address(1));
-        }
-
-        function testCan_Verifier1UpdateAdminAddress() public {
-            // Record verifier's state before update
-            DataTypes.Verifier memory verifierBefore = paymentsController.getVerifier(verifier1_Id);
-            assertEq(verifierBefore.adminAddress, verifier1, "Verifier admin address should be the same");
-            
-            // new admin
-            address verifier1_newAdminAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAdminAddress", block.timestamp, block.prevrandao)))));
-
-            vm.expectEmit(true, true, false, true, address(paymentsController));
-            emit Events.AdminAddressUpdated(verifier1_Id, verifier1_newAdminAddress);
-
-            vm.prank(verifier1);
-            paymentsController.updateAdminAddress(verifier1_Id, verifier1_newAdminAddress);
-
-            // Check storage state: verifier
-            DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
-            assertEq(verifierAfter.adminAddress, verifier1_newAdminAddress, "Verifier admin address should be updated");
-            assertNotEq(verifierAfter.adminAddress, verifier1, "Verifier admin address should be updated");
-        }
-
-        function testCan_Issuer1UpdateAdminAddress() public {
-            // Record issuer's state before update
-            DataTypes.Issuer memory issuerBefore = paymentsController.getIssuer(issuer1_Id);
-            assertEq(issuerBefore.adminAddress, issuer1, "Issuer admin address should be the same");
-
-            // new admin
-            address issuer1_newAdminAddress = address(uint160(uint256(keccak256(abi.encodePacked("issuer1_newAdminAddress", block.timestamp, block.prevrandao)))));
-
-            vm.expectEmit(true, true, false, true, address(paymentsController));
-            emit Events.AdminAddressUpdated(issuer1_Id, issuer1_newAdminAddress);
-
-            vm.prank(issuer1);
-            paymentsController.updateAdminAddress(issuer1_Id, issuer1_newAdminAddress);
-
-            // Check storage state: issuer
-            DataTypes.Issuer memory issuerAfter = paymentsController.getIssuer(issuer1_Id);
-            assertEq(issuerAfter.adminAddress, issuer1_newAdminAddress, "Issuer admin address should be updated");
-            assertNotEq(issuerAfter.adminAddress, issuer1, "Issuer admin address should be updated");
-        }
-
-}
-
-
-abstract contract StateT13_IssuersAndVerifiersChangesAdminAddress is StateT12_VerifierChangesAssetAddress {
-
-    address public verifier1_newAdminAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAdminAddress", block.timestamp, block.prevrandao)))));
-    address public issuer1_newAdminAddress = address(uint160(uint256(keccak256(abi.encodePacked("issuer1_newAdminAddress", block.timestamp, block.prevrandao)))));
-
-    function setUp() public virtual override {
-        super.setUp();
-        
-        vm.prank(verifier1);
-        paymentsController.updateAdminAddress(verifier1_Id, verifier1_newAdminAddress);
-
-        vm.prank(issuer1);
-        paymentsController.updateAdminAddress(issuer1_Id, issuer1_newAdminAddress);
-    }
-}
-
-contract StateT13_IssuersAndVerifiersChangesAdminAddress_Test is StateT13_IssuersAndVerifiersChangesAdminAddress {
-    
-    // ----- issuer's newAdmin address can call: createSchema, updateSchemaFee, updateAssetAddress ----- 
-
-        function testCan_IssuerNewAdminAddress_CreateSchema() public {
-            uint128 fee = 2000;
-            
-            // generate expected schemaId with new salt
-            bytes32 expectedSchemaId = PaymentsController_generateSchemaId(block.number, issuer1_Id);
-            
-            // Expect the SchemaCreated event to be emitted
-            vm.expectEmit(true, true, false, true, address(paymentsController));
-            emit Events.SchemaCreated(expectedSchemaId, issuer1_Id, fee);
-            
-            // Call createSchema from new admin address
-            vm.prank(issuer1_newAdminAddress);
-            bytes32 schemaId = paymentsController.createSchema(issuer1_Id, fee);
-            
-            // Assert
-            assertEq(schemaId, expectedSchemaId, "schemaId not set correctly");
-            
-            // Verify schema storage state
-            DataTypes.Schema memory schema = paymentsController.getSchema(expectedSchemaId);
-            assertEq(schema.schemaId, expectedSchemaId, "Schema ID not stored correctly");
-            assertEq(schema.issuerId, issuer1_Id, "Issuer ID not stored correctly");
-            assertEq(schema.currentFee, fee, "Current fee not stored correctly");
-            assertEq(schema.nextFee, 0, "Next fee should be 0 for new schema");
-            assertEq(schema.nextFeeTimestamp, 0, "Next fee timestamp should be 0 for new schema");
-        }
-        
-        function testCan_IssuerNewAdminAddress_UpdateSchemaFee_Decrease() public {
-            uint128 newFee = issuer1IncreasedSchemaFee / 2; // Decrease fee
-            
-            // Record schema state before
-            DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
-            uint128 oldFee = schemaBefore.currentFee;
-            
-            // Expect event emission for fee reduction
-            vm.expectEmit(true, true, false, true, address(paymentsController));
-            emit Events.SchemaFeeReduced(schemaId1, newFee, oldFee);
-            
-            // Call updateSchemaFee from new admin address
-            vm.prank(issuer1_newAdminAddress);
-            paymentsController.updateSchemaFee(issuer1_Id, schemaId1, newFee);
-            
-            // Check schema state after
-            DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
-            assertEq(schemaAfter.currentFee, newFee, "Schema currentFee not updated correctly");
-            assertEq(schemaAfter.nextFee, 0, "Schema nextFee should be 0 after immediate fee reduction");
-            assertEq(schemaAfter.nextFeeTimestamp, 0, "Schema nextFeeTimestamp should be 0 after immediate fee reduction");
-        }
-        
-        function testCan_IssuerNewAdminAddress_UpdateSchemaFee_Increase() public {
-            uint128 newFee = issuer1IncreasedSchemaFee * 2; // Increase fee
-            
-            // Record schema state before
-            DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
-            uint128 oldFee = schemaBefore.currentFee;
-            
-            // Call updateSchemaFee from new admin address
-            vm.prank(issuer1_newAdminAddress);
-            uint256 returnedFee = paymentsController.updateSchemaFee(issuer1_Id, schemaId1, newFee);
-            
-            // Assert return value
-            assertEq(returnedFee, newFee, "Returned fee should match new fee");
-            
-            // Check schema state after
-            DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
-            assertEq(schemaAfter.currentFee, oldFee, "Schema currentFee should remain unchanged");
-            assertEq(schemaAfter.nextFee, newFee, "Schema nextFee not set correctly");
-            assertGt(schemaAfter.nextFeeTimestamp, block.timestamp, "Next fee timestamp should be in the future");
-            assertGt(schemaAfter.nextFeeTimestamp, 0, "Next fee timestamp should be set");
-        }
-        
-        function testCan_IssuerNewAdminAddress_UpdateAssetAddress() public {
-            // new asset address
-            address issuer1_anotherNewAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("issuer1_anotherNewAssetAddress", block.timestamp)))));
-            
-            // Record issuer's state before update
-            DataTypes.Issuer memory issuer1Before = paymentsController.getIssuer(issuer1_Id);
-            
-            // Expect event emission
-            vm.expectEmit(true, true, false, true, address(paymentsController));
-            emit Events.AssetAddressUpdated(issuer1_Id, issuer1_anotherNewAssetAddress);
-            
-            // Call updateAssetAddress from new admin address
-            vm.prank(issuer1_newAdminAddress);
-            address returnedAddress = paymentsController.updateAssetAddress(issuer1_Id, issuer1_anotherNewAssetAddress);
-            
-            // Assert return value
-            assertEq(returnedAddress, issuer1_anotherNewAssetAddress, "Returned asset address incorrect");
-            
-            // Check storage state
-            DataTypes.Issuer memory issuer1After = paymentsController.getIssuer(issuer1_Id);
-            assertEq(issuer1After.assetAddress, issuer1_anotherNewAssetAddress, "Issuer asset address should be updated");
-            assertEq(issuer1After.adminAddress, issuer1_newAdminAddress, "Admin address should remain the new admin");
-        }
-
-    // ----- old issuer admin cannot call these functions ----- 
-
-        function testCannot_IssuerOldAdminAddress_CreateSchema() public {
-            uint128 fee = 2000;
-            
-            vm.expectRevert(Errors.InvalidCaller.selector);
-            vm.prank(issuer1); // old admin address
-            paymentsController.createSchema(issuer1_Id, fee);
-        }
-        
-        function testCannot_IssuerOldAdminAddress_UpdateSchemaFee() public {
-            uint128 newFee = issuer1IncreasedSchemaFee / 2;
-            
-            vm.expectRevert(Errors.InvalidCaller.selector);
-            vm.prank(issuer1); // old admin address
-            paymentsController.updateSchemaFee(issuer1_Id, schemaId1, newFee);
-        }
-        
-        function testCannot_IssuerOldAdminAddress_UpdateAssetAddress() public {
-            address newAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("newAssetAddress", block.timestamp)))));
-            
-            vm.expectRevert(Errors.InvalidCaller.selector);
-            vm.prank(issuer1); // old admin address
-            paymentsController.updateAssetAddress(issuer1_Id, newAssetAddress);
-        }
-
-    // ----- verifier's newAdmin address can call: updateSignerAddress, updateAssetAddress ----- 
-
-        function testCan_VerifierNewAdminAddress_UpdateSignerAddress() public {
-            (address verifier1AnotherNewSigner, ) = makeAddrAndKey("verifier1AnotherNewSigner");
-            
-            // Expect event emission
-            vm.expectEmit(true, true, false, true, address(paymentsController));
-            emit Events.VerifierSignerAddressUpdated(verifier1_Id, verifier1AnotherNewSigner);
-            
-            // Call updateSignerAddress from new admin address
-            vm.prank(verifier1_newAdminAddress);
-            paymentsController.updateSignerAddress(verifier1_Id, verifier1AnotherNewSigner);
-            
-            // Check storage state
-            DataTypes.Verifier memory verifier1After = paymentsController.getVerifier(verifier1_Id);
-            assertEq(verifier1After.signerAddress, verifier1AnotherNewSigner, "Verifier signer address should be updated");
-            assertEq(verifier1After.adminAddress, verifier1_newAdminAddress, "Admin address should remain the new admin");
-        }
-        
-        function testCan_VerifierNewAdminAddress_UpdateAssetAddress() public {
-            // new asset address
-            address verifier1_anotherNewAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_anotherNewAssetAddress", block.timestamp)))));
-            
-            // Record verifier's state before update
-            DataTypes.Verifier memory verifier1Before = paymentsController.getVerifier(verifier1_Id);
-            
-            // Expect event emission
-            vm.expectEmit(true, true, false, true, address(paymentsController));
-            emit Events.AssetAddressUpdated(verifier1_Id, verifier1_anotherNewAssetAddress);
-            
-            // Call updateAssetAddress from new admin address
-            vm.prank(verifier1_newAdminAddress);
-            address returnedAddress = paymentsController.updateAssetAddress(verifier1_Id, verifier1_anotherNewAssetAddress);
-            
-            // Assert return value
-            assertEq(returnedAddress, verifier1_anotherNewAssetAddress, "Returned asset address incorrect");
-            
-            // Check storage state
-            DataTypes.Verifier memory verifier1After = paymentsController.getVerifier(verifier1_Id);
-            assertEq(verifier1After.assetAddress, verifier1_anotherNewAssetAddress, "Verifier asset address should be updated");
-            assertEq(verifier1After.adminAddress, verifier1_newAdminAddress, "Admin address should remain the new admin");
-        }
-
-    // ----- old verifier admin cannot call these functions ----- 
-
-        function testCannot_VerifierOldAdminAddress_UpdateSignerAddress() public {
-            (address newSigner, ) = makeAddrAndKey("newSigner");
-            
-            vm.expectRevert(Errors.InvalidCaller.selector);
-            vm.prank(verifier1); // old admin address
-            paymentsController.updateSignerAddress(verifier1_Id, newSigner);
-        }
-        
-        function testCannot_VerifierOldAdminAddress_UpdateAssetAddress() public {
-            address newAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("newAssetAddress", block.timestamp)))));
-            
-            vm.expectRevert(Errors.InvalidCaller.selector);
-            vm.prank(verifier1); // old admin address
-            paymentsController.updateAssetAddress(verifier1_Id, newAssetAddress);
-        }
-
-    // state transition: paymentsControllerAdmin calls updateProtocolFee
-    
+    // --------------- state transition: updateProtocolFee() ------------------------   
         function testCan_PaymentsControllerAdmin_UpdateProtocolFee() public {
             // Record protocol fee before update
             uint256 oldProtocolFee = paymentsController.PROTOCOL_FEE_PERCENTAGE();
@@ -2016,7 +1808,8 @@ contract StateT13_IssuersAndVerifiersChangesAdminAddress_Test is StateT13_Issuer
         }
 }
 
-abstract contract StateT14_PaymentsControllerAdminIncreasesProtocolFee is StateT13_IssuersAndVerifiersChangesAdminAddress {
+// protocol fee is increased
+abstract contract StateT14_PaymentsControllerAdminIncreasesProtocolFee is StateT12_VerifierChangesAssetAddress {
 
     uint256 public newProtocolFee;
 
@@ -2577,7 +2370,7 @@ contract StateT17_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod_Test is
         assertEq(schemaBefore.currentFee, issuer1IncreasedSchemaFee, "Current fee should be increased");
 
         //issuer1 increases fees
-        vm.prank(issuer1_newAdminAddress);
+        vm.prank(issuer1);
         paymentsController.updateSchemaFee(issuer1_Id, schemaId1, issuer1IncreasedSchemaFeeV2);
 
         //check that the fee is increased
@@ -2625,7 +2418,7 @@ abstract contract StateT18_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDe
         issuer1IncreasedSchemaFeeV2 = issuer1IncreasedSchemaFee * 2;
 
         //issuer1 increases fees
-        vm.prank(issuer1_newAdminAddress);
+        vm.prank(issuer1);
         paymentsController.updateSchemaFee(issuer1_Id, schemaId1, issuer1IncreasedSchemaFeeV2);
         
         newNextFeeTimestamp = uint128(block.timestamp + newDelayPeriod);
@@ -2963,12 +2756,6 @@ contract StateT20_PaymentsControllerAdminFreezesContract_Test is StateT20_Paymen
                 vm.expectRevert(Pausable.EnforcedPause.selector);
                 vm.prank(issuer1);
                 paymentsController.updateAssetAddress(issuer1_Id, makeAddr("newAsset"));
-            }
-
-            function test_updateAdminAddress_revertsWhenPaused() public {
-                vm.expectRevert(Pausable.EnforcedPause.selector);
-                vm.prank(issuer1);
-                paymentsController.updateAdminAddress(issuer1_Id, makeAddr("newAdmin"));
             }
 
         // ------ UniversalVerificationContract functions ------

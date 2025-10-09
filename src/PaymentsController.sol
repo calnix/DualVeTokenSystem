@@ -82,7 +82,7 @@ contract PaymentsController is EIP712, Pausable {
     // for correct withdrawal of fees and rewards
     mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) internal _epochFeesAccrued;    
 
-//-------------------------------constructor-----------------------------------------
+//-------------------------------Constructor---------------------------------------------------------------------
 
     // name: PaymentsController, version: 1
     constructor(
@@ -110,7 +110,7 @@ contract PaymentsController is EIP712, Pausable {
 
     }
 
-//-------------------------------issuer functions-----------------------------------------
+//-------------------------------Issuer functions-----------------------------------------------------------------
 
 
     /**
@@ -263,7 +263,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
 
-//-------------------------------verifier functions-----------------------------------------
+//-------------------------------Verifier functions---------------------------------------------------------------
 
     /**
      * @notice Generates and registers a new verifier with a unique verifierId.
@@ -473,7 +473,7 @@ contract PaymentsController is EIP712, Pausable {
         return newAssetAddress;
     }
 
-//-------------------------------UniversalVerificationContract functions-----------------------------------------
+//-------------------------------UniversalVerificationContract functions------------------------------------------
 
     /**
      * @notice Deducts the verifier's balance for a verification, distributing protocol and voting fees.
@@ -622,7 +622,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
  
-//-------------------------------Internal functions--------------------------------------------------------------
+//-------------------------------Internal functions---------------------------------------------------------------
 
     // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
     // expectation: amount is non-zero
@@ -654,7 +654,7 @@ contract PaymentsController is EIP712, Pausable {
         return IERC20(addressBook.getMoca());
     }
 
-//-------------------------------admin: update functions-----------------------------------------
+//-------------------------------PaymentsControllerAdmin: update functions----------------------------------------
 
     // add/update/remove | can be 0 
     function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin whenNotPaused {
@@ -707,7 +707,7 @@ contract PaymentsController is EIP712, Pausable {
         emit Events.VerifierStakingTierUpdated(mocaStaked, subsidyPercentage);
     }
 
-//-------------------------------admin: withdraw functions----------------------------------------
+//-------------------------------AssetManager: withdraw functions-------------------------------------------------
 
     /**
      * @notice Allows withdrawal of protocol fees only after the specified epoch has ended.
@@ -767,7 +767,7 @@ contract PaymentsController is EIP712, Pausable {
         _usd8().safeTransfer(treasury, votersFees);
     }
 
-//------------------------------- risk ----------------------------------------------------------
+//------------------------------- Risk-related functions ---------------------------------------------------------
 
     /**
      * @notice Pause contract. Cannot pause once frozen
@@ -892,7 +892,7 @@ contract PaymentsController is EIP712, Pausable {
     }
     
 
-//------------------------------- modifiers -------------------------------------------------------
+//------------------------------- Modifiers -------------------------------------------------------
 
     modifier onlyMonitor() {
         IAccessController accessController = IAccessController(addressBook.getAccessController());
@@ -925,7 +925,7 @@ contract PaymentsController is EIP712, Pausable {
     }
 
 
-//-------------------------------view functions---------------------------------------------
+//------------------------------ View functions --------------------------------------------------------
    
     // note: called by VotingController.claimSubsidies | no need for zero address check on the caller
     function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint256, uint256) {
