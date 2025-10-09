@@ -116,6 +116,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             // Check storage state of issuer1
             DataTypes.Issuer memory issuer = paymentsController.getIssuer(issuerId);
 
+            assertEq(issuerId, expectedIssuerId, "returned issuerId mismatch");
             assertEq(issuer.issuerId, expectedIssuerId, "storedIssuerId mismatch");
             assertEq(issuer.adminAddress, issuer1, "adminAddress mismatch");
             assertEq(issuer.assetAddress, issuer1Asset, "assetAddress mismatch");
@@ -174,6 +175,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             // Check storage state of verifier1
             DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifierId);
 
+            assertEq(verifierId, expectedVerifierId, "returned verifierId mismatch");
             assertEq(verifier.verifierId, expectedVerifierId, "storedVerifierId mismatch");
             assertEq(verifier.adminAddress, verifier1, "adminAddress mismatch");
             assertEq(verifier.signerAddress, verifier1Signer, "signerAddress mismatch");
@@ -293,6 +295,7 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
         // Verify schema storage state
         DataTypes.Schema memory schema = paymentsController.getSchema(expectedSchemaId1);
 
+        assertEq(schemaId, expectedSchemaId1, "returned schemaId mismatch");
         assertEq(schema.schemaId, expectedSchemaId1, "Schema ID not stored correctly");
         assertEq(schema.issuerId, issuer1_Id, "Issuer ID not stored correctly");
         assertEq(schema.currentFee, fee, "Current fee not stored correctly");
@@ -1538,10 +1541,11 @@ contract StateT11_IssuerClaimsAllFees_Test is StateT11_IssuerClaimsAllFees {
         emit Events.AssetAddressUpdated(issuer1_Id, issuer1_newAssetAddress);
  
         vm.prank(issuer1);
-        paymentsController.updateAssetAddress(issuer1_Id, issuer1_newAssetAddress);
+        address newAssetAddress = paymentsController.updateAssetAddress(issuer1_Id, issuer1_newAssetAddress);
 
         // Check storage state: issuer
         DataTypes.Issuer memory issuer1After = paymentsController.getIssuer(issuer1_Id);
+        assertEq(newAssetAddress, issuer1_newAssetAddress, "returned newAssetAddress should be the same");
         assertEq(issuer1After.assetAddress, issuer1_newAssetAddress, "Issuer asset address should be updated");
     }
 }
