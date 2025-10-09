@@ -301,6 +301,10 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
         assertEq(schema.currentFee, fee, "Current fee not stored correctly");
         assertEq(schema.nextFee, 0, "Next fee should be 0 for new schema");
         assertEq(schema.nextFeeTimestamp, 0, "Next fee timestamp should be 0 for new schema");
+
+        // Verify issuer storage state: totalSchemas should be 1
+        DataTypes.Issuer memory issuer = paymentsController.getIssuer(issuer1_Id);
+        assertEq(issuer.totalSchemas, 1, "totalSchemas should be 1");
     }
 
 }
@@ -341,6 +345,12 @@ contract StateT2_CreateSchemas_Test is StateT2_CreateSchemas {
         assertEq(schema.currentFee, issuer1SchemaFee, "Current fee not stored correctly");
         assertEq(schema.nextFee, 0, "Next fee should be 0 for new schema");
         assertEq(schema.nextFeeTimestamp, 0, "Next fee timestamp should be 0 for new schema");
+
+
+        // Verify issuer storage state: totalSchemas should be 1
+        assertEq(paymentsController.getIssuer(issuer1_Id).totalSchemas, 1, "totalSchemas should be 1");
+        assertEq(paymentsController.getIssuer(issuer2_Id).totalSchemas, 1, "totalSchemas should be 1");
+        assertEq(paymentsController.getIssuer(issuer3_Id).totalSchemas, 1, "totalSchemas should be 1");
     }
 
     function testSchema2_StorageState() public {
