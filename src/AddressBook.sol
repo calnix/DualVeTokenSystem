@@ -21,6 +21,7 @@ contract AddressBook is Ownable2Step, Pausable {
 
     // --------------- Main identifiers ---------------
 
+    // LZ
     bytes32 public constant MOCA_NATIVE_ADAPTER = 'MOCA_NATIVE_ADAPTER';
 
     // Tokens
@@ -46,7 +47,7 @@ contract AddressBook is Ownable2Step, Pausable {
 
     // Risk
     uint256 public isFrozen;
-    
+
 
     // --------------- Constructor ---------------
     constructor(address globalAdmin) Ownable(globalAdmin) {
