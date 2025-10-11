@@ -180,7 +180,7 @@ contract EscrowedMoca is ERC20, Pausable {
      */
     function claimRedemption(uint256 redemptionTimestamp) external whenNotPaused {
         // check redemption eligibility
-        require(redemptionTimestamp < block.timestamp, Errors.RedemptionNotAvailableYet());
+        require(block.timestamp >= redemptionTimestamp, Errors.RedemptionNotAvailableYet());
 
         DataTypes.Redemption storage redemptionPtr = redemptionSchedule[msg.sender][redemptionTimestamp];
 
