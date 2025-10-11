@@ -3483,5 +3483,3 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
             paymentsController.unpause();
         }
 }
-
-

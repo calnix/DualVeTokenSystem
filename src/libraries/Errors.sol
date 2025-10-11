@@ -118,6 +118,6 @@ library Errors {
     error OnlyCallableByVotingControllerContract();
     // transferGlobalAdminFromAddressBook
     error OnlyCallableByAddressBook();
-    error OldAdminDoesntHaveRole();
+    error OldAdminDoesNotHaveRole();
 
 }

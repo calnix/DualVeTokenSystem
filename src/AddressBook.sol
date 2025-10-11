@@ -51,7 +51,8 @@ contract AddressBook is Ownable2Step, Pausable {
 
     // --------------- Constructor ---------------
     constructor(address globalAdmin) Ownable(globalAdmin) {
-
+        require(globalAdmin != address(0), Errors.InvalidAddress());
+        
         // set global admin: DEFAULT_ADMIN_ROLE
         _addresses[bytes32(0)] = globalAdmin;
     }

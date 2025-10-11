@@ -46,7 +46,7 @@ contract AccessController is AccessControl {
     bytes32 public constant VOTING_ESCROW_MOCA_ADMIN_ROLE = keccak256("VOTING_ESCROW_MOCA_ADMIN_ROLE");
     bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = keccak256("ESCROWED_MOCA_ADMIN_ROLE");
 
-    // [for multiple contracts]: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
+    // For multiple contracts: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE");                   // withdraw fns on PaymentsController, VotingController
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
 
@@ -284,7 +284,7 @@ contract AccessController is AccessControl {
         require(msg.sender == address(_addressBook), Errors.OnlyCallableByAddressBook());
 
         // Verify the oldAdmin actually has the role
-        require(hasRole(DEFAULT_ADMIN_ROLE, oldAdmin), Errors.OldAdminDoesntHaveRole());
+        require(hasRole(DEFAULT_ADMIN_ROLE, oldAdmin), Errors.OldAdminDoesNotHaveRole());
         
         // Grant to new admin first (atomic operation)
         _grantRole(DEFAULT_ADMIN_ROLE, newAdmin);
@@ -301,5 +301,11 @@ contract AccessController is AccessControl {
     modifier noZeroAddress(address addr) {
         require(addr != address(0), Errors.InvalidAddress());
         _;
+    }
+
+// -------------------- Getters --------------------------------
+
+    function getAddressBook() external view returns (address) {
+        return address(_addressBook);
     }
 }
