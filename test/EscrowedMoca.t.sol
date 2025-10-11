@@ -145,6 +145,14 @@ abstract contract StateT0_RedemptionOptionsSet is StateT0_EscrowedMoca {
 
 contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
 
-
+    // --------- negative tests ---------
+    
+    function testRevert_EscrowedMocaAdmin_SetRedemptionOption_WhenCallerIsNotEscrowedMocaAdmin() public {
+        vm.expectRevert(Errors.OnlyCallableByEscrowedMocaAdmin.selector);
+        vm.prank(user1);
+        esMoca.setRedemptionOption(1, 30 days, 5_000); // 50% penalty
+    }
+    
+    
 
 }
