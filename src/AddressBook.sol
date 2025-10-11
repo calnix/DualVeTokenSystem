@@ -19,7 +19,7 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
 
 contract AddressBook is Ownable2Step, Pausable {
 
-    // ..... Main identifiers .....
+    // --------------- Main identifiers ---------------
 
     bytes32 public constant MOCA_NATIVE_ADAPTER = 'MOCA_NATIVE_ADAPTER';
 
@@ -46,7 +46,9 @@ contract AddressBook is Ownable2Step, Pausable {
 
     // Risk
     uint256 public isFrozen;
+    
 
+    // --------------- Constructor ---------------
     constructor(address globalAdmin) Ownable(globalAdmin) {
 
         // set global admin: DEFAULT_ADMIN_ROLE
