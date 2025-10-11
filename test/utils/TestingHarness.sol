@@ -75,9 +75,9 @@ abstract contract TestingHarness is Test {
     address public treasury = makeAddr("treasury");
 
     // ------------ users ------------
-    //address public user1 = makeAddr("user1");
-    //address public user2 = makeAddr("user2");
-    //address public user3 = makeAddr("user3");
+    address public user1 = makeAddr("user1");
+    address public user2 = makeAddr("user2");
+    address public user3 = makeAddr("user3");
 
 // ------------ Privileged Role Addresses ------------
     // global admin
@@ -154,7 +154,7 @@ abstract contract TestingHarness is Test {
             accessController.addCronJob(cronJob);
 
 
-        // 4. Deploy PaymentsController
+        // 4. Deploy PaymentsController + set address in AddressBook
         paymentsController = new PaymentsController(address(addressBook), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
              "PaymentsController", "1");
         
@@ -162,7 +162,15 @@ abstract contract TestingHarness is Test {
             addressBook.setAddress(addressBook.PAYMENTS_CONTROLLER(), address(paymentsController));
         vm.stopPrank();
 
-        // 5. Deploy VotingEscrowMoca
+
+        // 5. Deploy EscrowedMoca + set address in AddressBook
+        esMoca = new EscrowedMoca(address(addressBook), 1000); // 10% penalty split
+        vm.startPrank(globalAdmin);
+            addressBook.setAddress(addressBook.ES_MOCA(), address(esMoca));
+        vm.stopPrank();
+
+
+        // 6. Deploy VotingEscrowMoca
         //veMoca = new VotingEscrowMoca(address(addressBook));
 
 
