@@ -21,6 +21,8 @@ contract AddressBook is Ownable2Step, Pausable {
 
     // ..... Main identifiers .....
 
+    bytes32 public constant MOCA_NATIVE_ADAPTER = 'MOCA_NATIVE_ADAPTER';
+
     // Tokens
     bytes32 public constant USD8 = 'USD8';
     bytes32 public constant MOCA = 'MOCA';
@@ -53,12 +55,20 @@ contract AddressBook is Ownable2Step, Pausable {
 
 // ------------------------------ Setters --------------------------------
 
-    //REVIEW
+
+    /**
+     * @notice Sets the address for a given identifier in the address book.
+     * @dev Only callable by the contract owner when not paused.
+     *      Cannot set or change the address for the bytes32(0) (DEFAULT_ADMIN_ROLE).
+     *      Emits an {AddressSet} event on success.
+     * @param identifier The bytes32 identifier for the registered address.
+     * @param registeredAddress The address to register for the given identifier.
+     */
     function setAddress(bytes32 identifier, address registeredAddress) external onlyOwner whenNotPaused {
         // cannot change address for 0x00: DEFAULT_ADMIN_ROLE
-        require(identifier != bytes32(0), "Invalid identifier");
+        require(identifier != bytes32(0), Errors.InvalidId());
 
-        require(registeredAddress != address(0), "Invalid address");
+        require(registeredAddress != address(0), Errors.InvalidAddress());
 
         _addresses[identifier] = registeredAddress;
 
@@ -104,6 +114,10 @@ contract AddressBook is Ownable2Step, Pausable {
         return _addresses[identifier];
     }
 
+    function getMocaNativeAdapter() external view whenNotPaused returns (address) {
+        return _addresses[MOCA_NATIVE_ADAPTER];
+    }
+
     function getUSD8() external view whenNotPaused returns (address) {   
         return _addresses[USD8];
     }
@@ -144,13 +158,15 @@ contract AddressBook is Ownable2Step, Pausable {
         return _addresses[ROUTER];
     }
 
+
+
 //-------------------------------Risk functions-----------------------------
 
     /**
      * @notice Pause the contract.
      * @dev Only callable by the Owner [multi-sig].
      */
-    function pause() external whenNotPaused onlyOwner {
+    function pause() external onlyOwner whenNotPaused {
         if(isFrozen == 1) revert Errors.IsFrozen(); 
         _pause();
     }
@@ -159,7 +175,7 @@ contract AddressBook is Ownable2Step, Pausable {
      * @notice Unpause the contract.
      * @dev Only callable by the Owner [multi-sig].
      */
-    function unpause() external whenPaused onlyOwner {
+    function unpause() external onlyOwner whenPaused {
         if(isFrozen == 1) revert Errors.IsFrozen(); 
         _unpause();
     }
@@ -169,7 +185,7 @@ contract AddressBook is Ownable2Step, Pausable {
      * @dev Only callable by the Owner [multi-sig].
      *      This is a kill switch function
      */
-    function freeze() external whenPaused onlyOwner {
+    function freeze() external onlyOwner whenPaused {
         if(isFrozen == 1) revert Errors.IsFrozen();
         isFrozen = 1;
         emit Events.ContractFrozen();
