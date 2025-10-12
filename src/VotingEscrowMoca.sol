@@ -917,7 +917,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @notice Pause contract. Cannot pause once frozen
          */
         function pause() external whenNotPaused onlyMonitorRole {
-            if(isFrozen == 1) revert Errors.IsFrozen(); 
             _pause();
         }
 

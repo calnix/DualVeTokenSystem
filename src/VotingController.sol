@@ -1177,7 +1177,6 @@ contract VotingController is Pausable {
      * @dev Only callable by the Monitor [bot script].
      */
     function pause() external whenNotPaused onlyMonitor {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
         _pause();
     }
 

@@ -30,7 +30,7 @@ contract EscrowedMoca is ERC20, Pausable {
 
     IAddressBook public immutable addressBook;
 
-    uint256 public TOTAL_MOCA_ESCROWED;
+    uint256 public TOTAL_MOCA_ESCROWED;          // tracks the actual MOCA balance in the contract
 
     // penalty split between voters and treasury
     uint256 public VOTERS_PENALTY_SPLIT;         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
@@ -104,7 +104,7 @@ contract EscrowedMoca is ERC20, Pausable {
         // sanity checks: amount & balance
         require(redemptionAmount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
-        require(TOTAL_MOCA_ESCROWED >= redemptionAmount, Errors.InsufficientBalance());
+        require(TOTAL_MOCA_ESCROWED >= redemptionAmount, Errors.TotalMocaEscrowedExceeded());     //invariant: should never be triggered
         
         // get redemption option + sanity check: redemption option is enabled
         DataTypes.RedemptionOption memory option = redemptionOptions[redemptionOption];
@@ -444,7 +444,6 @@ contract EscrowedMoca is ERC20, Pausable {
      * @dev Only callable by the Monitor [bot script].
      */
     function pause() external whenNotPaused onlyMonitor {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
         _pause();
     }
 
@@ -469,11 +468,9 @@ contract EscrowedMoca is ERC20, Pausable {
     }
 
     /**
-     * @notice Exfiltrate all contract-held assets (rewards + subsidies + registration fees) to the treasury.
-     * @dev Disregards all outstanding claims and does not update any contract state.
-     *      Intended for emergency use only when the contract is frozen.
-     *      Only callable by the Emergency Exit Handler [bot script].
-     *      This is a kill switch function
+     * @notice Exfiltrate all Moca held in the contract to the treasury.
+     * @dev Intended for emergency use only when the contract is frozen.
+     *      Only contract updates: TOTAL_MOCA_ESCROWED to 0.
      */
     function emergencyExit() external onlyEmergencyExitHandler {
         if(isFrozen == 0) revert Errors.NotFrozen();

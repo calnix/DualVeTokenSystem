@@ -773,7 +773,6 @@ contract PaymentsController is EIP712, Pausable {
      * @notice Pause contract. Cannot pause once frozen
      */
     function pause() external onlyMonitor whenNotPaused {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
         _pause();
     }
 

@@ -103,6 +103,7 @@ library Errors {
     error RedemptionOptionAlreadyDisabled();
     error WhitelistStatusUnchanged();
     error OnlyCallableByWhitelistedAddress();
+    error TotalMocaEscrowedExceeded();
 
 // --------- AccessController.sol ---------
     error CallerNotRiskOrPoolAdmin();

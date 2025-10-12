@@ -133,6 +133,7 @@ abstract contract TestingHarness is Test {
             addressBook.setAddress(addressBook.ACCESS_CONTROLLER(), address(accessController));
             addressBook.setAddress(addressBook.MOCA(), address(mockMoca));
             addressBook.setAddress(addressBook.USD8(), address(mockUSD8));
+            addressBook.setAddress(addressBook.TREASURY(), treasury);
         vm.stopPrank();
 
         // 3. Initialize roles

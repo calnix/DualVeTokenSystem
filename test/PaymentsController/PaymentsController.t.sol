@@ -2607,6 +2607,7 @@ abstract contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDe
 }
 
 contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test is StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay {
+    using stdStorage for StdStorage;
 
     function testCan_Schema1_StorageState_AfterNewDelayPeriodAndFeeIncrease_BeforeDeductBalance() public {
         //record schema state - the new fee should not be active yet, as deductBalance has not been called
@@ -2683,6 +2684,12 @@ contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
 
     // state transition
     function testCannot_PaymentsControllerAdmin_WithdrawProtocolFees_NoTreasuryAddressSet() public {
+        // modify storage to set addressBook.TREASURY() to address(0)
+            stdstore
+                .target(address(addressBook))
+                .sig("getTreasury()")
+                .checked_write(address(0));
+        assertTrue(addressBook.getTreasury() == address(0), "Treasury address should be 0");
 
         uint256 protocolFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToProtocol;
         assertTrue(protocolFees > 0, "Protocol fees should be greater than 0");
@@ -2698,6 +2705,12 @@ contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
     }
 
     function testCannot_PaymentsControllerAdmin_WithdrawVotersFees_NoTreasuryAddressSet() public {
+        // modify storage to set addressBook.TREASURY() to address(0)
+        stdstore
+            .target(address(addressBook))
+            .sig("getTreasury()")
+            .checked_write(address(0));
+        assertTrue(addressBook.getTreasury() == address(0), "Treasury address should be 0");
 
         uint256 votersFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToVoters;
         assertTrue(votersFees > 0, "Voters fees should be greater than 0");
