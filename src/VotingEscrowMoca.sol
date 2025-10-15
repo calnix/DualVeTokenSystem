@@ -127,10 +127,11 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             require(oldLock.lockId != bytes32(0), Errors.InvalidLockId());
             require(oldLock.owner == msg.sender, Errors.InvalidOwner());
+            require(mocaToIncrease + esMocaToIncrease > 0, Errors.InvalidAmount());
             
             // must have at least 2 Epoch left to increase amount: to meaningfully vote for the next epoch  
             // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
-            require(oldLock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
+            require(oldLock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), Errors.LockExpiresTooSoon());
 
 
             // DELEGATED OR PERSONAL LOCK:

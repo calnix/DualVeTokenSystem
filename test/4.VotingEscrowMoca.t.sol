@@ -6,7 +6,7 @@ import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 import "./utils/TestingHarness.sol";
 
-abstract contract StateT0_Deploy is TestingHarness {    
+abstract contract StateD0_Epoch0_Deploy is TestingHarness {    
 
     // PERIODICITY:  does not account for leap year or leap seconds
     uint256 public constant EPOCH_DURATION = 14 days;                    
@@ -140,7 +140,7 @@ abstract contract StateT0_Deploy is TestingHarness {
     }
 }
 
-contract StateT0_Deploy_Test is StateT0_Deploy {
+contract StateD0_Epoch0_Deploy_Test is StateD0_Epoch0_Deploy {
     using stdStorage for StdStorage;
     
     function testRevert_ConstructorChecks() public {
@@ -154,82 +154,82 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
         assertEq(veMoca.TOTAL_LOCKED_MOCA(), 0);
         assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), 0);
     }
-// --------------------------negative tests: _createLockFor -----------------------------------------
+    // --------------------------negative tests: _createLockFor -----------------------------------------
 
-    function testRevert_CreateLock_InvalidUser() public {
-        vm.expectRevert(Errors.InvalidUser.selector);
+        function testRevert_CreateLock_InvalidUser() public {
+            vm.expectRevert(Errors.InvalidUser.selector);
 
-        vm.prank(address(0));
-        veMoca.createLock(uint128(getEpochEndTimestamp(3)), 0, 0, address(0));
-    }
+            vm.prank(address(0));
+            veMoca.createLock(uint128(getEpochEndTimestamp(3)), 0, 0, address(0));
+        }
 
 
-    function testRevert_CreateLock_InvalidExpiry() public {
-        vm.expectRevert(Errors.InvalidExpiry.selector);
-     
-        vm.prank(user1);
-        veMoca.createLock(1, 1 ether, 0, address(0));
-    }
-
-    function testRevert_CreateLock_InvalidAmount() public {
-        vm.expectRevert(Errors.InvalidAmount.selector);
-     
-        vm.prank(user1);
-        veMoca.createLock(uint128(getEpochEndTimestamp(3)), 0, 0, address(0));
-    }
-
-    //note: prior check "require(EpochMath.isValidEpochTime(expiry), Errors.InvalidExpiry())" will revert first.
-    // it would not be possible to reach this test case.
-    /*function testRevert_CreateLock_InvalidLockDuration_ExceedMinLockDuration() public {
-        vm.expectRevert(Errors.InvalidLockDuration.selector);
-         
-        vm.prank(user1);
-        veMoca.createLock(MIN_LOCK_DURATION - 1, 0, 0, address(0));
-    }*/
-
-    function testRevert_CreateLock_InvalidLockDuration_ExceedMaxLockDuration() public {
-        vm.expectRevert(Errors.InvalidLockDuration.selector);
-         
-        vm.prank(user1);
-        veMoca.createLock(uint128(MAX_LOCK_DURATION + EPOCH_DURATION), 1 ether, 0, address(0));
-    }
-    
-    /** note: prior check "require(expiry >= EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), Errors.LockExpiresTooSoon())" will revert first.
-    it would not be possible to reach this test case.
-    function testRevert_CreateLock_LockExpiresTooSoon() public {
-        vm.expectRevert(Errors.LockExpiresTooSoon.selector);
-     
-        vm.prank(user1);
-        veMoca.createLock(uint128(getEpochEndTimestamp(2)), 1 ether, 0, address(0));
-    }*/
-
-    function testRevert_CreateLock_DelegateNotRegistered() public {
-        vm.expectRevert(Errors.DelegateNotRegistered.selector);
-     
-        vm.prank(user1);
-        veMoca.createLock(uint128(getEpochEndTimestamp(3)), 1 ether, 0, user2);
-    }
-
-    function testRevert_CreateLock_InvalidDelegate() public {
+        function testRevert_CreateLock_InvalidExpiry() public {
+            vm.expectRevert(Errors.InvalidExpiry.selector);
         
-        // register user2 as delegate
-        stdstore
-            .target(address(veMoca))
-            .sig("isRegisteredDelegate(address)")
-            .with_key(user1)
-            .checked_write(bool(true));
+            vm.prank(user1);
+            veMoca.createLock(1, 1 ether, 0, address(0));
+        }
 
-        assertEq(veMoca.isRegisteredDelegate(user1), true, "User1 is registered as delegate");
+        function testRevert_CreateLock_InvalidAmount() public {
+            vm.expectRevert(Errors.InvalidAmount.selector);
+        
+            vm.prank(user1);
+            veMoca.createLock(uint128(getEpochEndTimestamp(3)), 0, 0, address(0));
+        }
 
-        vm.expectRevert(Errors.InvalidDelegate.selector);
+        //note: prior check "require(EpochMath.isValidEpochTime(expiry), Errors.InvalidExpiry())" will revert first.
+        // it would not be possible to reach this test case.
+        /*function testRevert_CreateLock_InvalidLockDuration_ExceedMinLockDuration() public {
+            vm.expectRevert(Errors.InvalidLockDuration.selector);
+            
+            vm.prank(user1);
+            veMoca.createLock(MIN_LOCK_DURATION - 1, 0, 0, address(0));
+        }*/
 
-        vm.prank(user1);
-        veMoca.createLock(uint128(getEpochEndTimestamp(3)), 1 ether, 0, user1);
-    }
-    
-    
+        function testRevert_CreateLock_InvalidLockDuration_ExceedMaxLockDuration() public {
+            vm.expectRevert(Errors.InvalidLockDuration.selector);
+            
+            vm.prank(user1);
+            veMoca.createLock(uint128(MAX_LOCK_DURATION + EPOCH_DURATION), 1 ether, 0, address(0));
+        }
+        
+        /** note: prior check "require(expiry >= EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), Errors.LockExpiresTooSoon())" will revert first.
+        it would not be possible to reach this test case.
+        function testRevert_CreateLock_LockExpiresTooSoon() public {
+            vm.expectRevert(Errors.LockExpiresTooSoon.selector);
+        
+            vm.prank(user1);
+            veMoca.createLock(uint128(getEpochEndTimestamp(2)), 1 ether, 0, address(0));
+        }*/
 
-//------------------------------ state transition: user creates lock --------------------------------
+        function testRevert_CreateLock_DelegateNotRegistered() public {
+            vm.expectRevert(Errors.DelegateNotRegistered.selector);
+        
+            vm.prank(user1);
+            veMoca.createLock(uint128(getEpochEndTimestamp(3)), 1 ether, 0, user2);
+        }
+
+        function testRevert_CreateLock_InvalidDelegate() public {
+            
+            // register user2 as delegate
+            stdstore
+                .target(address(veMoca))
+                .sig("isRegisteredDelegate(address)")
+                .with_key(user1)
+                .checked_write(bool(true));
+
+            assertEq(veMoca.isRegisteredDelegate(user1), true, "User1 is registered as delegate");
+
+            vm.expectRevert(Errors.InvalidDelegate.selector);
+
+            vm.prank(user1);
+            veMoca.createLock(uint128(getEpochEndTimestamp(3)), 1 ether, 0, user1);
+        }
+        
+        
+
+    //------------------------------ state transition: user creates lock --------------------------------
 
     function testCan_User_CreateLock_T1() public {
         // Foundry starts at timestamp 1
@@ -364,7 +364,7 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
     
 }
 
-abstract contract StateD14_LockCreatedAtT1 is StateT0_Deploy {
+abstract contract StateD14_Epoch1_LockCreatedAtT1 is StateD0_Epoch0_Deploy {
 
     bytes32 public lock1_Id;
     uint128 public lock1_Expiry;
@@ -414,7 +414,7 @@ abstract contract StateD14_LockCreatedAtT1 is StateT0_Deploy {
     }
 }
 
-contract StateD14_LockCreatedAtT1_Test is StateD14_LockCreatedAtT1 {
+contract StateD14_Epoch1_LockCreatedAtT1_Test is StateD14_Epoch1_LockCreatedAtT1 {
 
     function test_Lock2CreatedAtT14_User1() public {
         // epoch has incremented by 1
@@ -555,4 +555,43 @@ contract StateD14_LockCreatedAtT1_Test is StateD14_LockCreatedAtT1 {
         assertEq(veMoca.userLastUpdatedTimestamp(user1), currentEpochStart, "User lastUpdatedTimestamp");
         assertEq(veMoca.userLastUpdatedTimestamp(user1), veMoca.lastUpdatedTimestamp(), "Timestamp sync");
     }
+
+    // --------------------------state_transition: increaseAmount() | negative tests ----------------------------------
+
+        function testRevert_IncreaseAmount_InvalidLockId() public {
+            vm.expectRevert(Errors.InvalidLockId.selector);
+
+            vm.prank(user1);
+            veMoca.increaseAmount(bytes32(0), 100 ether, 100 ether);
+        }
+
+        function testRevert_IncreaseAmount_InvalidOwner() public {
+            vm.expectRevert(Errors.InvalidOwner.selector);
+
+            vm.prank(user2);
+            veMoca.increaseAmount(lock1_Id, 100 ether, 100 ether);
+        }
+
+        function testRevert_IncreaseAmount_InvalidAmount() public {
+            vm.expectRevert(Errors.InvalidAmount.selector);
+
+            vm.prank(user1);
+            veMoca.increaseAmount(lock1_Id, 0, 0);
+        }
+
+        function testRevert_IncreaseAmount_LockExpiresTooSoon() public {
+            vm.expectRevert(Errors.LockExpiresTooSoon.selector);
+
+            vm.warp(lock1_Expiry - 14 days);
+
+            vm.prank(user1);
+            veMoca.increaseAmount(lock1_Id, 100 ether, 100 ether);
+        }
+
+
+
+}
+
+abstract contract StateD28_Epoch2_LockUpdates is StateD14_Epoch1_LockCreatedAtT1 {
+
 }
