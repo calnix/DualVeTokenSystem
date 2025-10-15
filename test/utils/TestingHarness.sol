@@ -170,9 +170,15 @@ abstract contract TestingHarness is Test {
             addressBook.setAddress(addressBook.ES_MOCA(), address(esMoca));
         vm.stopPrank();
 
-
-        // 6. Deploy VotingEscrowMoca
-        //veMoca = new VotingEscrowMoca(address(addressBook));
+        // 6. Deploy VotingEscrowMoca + set address in AddressBook
+        veMoca = new VotingEscrowMoca(address(addressBook));
+        vm.startPrank(globalAdmin);
+            addressBook.setAddress(addressBook.VOTING_ESCROW_MOCA(), address(veMoca));
+        vm.stopPrank();
+        
+        // Whitelist VotingEscrowMoca in EscrowedMoca for transfers
+        vm.prank(escrowedMocaAdmin);
+        esMoca.setWhitelistStatus(address(veMoca), true);
 
 
 
@@ -195,6 +201,9 @@ abstract contract TestingHarness is Test {
 
 // ------------------------------Helper functions-----------------------------------------
 
+    function generateLockId(uint256 salt, address user) public view returns (bytes32) {
+        return bytes32(keccak256(abi.encode(user, block.timestamp, salt)));
+    }
 
 
 // ------------------------------Signature Helper Functions-----------------------------------------

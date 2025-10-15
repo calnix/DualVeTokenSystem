@@ -49,6 +49,12 @@ contract VotingEscrowMoca is ERC20, Pausable {
     
     uint256 public isFrozen;
 
+// ===== TO REMOVE: DEBUGGING ONLY =====
+    event Debug(string message, DataTypes.VeBalance veBalance);
+    //event Debug(string message, uint128 bias, uint128 slope);
+    //event Debug(string message);
+    //event Debug(string message, uint256 value);
+
 //-------------------------------Mappings-----------------------------------------------------
 
         // lock
@@ -59,7 +65,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
         // scheduled global slope changes
         mapping(uint256 eTime => uint256 slopeChange) public slopeChanges;
-        // saving totalSupply checkpoint for each epoch
+        // saving totalSupply checkpoint for each epoch [historical queries]
         mapping(uint256 eTime => uint256 totalSupply) public totalSupplyAt;
         
         
@@ -598,7 +604,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
             veGlobal = veGlobal_;
             slopeChanges[expiry] += veIncoming.slope;
 
-
             // Add new lock to account's aggregated veBalance
             veAccount.bias += veIncoming.bias;
             veAccount.slope += veIncoming.slope;
@@ -683,7 +688,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             ) 
                 = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
 
-            // CACHE: global veBalance
+            // CACHE: global veBalance + lastUpdatedTimestamp
             DataTypes.VeBalance memory veGlobal_ = veGlobal;
             uint256 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
         
@@ -696,24 +701,22 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // init empty veBalance
             DataTypes.VeBalance memory veAccount;
 
-            // account's first time: no prior account updates | only update global
+            // Check if account's first time: no previous locks created. If so, only update global
             if (accountLastUpdatedAt == 0) {
-                
-                // set account's lastUpdatedTimestamp
-                accountLastUpdatedMapping[account] = currentEpochStart;
-                //accountHistoryMapping[account][currentEpochStart] = veAccount;  // DataTypes.VeBalance(0, 0)
-
-                // update global: updates lastUpdatedTimestamp | may or may not have updates
-                veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
-
-                return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
+                // User has 0 balance at epoch 0: only update global [no previous locks confirmed]
+                if(accountHistoryMapping[account][0].bias == 0){
+                    
+                    // update global: may or may not have updates [STORAGE: updates lastUpdatedTimestamp]
+                    veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
+                    return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
+                }
             }
                     
             // LOAD: account's previous veBalance
             veAccount = accountHistoryMapping[account][accountLastUpdatedAt];
 
             // RETURN: if both global and account are up to date
-            if(accountLastUpdatedAt >= currentEpochStart)
+            if (accountLastUpdatedAt >= currentEpochStart)
                 return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
 
             // Updating needed: global and account veBalance to current epoch
@@ -825,7 +828,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 return 0;
             }
             // offset inception inflation
-            unchecked { return a.bias - (a.slope * timestamp); } // safe: already checked above
+            return a.bias - (a.slope * timestamp); 
         }
 
         // calc. veBalance{bias,slope} from lock; based on expiry time | inception offset is handled by balanceOf() queries
@@ -1059,7 +1062,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             uint256 accountLastUpdatedAt = accountLastUpdatedTimestamp[account];
             
             // account has no locks created: return empty veBalance
-            if(accountLastUpdatedAt == 0) return veBalance;
+            //if(accountLastUpdatedAt == 0) return veBalance; --> removed: what if user creates a lock at T0?
 
             // load account's previous veBalance from history
             veBalance = accountHistory[account][accountLastUpdatedAt];
@@ -1184,7 +1187,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         function balanceAtEpochEnd(address user, uint256 epoch, bool forDelegated) external view returns (uint256) {
             require(user != address(0), Errors.InvalidAddress());
             if (isFrozen == 1) return 0;
-            uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
+            uint256 epochEndTime = EpochMath.getEpochEndTimestamp(epoch);
             
             // get the appropriate veBalance at that epoch boundary | note: is epochEndTime inclusive?
             DataTypes.VeBalance memory veBalance = forDelegated ? delegateHistory[user][epochEndTime] : userHistory[user][epochEndTime];
