@@ -141,7 +141,8 @@ abstract contract StateT0_Deploy is TestingHarness {
 }
 
 contract StateT0_Deploy_Test is StateT0_Deploy {
-
+    using stdStorage for StdStorage;
+    
     function testRevert_ConstructorChecks() public {
         vm.expectRevert(Errors.InvalidAddress.selector);
         new VotingEscrowMoca(address(0));
@@ -153,8 +154,82 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
         assertEq(veMoca.TOTAL_LOCKED_MOCA(), 0);
         assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), 0);
     }
+// --------------------------negative tests: _createLockFor -----------------------------------------
 
-    // state transition: user creates lock
+    function testRevert_CreateLock_InvalidUser() public {
+        vm.expectRevert(Errors.InvalidUser.selector);
+
+        vm.prank(address(0));
+        veMoca.createLock(uint128(getEpochEndTimestamp(3)), 0, 0, address(0));
+    }
+
+
+    function testRevert_CreateLock_InvalidExpiry() public {
+        vm.expectRevert(Errors.InvalidExpiry.selector);
+     
+        vm.prank(user1);
+        veMoca.createLock(1, 1 ether, 0, address(0));
+    }
+
+    function testRevert_CreateLock_InvalidAmount() public {
+        vm.expectRevert(Errors.InvalidAmount.selector);
+     
+        vm.prank(user1);
+        veMoca.createLock(uint128(getEpochEndTimestamp(3)), 0, 0, address(0));
+    }
+
+    //note: prior check "require(EpochMath.isValidEpochTime(expiry), Errors.InvalidExpiry())" will revert first.
+    // it would not be possible to reach this test case.
+    /*function testRevert_CreateLock_InvalidLockDuration_ExceedMinLockDuration() public {
+        vm.expectRevert(Errors.InvalidLockDuration.selector);
+         
+        vm.prank(user1);
+        veMoca.createLock(MIN_LOCK_DURATION - 1, 0, 0, address(0));
+    }*/
+
+    function testRevert_CreateLock_InvalidLockDuration_ExceedMaxLockDuration() public {
+        vm.expectRevert(Errors.InvalidLockDuration.selector);
+         
+        vm.prank(user1);
+        veMoca.createLock(uint128(MAX_LOCK_DURATION + EPOCH_DURATION), 1 ether, 0, address(0));
+    }
+    
+    /** note: prior check "require(expiry >= EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), Errors.LockExpiresTooSoon())" will revert first.
+    it would not be possible to reach this test case.
+    function testRevert_CreateLock_LockExpiresTooSoon() public {
+        vm.expectRevert(Errors.LockExpiresTooSoon.selector);
+     
+        vm.prank(user1);
+        veMoca.createLock(uint128(getEpochEndTimestamp(2)), 1 ether, 0, address(0));
+    }*/
+
+    function testRevert_CreateLock_DelegateNotRegistered() public {
+        vm.expectRevert(Errors.DelegateNotRegistered.selector);
+     
+        vm.prank(user1);
+        veMoca.createLock(uint128(getEpochEndTimestamp(3)), 1 ether, 0, user2);
+    }
+
+    function testRevert_CreateLock_InvalidDelegate() public {
+        
+        // register user2 as delegate
+        stdstore
+            .target(address(veMoca))
+            .sig("isRegisteredDelegate(address)")
+            .with_key(user1)
+            .checked_write(bool(true));
+
+        assertEq(veMoca.isRegisteredDelegate(user1), true, "User1 is registered as delegate");
+
+        vm.expectRevert(Errors.InvalidDelegate.selector);
+
+        vm.prank(user1);
+        veMoca.createLock(uint128(getEpochEndTimestamp(3)), 1 ether, 0, user1);
+    }
+    
+    
+
+//------------------------------ state transition: user creates lock --------------------------------
 
     function testCan_User_CreateLock_T1() public {
         // Foundry starts at timestamp 1
@@ -467,13 +542,14 @@ contract StateD14_LockCreatedAtT1_Test is StateD14_LockCreatedAtT1 {
         // Note: totalSupplyAt is only updated when advancing epochs, so it may still be 0 for the current epoch
         // We'll verify it's not decreased at least
         assertGe(veMoca.totalSupplyAt(currentEpochStart), beforeTotalSupplyAt, "totalSupplyAt should not decrease");
-        assertEq(veMoca.totalSupplyAt(currentEpochStart), beforeTotalSupplyAt + expectedVeMoca, "totalSupplyAt should increase by expectedVeMoca");
+        // uint256 expectedVotingPower_FromLock2 = expectedSlope * (expiry - block.timestamp);
+        assertEq(veMoca.totalSupplyAt(currentEpochStart), beforeTotalSupplyAt + expectedVotingPower_FromLock2, "totalSupplyAt should increase by expectedVeMoca: accounting for 1 tick decay");
 
         // 6) User history and slope changes [userHistory, userSlopeChanges, userLastUpdatedTimestamp]
         DataTypes.VeBalance memory afterUser = getUserHistory(user1, currentEpochStart);    // epoch 1
         assertEq(afterUser.bias, beforeUser_Epoch0.bias + uint128(expectedVeMoca), "User history bias");    // bias at epoch1: bias from Epoch0 + bias from lock 2 [aggregation]
         assertEq(afterUser.slope, beforeUser_Epoch0.slope + uint128(expectedSlope), "User history slope");
-        assertEq(veMoca.userSlopeChanges(user1, expiry), beforeUserSlopeChange + expectedSlope, "User slope changes");
+        assertEq(veMoca.userSlopeChanges(user1, expiry), beforeUserSlopeChange + expectedSlope, "User slope changes");  // since both locks expire at the same time, slopChanges should be aggregated
 
         // 7) Timestamp synchronization [userLastUpdatedTimestamp, lastUpdatedTimestamp]
         assertEq(veMoca.userLastUpdatedTimestamp(user1), currentEpochStart, "User lastUpdatedTimestamp");
