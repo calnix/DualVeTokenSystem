@@ -380,12 +380,12 @@ contract StateD14_LockCreatedAtT1_Test is StateD14_LockCreatedAtT1 {
         DataTypes.VeBalance memory beforeGlobal = getVeGlobal();
         uint128[2] memory beforeTotals = getGlobalPrincipal();
 
-        // User state - Epoch 1  
+        // User state - Epoch 1 [userHistory for new epoch not updated - since no txn made]
         DataTypes.VeBalance memory beforeUser = getUserHistory(user1, currentEpochStart);
         assertEq(beforeUser.bias, 0, "User bias is 0");
         assertEq(beforeUser.slope, 0, "User slope is 0");
 
-        // User state - Epoch 0
+        // User state - Epoch 0 [reflecting lock 1 that was created in Epoch 0]
         DataTypes.VeBalance memory beforeUser_Epoch0 = getUserHistory(user1, 0);
         assertGt(beforeUser_Epoch0.bias, 0, "User bias must be greater than 0");    // from lock 1
         assertGt(beforeUser_Epoch0.slope, 0, "User slope must be greater than 0");
@@ -405,10 +405,6 @@ contract StateD14_LockCreatedAtT1_Test is StateD14_LockCreatedAtT1 {
 
             vm.prank(user1);
             bytes32 actualLockId2 = veMoca.createLock(expiry, mocaAmount, esMocaAmount, delegate);
-
-            // After second lock creation
-            DataTypes.VeBalance memory storedAtEpoch0 = getUserHistory(user1, 0);
-            DataTypes.VeBalance memory storedAtEpoch1 = getUserHistory(user1, 1209600);
 
 
         // ---------- VERIFY STATE CHANGES ----------
@@ -471,10 +467,11 @@ contract StateD14_LockCreatedAtT1_Test is StateD14_LockCreatedAtT1 {
         // Note: totalSupplyAt is only updated when advancing epochs, so it may still be 0 for the current epoch
         // We'll verify it's not decreased at least
         assertGe(veMoca.totalSupplyAt(currentEpochStart), beforeTotalSupplyAt, "totalSupplyAt should not decrease");
+        assertEq(veMoca.totalSupplyAt(currentEpochStart), beforeTotalSupplyAt + expectedVeMoca, "totalSupplyAt should increase by expectedVeMoca");
 
         // 6) User history and slope changes [userHistory, userSlopeChanges, userLastUpdatedTimestamp]
-        DataTypes.VeBalance memory afterUser = getUserHistory(user1, currentEpochStart);
-        assertEq(afterUser.bias, beforeUser_Epoch0.bias + uint128(expectedVeMoca), "User history bias");
+        DataTypes.VeBalance memory afterUser = getUserHistory(user1, currentEpochStart);    // epoch 1
+        assertEq(afterUser.bias, beforeUser_Epoch0.bias + uint128(expectedVeMoca), "User history bias");    // bias at epoch1: bias from Epoch0 + bias from lock 2 [aggregation]
         assertEq(afterUser.slope, beforeUser_Epoch0.slope + uint128(expectedSlope), "User history slope");
         assertEq(veMoca.userSlopeChanges(user1, expiry), beforeUserSlopeChange + expectedSlope, "User slope changes");
 
