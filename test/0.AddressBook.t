@@ -118,6 +118,7 @@ contract State_DeployAddressBook_Test is State_DeployAddressBook {
             bytes32 PAYMENTS_CONTROLLER = addressBook.PAYMENTS_CONTROLLER();
             bytes32 TREASURY = addressBook.TREASURY();
             bytes32 ROUTER = addressBook.ROUTER();
+            bytes32 ISSUER_STAKING_CONTROLLER = addressBook.ISSUER_STAKING_CONTROLLER();
 
             // set addresses
             vm.startPrank(globalAdmin);
@@ -131,6 +132,7 @@ contract State_DeployAddressBook_Test is State_DeployAddressBook {
                 addressBook.setAddress(PAYMENTS_CONTROLLER, makeAddr("PAYMENTS_CONTROLLER"));
                 addressBook.setAddress(TREASURY, makeAddr("TREASURY"));
                 addressBook.setAddress(ROUTER, makeAddr("ROUTER"));
+                addressBook.setAddress(ISSUER_STAKING_CONTROLLER, makeAddr("ISSUER_STAKING_CONTROLLER"));
             vm.stopPrank();
 
             // check addresses
@@ -142,6 +144,7 @@ contract State_DeployAddressBook_Test is State_DeployAddressBook {
             assertEq(addressBook.getAddress(ACCESS_CONTROLLER), makeAddr("ACCESS_CONTROLLER"));
             assertEq(addressBook.getAddress(VOTING_CONTROLLER), makeAddr("VOTING_CONTROLLER"));
             assertEq(addressBook.getAddress(PAYMENTS_CONTROLLER), makeAddr("PAYMENTS_CONTROLLER"));
+            assertEq(addressBook.getAddress(ISSUER_STAKING_CONTROLLER), makeAddr("ISSUER_STAKING_CONTROLLER"));
             assertEq(addressBook.getAddress(TREASURY), makeAddr("TREASURY"));
             assertEq(addressBook.getAddress(ROUTER), makeAddr("ROUTER"));
 
@@ -154,6 +157,7 @@ contract State_DeployAddressBook_Test is State_DeployAddressBook {
             assertEq(addressBook.getAccessController(), makeAddr("ACCESS_CONTROLLER"));
             assertEq(addressBook.getVotingController(), makeAddr("VOTING_CONTROLLER"));
             assertEq(addressBook.getPaymentsController(), makeAddr("PAYMENTS_CONTROLLER"));
+            assertEq(addressBook.getIssuerStakingController(), makeAddr("ISSUER_STAKING_CONTROLLER"));
             assertEq(addressBook.getTreasury(), makeAddr("TREASURY"));
             assertEq(addressBook.getGlobalAdmin(), globalAdmin);
             assertEq(addressBook.getRouter(), makeAddr("ROUTER"));

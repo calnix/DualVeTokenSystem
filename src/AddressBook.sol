@@ -50,7 +50,7 @@ contract AddressBook is Ownable2Step, Pausable {
     uint256 public isFrozen;
 
 
-    // --------------- Constructor ---------------
+// ------------------------------ Constructor ------------------------------
     constructor(address globalAdmin) Ownable(globalAdmin) {
         require(globalAdmin != address(0), Errors.InvalidAddress());
         

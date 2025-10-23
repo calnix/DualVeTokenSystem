@@ -7,7 +7,6 @@ import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/Safe
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
-import {DataTypes} from "./libraries/DataTypes.sol";
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
 
@@ -15,6 +14,13 @@ import {Errors} from "./libraries/Errors.sol";
 import {IAddressBook} from "./interfaces/IAddressBook.sol";
 import {IAccessController} from "./interfaces/IAccessController.sol";
 
+
+/**
+ * @title IssuerStakingController
+ * @author Calnix [@cal_nix]
+ * @notice Central contract managing issuer staking and unstaking
+ * @dev Integrates with external controllers and enforces protocol-level access and safety checks
+ */
 
 
 contract IssuerStakingController is Pausable {
@@ -26,7 +32,8 @@ contract IssuerStakingController is Pausable {
     uint256 public TOTAL_MOCA_PENDING_UNSTAKE;
     
     uint256 public UNSTAKE_DELAY;
-
+    uint256 public MAX_STAKE_AMOUNT;    // to prevent fat-finger mistakes on excess allocation on staking
+    
     // risk management
     uint256 public isFrozen;
 
@@ -38,18 +45,28 @@ contract IssuerStakingController is Pausable {
 
 //------------------------------- Constructor---------------------------------------------------------------------
 
-    constructor(address addressBook_, uint256 unstakeDelay) {
-        require(addressBook_ != address(0), Errors.InvalidAddress());
+    constructor(address addressBook_, uint256 unstakeDelay, uint256 maxStakeAmount) {
+        if(addressBook_ == address(0)) revert Errors.InvalidAddress();
         addressBook = IAddressBook(addressBook_);
 
-        require(unstakeDelay > 0, Errors.InvalidDelayPeriod());
+        if(unstakeDelay == 0) revert Errors.InvalidDelayPeriod();
         UNSTAKE_DELAY = unstakeDelay;
+
+        if(maxStakeAmount == 0) revert Errors.InvalidAmount();
+        MAX_STAKE_AMOUNT = maxStakeAmount;
     }
 
 //------------------------------- External functions---------------------------------------------------------------
 
+
+    /**
+     * @notice Allows an issuer to stake a specified amount of MOCA tokens.
+     * @dev Transfers MOCA tokens from the sender to this contract.
+     * @param amount The amount of MOCA tokens to stake. Must be > 0 and <= MAX_STAKE_AMOUNT.
+     */
     function stakeMoca(uint256 amount) external whenNotPaused {
-        require(amount > 0, Errors.InvalidAmount());
+        if(amount == 0) revert Errors.InvalidAmount();
+        if(amount > MAX_STAKE_AMOUNT) revert Errors.InvalidAmount();
         
         // update total moca staked
         TOTAL_MOCA_STAKED += amount;
@@ -63,47 +80,62 @@ contract IssuerStakingController is Pausable {
         emit Events.Staked(msg.sender, amount);
     }
 
+    // note: does not transfer moca to issuer
+    /**
+     * @notice Initiates the unstaking process for the caller's MOCA tokens.
+     * @dev Decrements the issuer's active staked balance and the global staked total.
+     *      Increases the global pending unstake total.
+     * @param amount The amount of MOCA tokens to unstake. Must be > 0 and <= the issuer's staked balance.
+     */
     function initiateUnstake(uint256 amount) external whenNotPaused {
-        require(amount > 0, Errors.InvalidAmount());
-        require(issuers[msg.sender] >= amount, Errors.InsufficientBalance());
+        if(amount == 0) revert Errors.InvalidAmount();
+        if(amount > issuers[msg.sender]) revert Errors.InsufficientBalance();
 
-        // update pending unstake
+        // calculate claimable timestamp
         uint256 claimableTimestamp = block.timestamp + UNSTAKE_DELAY;
+
+        // book pending unstake
         pendingUnstakedMoca[msg.sender][claimableTimestamp] += amount;
         TOTAL_MOCA_PENDING_UNSTAKE += amount;
      
-        // update active staked 
+        // decrement active staked 
         issuers[msg.sender] -= amount;
         TOTAL_MOCA_STAKED -= amount;
-
-        // transfer moca from contract to msg.sender
-        _moca().safeTransfer(msg.sender, amount);
 
         emit Events.UnstakeInitiated(msg.sender, amount, claimableTimestamp);
     }
 
+    /**
+     * @notice Claims unstaked MOCA tokens for the caller. Can claim multiple timestamps at once.
+     * @dev Unstaked MOCA tokens are claimable after the UNSTAKE_DELAY period.
+     * @param timestamps Array of timestamps at which the unstaked MOCA tokens are claimable.
+     */
     function claimUnstake(uint256[] calldata timestamps) external whenNotPaused {
         uint256 length = timestamps.length;
-        require(length > 0, Errors.InvalidArray());
+        if(length == 0) revert Errors.InvalidArray();
 
         uint256 totalClaimable;
 
         // check: delay period has passed + non-zero amount
         for(uint256 i; i < length; ++i) {
             uint256 timestamp = timestamps[i];
+            
+            // sanity checks
+            if(timestamp < block.timestamp) revert Errors.InvalidTimestamp();
+            if(pendingUnstakedMoca[msg.sender][timestamp] == 0) revert Errors.NothingToClaim();
 
-            require(timestamp >= block.timestamp, Errors.InvalidTimestamp());
-            require(pendingUnstakedMoca[msg.sender][timestamp] > 0, Errors.InvalidAmount());
-
-            // update total claimable
+            // add to total claimable
             totalClaimable += pendingUnstakedMoca[msg.sender][timestamp];
+            
+            // delete from pending unstake
+            delete pendingUnstakedMoca[msg.sender][timestamp];
         }
-
-        // transfer moca to msg.sender
-        _moca().safeTransfer(msg.sender, totalClaimable);
-
-        // update global totals: only update pending unstake [active staked is not affected]
+        
+        // update global: only update pending unstake [active staked is not affected]
         TOTAL_MOCA_PENDING_UNSTAKE -= totalClaimable;
+
+        // transfer moca to issuer
+        _moca().safeTransfer(msg.sender, totalClaimable);
 
         emit Events.UnstakeClaimed(msg.sender, totalClaimable);
     }
@@ -116,13 +148,23 @@ contract IssuerStakingController is Pausable {
      * @param newUnstakeDelay The new unstake delay.
      */
     function setUnstakeDelay(uint256 newUnstakeDelay) external onlyIssuerStakingControllerAdmin whenNotPaused {
-        require(newUnstakeDelay > 0, Errors.InvalidDelayPeriod());
+        if(newUnstakeDelay == 0) revert Errors.InvalidDelayPeriod();
 
         // cache old + update to new unstake delay
         uint256 oldUnstakeDelay = UNSTAKE_DELAY;
         UNSTAKE_DELAY = newUnstakeDelay;
 
         emit Events.UnstakeDelayUpdated(oldUnstakeDelay, newUnstakeDelay);
+    }
+
+    function setMaxStakeAmount(uint256 newMaxStakeAmount) external onlyIssuerStakingControllerAdmin whenNotPaused {
+        if(newMaxStakeAmount == 0) revert Errors.InvalidAmount();
+
+        // cache old + update to new max stake amount
+        uint256 oldMaxStakeAmount = MAX_STAKE_AMOUNT;
+        MAX_STAKE_AMOUNT = newMaxStakeAmount;
+
+        emit Events.MaxStakeAmountUpdated(oldMaxStakeAmount, newMaxStakeAmount);
     }
 
 //------------------------------- Internal functions---------------------------------------------------------------
@@ -199,11 +241,11 @@ contract IssuerStakingController is Pausable {
 
         // get treasury address
         address treasury = addressBook.getTreasury();
-        require(treasury != address(0), Errors.InvalidAddress());
+        if(treasury == address(0)) revert Errors.InvalidAddress();
 
         // get total moca
         uint256 totalMoca = TOTAL_MOCA_STAKED + TOTAL_MOCA_PENDING_UNSTAKE;
-        require(totalMoca > 0, Errors.NoMocaToClaim());
+        if(totalMoca == 0) revert Errors.InvalidAmount();
 
         // transfer moca to treasury
         _moca().safeTransfer(treasury, totalMoca);

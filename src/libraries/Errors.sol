@@ -24,6 +24,7 @@ library Errors {
     error InvalidDelayPeriod();
     error NotFrozen();
     error IsFrozen();
+    error NothingToClaim();
     error NoFeesToClaim();
     error InvalidTimestamp();
     error InsufficientBalance();
@@ -98,7 +99,6 @@ library Errors {
 
 // --------- EscrowedMoca.sol ---------
     error RedemptionNotAvailableYet();
-    error NothingToClaim();
     error RedemptionOptionAlreadyEnabled();
     error RedemptionOptionAlreadyDisabled();
     error WhitelistStatusUnchanged();

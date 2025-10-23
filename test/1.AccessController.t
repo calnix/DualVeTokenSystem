@@ -37,6 +37,7 @@ abstract contract State_DeployAccessController is Test {
     address public monitor = makeAddr("monitor");
     address public cronJob = makeAddr("cronJob");
 
+    address public issuerStakingControllerAdmin = makeAddr("issuerStakingControllerAdmin");
     address public paymentsControllerAdmin = makeAddr("paymentsControllerAdmin");
     address public votingControllerAdmin = makeAddr("votingControllerAdmin");
     address public votingEscrowMocaAdmin = makeAddr("votingEscrowMocaAdmin");
@@ -72,6 +73,7 @@ contract State_DeployAccessController_Test is State_DeployAccessController {
         assertEq(accessController.getRoleAdmin(accessController.CRON_JOB_ROLE()), accessController.CRON_JOB_ADMIN_ROLE());
 
         // Low-frequency roles managed directly by global admin
+        assertEq(accessController.getRoleAdmin(accessController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE()), accessController.DEFAULT_ADMIN_ROLE());
         assertEq(accessController.getRoleAdmin(accessController.PAYMENTS_CONTROLLER_ADMIN_ROLE()), accessController.DEFAULT_ADMIN_ROLE());
         assertEq(accessController.getRoleAdmin(accessController.VOTING_CONTROLLER_ADMIN_ROLE()), accessController.DEFAULT_ADMIN_ROLE());
         assertEq(accessController.getRoleAdmin(accessController.VOTING_ESCROW_MOCA_ADMIN_ROLE()), accessController.DEFAULT_ADMIN_ROLE());
@@ -360,7 +362,70 @@ contract State_CronJobAdminSet_Test is State_CronJobAdminSet {
         }
 }
 
-abstract contract State_PaymentsControllerAdminSet is State_CronJobAdminSet {
+abstract contract State_IssuerStakingControllerAdminSet is State_CronJobAdminSet {
+    function setUp() public virtual override {
+        super.setUp();
+
+        vm.prank(globalAdmin);
+        accessController.addIssuerStakingControllerAdmin(issuerStakingControllerAdmin);
+    }
+}
+
+contract State_IssuerStakingControllerAdminSet_Test is State_IssuerStakingControllerAdminSet {
+    // issuer staking controller admin has role
+    function test_IssuerStakingControllerAdmin() public {
+        assertTrue(accessController.hasRole(accessController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE(), issuerStakingControllerAdmin));
+    }
+
+    // ------ removeIssuerStakingControllerAdmin ------
+        
+        // issuer staking controller admin cannot remove issuer staking controller admin
+        function test_IssuerStakingControllerAdmin_CannotRemoveIssuerStakingControllerAdmin() public {
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuerStakingControllerAdmin, accessController.DEFAULT_ADMIN_ROLE()));
+            vm.prank(issuerStakingControllerAdmin);
+            accessController.removeIssuerStakingControllerAdmin(issuerStakingControllerAdmin);
+        }
+
+        // global admin can remove issuer staking controller admin
+        function test_GlobalAdmin_CanRemoveIssuerStakingControllerAdmin() public {
+
+            // expect event emission
+            vm.expectEmit(true, true, false, true, address(accessController));
+            emit Events.IssuerStakingControllerAdminRemoved(issuerStakingControllerAdmin, globalAdmin);
+
+            vm.prank(globalAdmin);
+            accessController.removeIssuerStakingControllerAdmin(issuerStakingControllerAdmin);
+
+            assertFalse(accessController.hasRole(accessController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE(), issuerStakingControllerAdmin));
+            assertFalse(accessController.isIssuerStakingControllerAdmin(issuerStakingControllerAdmin));
+        }
+
+    // ------ state transition: addPaymentsControllerAdmin ------
+        
+        // userA cannot add payments controller admin
+        function test_UserA_CannotAddPaymentsControllerAdmin() public {
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, userA, accessController.DEFAULT_ADMIN_ROLE()));
+            vm.prank(userA);
+            accessController.addPaymentsControllerAdmin(paymentsControllerAdmin);
+        }
+
+        // global admin can add payments controller admin
+        function test_GlobalAdmin_CanAddPaymentsControllerAdmin() public {
+            assertFalse(accessController.hasRole(accessController.PAYMENTS_CONTROLLER_ADMIN_ROLE(), paymentsControllerAdmin));
+
+            // expect event emission
+            vm.expectEmit(true, true, false, true, address(accessController));
+            emit Events.PaymentsControllerAdminAdded(paymentsControllerAdmin, globalAdmin);
+
+            vm.prank(globalAdmin);
+            accessController.addPaymentsControllerAdmin(paymentsControllerAdmin);
+
+            assertTrue(accessController.hasRole(accessController.PAYMENTS_CONTROLLER_ADMIN_ROLE(), paymentsControllerAdmin));
+            assertTrue(accessController.isPaymentsControllerAdmin(paymentsControllerAdmin));
+        }
+}
+
+abstract contract State_PaymentsControllerAdminSet is State_IssuerStakingControllerAdminSet {
     function setUp() public virtual override {
         super.setUp();
 

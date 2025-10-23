@@ -10,6 +10,7 @@ import {PaymentsController} from "../../src/PaymentsController.sol";
 import {VotingController} from "../../src/VotingController.sol";
 import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
 import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
+import {IssuerStakingController} from "../../src/IssuerStakingController.sol";
 
 // import all libraries
 import {DataTypes} from "../../src/libraries/DataTypes.sol";
@@ -28,6 +29,7 @@ import {IAccessController} from "../../src/interfaces/IAccessController.sol";
 import {IPaymentsController} from "../../src/interfaces/IPaymentsController.sol";
 import {IVotingEscrowMoca} from "../../src/interfaces/IVotingEscrowMoca.sol";
 import {IEscrowedMoca} from "../../src/interfaces/IEscrowedMoca.sol";
+import {IIssuerStakingController} from "../../src/interfaces/IIssuerStakingController.sol";
 
 abstract contract TestingHarness is Test {
     using stdStorage for StdStorage;
@@ -39,6 +41,7 @@ abstract contract TestingHarness is Test {
     VotingEscrowMoca public veMoca;
     VotingController public votingController;
     EscrowedMoca public esMoca;
+    IssuerStakingController public issuerStakingController;
 
     // mocks
     MockMoca public mockMoca;
@@ -88,6 +91,7 @@ abstract contract TestingHarness is Test {
     address public monitor = makeAddr("monitor");   
     address public cronJob = makeAddr("cronJob");
     // strategic role addresses
+    address public issuerStakingControllerAdmin = makeAddr("issuerStakingControllerAdmin");
     address public paymentsControllerAdmin = makeAddr("paymentsControllerAdmin");
     address public votingControllerAdmin = makeAddr("votingControllerAdmin");
     address public votingEscrowMocaAdmin = makeAddr("votingEscrowMocaAdmin");
@@ -103,8 +107,8 @@ abstract contract TestingHarness is Test {
 // ------------ Contract Parameters ------------
 
     // PaymentsController parameters
-    uint256 public protocolFeePercentage = 500;   // 5%
-    uint256 public voterFeePercentage = 1000;     // 10%
+    uint256 public protocolFeePercentage = 500;      // 5%
+    uint256 public voterFeePercentage = 1000;        // 10%
     uint256 public feeIncreaseDelayPeriod = 14 days; // 14 days
 
     // VotingController parameters
@@ -154,8 +158,13 @@ abstract contract TestingHarness is Test {
         vm.prank(cronJobAdmin);
             accessController.addCronJob(cronJob);
 
+        // 4. Deploy IssuerStakingController + set address in AddressBook
+        issuerStakingController = new IssuerStakingController(address(addressBook), 7 days, 1000 ether);
+        vm.startPrank(globalAdmin);
+            addressBook.setAddress(addressBook.ISSUER_STAKING_CONTROLLER(), address(issuerStakingController));
+        vm.stopPrank();
 
-        // 4. Deploy PaymentsController + set address in AddressBook
+        // 5. Deploy PaymentsController + set address in AddressBook
         paymentsController = new PaymentsController(address(addressBook), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
              "PaymentsController", "1");
         
@@ -164,13 +173,13 @@ abstract contract TestingHarness is Test {
         vm.stopPrank();
 
 
-        // 5. Deploy EscrowedMoca + set address in AddressBook
+        // 6. Deploy EscrowedMoca + set address in AddressBook
         esMoca = new EscrowedMoca(address(addressBook), 1000); // 10% penalty split
         vm.startPrank(globalAdmin);
             addressBook.setAddress(addressBook.ES_MOCA(), address(esMoca));
         vm.stopPrank();
 
-        // 6. Deploy VotingEscrowMoca + set address in AddressBook
+        // 7. Deploy VotingEscrowMoca + set address in AddressBook
         veMoca = new VotingEscrowMoca(address(addressBook));
         vm.startPrank(globalAdmin);
             addressBook.setAddress(addressBook.VOTING_ESCROW_MOCA(), address(veMoca));
