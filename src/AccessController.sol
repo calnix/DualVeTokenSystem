@@ -45,6 +45,7 @@ contract AccessController is AccessControl {
     bytes32 public constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256("VOTING_CONTROLLER_ADMIN_ROLE");
     bytes32 public constant VOTING_ESCROW_MOCA_ADMIN_ROLE = keccak256("VOTING_ESCROW_MOCA_ADMIN_ROLE");
     bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = keccak256("ESCROWED_MOCA_ADMIN_ROLE");
+    bytes32 public constant ISSUER_STAKING_CONTROLLER_ADMIN_ROLE = keccak256("ISSUER_STAKING_CONTROLLER_ADMIN_ROLE");
 
     // For multiple contracts: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE");                   // withdraw fns on PaymentsController, VotingController
@@ -79,6 +80,7 @@ contract AccessController is AccessControl {
         _setRoleAdmin(CRON_JOB_ROLE, CRON_JOB_ADMIN_ROLE);
         
         // Low-frequency roles managed directly by global admin
+        _setRoleAdmin(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(PAYMENTS_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(VOTING_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(VOTING_ESCROW_MOCA_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
@@ -168,7 +170,24 @@ contract AccessController is AccessControl {
 
 // -------------------- LOW-FREQUENCY STRATEGIC ROLES (managed by DEFAULT_ADMIN_ROLE) --------------------
 
-    // PaymentsControllerAdmin role functions
+    // ------- IssuerStakingControllerAdmin role functions -------
+    function addIssuerStakingControllerAdmin(address addr) external noZeroAddress(addr) {
+        grantRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, addr);
+        emit Events.IssuerStakingControllerAdminAdded(addr, msg.sender);
+    }
+
+    function removeIssuerStakingControllerAdmin(address addr) external noZeroAddress(addr) {
+        revokeRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, addr);
+        emit Events.IssuerStakingControllerAdminRemoved(addr, msg.sender);
+    }
+
+    function isIssuerStakingControllerAdmin(address addr) external view returns (bool) {
+        return hasRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, addr);
+    }
+
+
+
+    // ------- PaymentsControllerAdmin role functions -------
     function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.PaymentsControllerAdminAdded(addr, msg.sender);
@@ -185,7 +204,8 @@ contract AccessController is AccessControl {
     }
 
 
-    // VotingControllerAdmin role functions
+
+    // ------- VotingControllerAdmin role functions -------
     function addVotingControllerAdmin(address addr) external noZeroAddress(addr) {
         grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
         emit Events.VotingControllerAdminAdded(addr, msg.sender);
@@ -201,7 +221,8 @@ contract AccessController is AccessControl {
     }
 
 
-    // VotingEscrowMocaAdmin role functions
+
+    // ------- VotingEscrowMocaAdmin role functions -------
     function addVotingEscrowMocaAdmin(address addr) external noZeroAddress(addr) {
         grantRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, addr);
         emit Events.VotingEscrowMocaAdminAdded(addr, msg.sender);
@@ -217,7 +238,7 @@ contract AccessController is AccessControl {
     }
 
 
-    // EscrowedMocaAdmin role functions
+    // ------- EscrowedMocaAdmin role functions -------
     function addEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
         grantRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
         emit Events.EscrowedMocaAdminAdded(addr, msg.sender);
@@ -233,7 +254,7 @@ contract AccessController is AccessControl {
     }
 
 
-    // AssetManager role functions | can only be added by global admin
+    // ------- AssetManager role functions ------- | [can only be added by global admin]
     function addAssetManager(address addr) external noZeroAddress(addr) {
         grantRole(ASSET_MANAGER_ROLE, addr);
         emit Events.AssetManagerAdded(addr, msg.sender);
@@ -249,7 +270,7 @@ contract AccessController is AccessControl {
     }
 
 
-    // EmergencyExitHandler role functions
+    // ------- EmergencyExitHandler role functions -------
     function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
         grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
         emit Events.EmergencyExitHandlerAdded(addr, msg.sender);

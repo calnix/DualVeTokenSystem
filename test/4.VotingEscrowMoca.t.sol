@@ -588,7 +588,14 @@ contract StateD14_Epoch1_LockCreatedAtT1_Test is StateD14_Epoch1_LockCreatedAtT1
             veMoca.increaseAmount(lock1_Id, 100 ether, 100 ether);
         }
 
+    // --------------------------state_transition: increaseAmount()  ----------------------------------
 
+        function test_IncreaseAmount_User1Lock1() public {
+            vm.warp(lock1_Expiry - 14 days);
+
+            vm.prank(user1);
+            veMoca.increaseAmount(lock1_Id, 100 ether, 100 ether);
+        }
 
 }
 

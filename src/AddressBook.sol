@@ -34,6 +34,7 @@ contract AddressBook is Ownable2Step, Pausable {
     bytes32 public constant ACCESS_CONTROLLER = 'ACCESS_CONTROLLER';
     bytes32 public constant VOTING_CONTROLLER = 'VOTING_CONTROLLER';
     bytes32 public constant PAYMENTS_CONTROLLER = 'PAYMENTS_CONTROLLER'; 
+    bytes32 public constant ISSUER_STAKING_CONTROLLER = 'ISSUER_STAKING_CONTROLLER';
     
     // Treasury
     bytes32 public constant TREASURY = 'TREASURY';
@@ -148,6 +149,10 @@ contract AddressBook is Ownable2Step, Pausable {
 
     function getPaymentsController() external view whenNotPaused returns (address) {
         return _addresses[PAYMENTS_CONTROLLER];
+    }
+
+    function getIssuerStakingController() external view whenNotPaused returns (address) {
+        return _addresses[ISSUER_STAKING_CONTROLLER];
     }
 
     function getTreasury() external view whenNotPaused returns (address) {

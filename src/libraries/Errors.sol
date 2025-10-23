@@ -25,6 +25,8 @@ library Errors {
     error NotFrozen();
     error IsFrozen();
     error NoFeesToClaim();
+    error InvalidTimestamp();
+    error InsufficientBalance();
 
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
@@ -33,7 +35,6 @@ library Errors {
     error SignatureExpired();
     error NoClaimableFees();
     error InvalidSchemaFee();
-    error InsufficientBalance();
     error InvalidSignature();
     error ZeroProtocolFee();
     error ProtocolFeeAlreadyWithdrawn();
@@ -50,7 +51,6 @@ library Errors {
     error InvalidDelegate();
     error LockExpiresTooSoon();
     error PrincipalsAlreadyReturned();
-    error InvalidTimestamp();
 
 // --------- VotingController.sol ---------
     error EpochNotEnded();
@@ -115,8 +115,8 @@ library Errors {
     error OnlyCallableByEscrowedMocaAdmin();
     error OnlyCallableByVotingControllerAdmin();
     error OnlyCallableByPaymentsControllerAdmin();
-
     error OnlyCallableByVotingControllerContract();
+    error OnlyCallableByIssuerStakingControllerAdmin();
     // transferGlobalAdminFromAddressBook
     error OnlyCallableByAddressBook();
     error OldAdminDoesNotHaveRole();

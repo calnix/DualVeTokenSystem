@@ -190,4 +190,12 @@ library Events {
     // transferGlobalAdminFromAddressBook
     event GlobalAdminTransferred(address indexed oldAdmin, address indexed newAdmin);
 
+// --------- IssuerStakingController.sol ---------
+    event Staked(address indexed caller, uint256 amount);
+    event UnstakeInitiated(address indexed caller, uint256 amount, uint256 claimableTimestamp);
+    event UnstakeClaimed(address indexed caller, uint256 amount);
+    event IssuerStakingControllerAdminAdded(address indexed admin, address indexed addedBy);
+    event IssuerStakingControllerAdminRemoved(address indexed admin, address indexed removedBy);
+    event EmergencyExit(address indexed treasury, uint256 totalMoca);
+
 }

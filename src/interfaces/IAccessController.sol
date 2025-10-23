@@ -87,6 +87,12 @@ interface IAccessController {
 // -------------------- LOW-FREQUENCY STRATEGIC ROLES --------------------
 
     /**
+     * @notice Returns true if the address has the IssuerStakingControllerAdmin role.
+     * @param addr The address to check.
+     */
+    function isIssuerStakingControllerAdmin(address addr) external view returns (bool);
+
+    /**
      * @notice Returns true if the address has the PaymentsControllerAdmin role.
      * @param addr The address to check.
      */
