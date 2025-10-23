@@ -121,7 +121,7 @@ contract IssuerStakingController is Pausable {
             uint256 timestamp = timestamps[i];
             
             // sanity checks
-            if(timestamp < block.timestamp) revert Errors.InvalidTimestamp();
+            if(timestamp > block.timestamp) revert Errors.InvalidTimestamp();
             if(pendingUnstakedMoca[msg.sender][timestamp] == 0) revert Errors.NothingToClaim();
 
             // add to total claimable

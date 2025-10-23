@@ -232,21 +232,77 @@ contract StateT1_InitiateUnstake_Partial_Test is StateT1_InitiateUnstake_Partial
         assertEq(mockMoca.balanceOf(address(issuerStakingController)), contractMocaBalanceBefore, "contract moca balance not correct after initiateUnstake");
         assertEq(mockMoca.balanceOf(issuer1Asset), issuerMocaBalanceBefore, "issuer moca balance not correct after initiateUnstake");
     }
-
 }
 
-/**
-    // state transition: issuer can claim unstake
-    function testCan_ClaimUnstake() public {
-        uint256 claimableTimestamp = block.timestamp + issuerStakingController.UNSTAKE_DELAY();
-        uint256 claimableAmount = ISSUER1_MOCA / 4;
+abstract contract StateT2_InitiateUnstake_Full is StateT1_InitiateUnstake_Partial {
+    
+    function setUp() public virtual override {
+        super.setUp();
 
-        vm.warp(claimableTimestamp);
+        vm.warp(2);
+        // initiate unstake [full unstaked]
+        vm.prank(issuer1Asset);
+        issuerStakingController.initiateUnstake(ISSUER1_MOCA / 4);
+    }
+}
+
+
+contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
+
+    function testVerifyState_Issuer1FullUnstaked() public {
+
+        // Check contract state
+        assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's moca staked not zero after full unstake");
+        assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "total moca staked not zero after full unstake");
+        assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), ISSUER1_MOCA/2, "pending unstake not set correctly after full unstake");
+
+        // Check token balance
+        assertEq(mockMoca.balanceOf(address(issuerStakingController)), ISSUER1_MOCA/2, "contract moca balance not set correctly after full unstake");
+        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA/2, "issuer moca balance not set correctly after full unstake");
+
+        // Check pending unstake
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, 1 + issuerStakingController.UNSTAKE_DELAY()), ISSUER1_MOCA/4, "pending unstake not set correctly after full unstake");
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, 2 + issuerStakingController.UNSTAKE_DELAY()), ISSUER1_MOCA/4, "pending unstake not set correctly after full unstake");
+    }
+
+    function testRevert_ClaimUnstake_InvalidArray() public {
+        uint256[] memory claimableTimestamps = new uint256[](0);
+        vm.expectRevert(Errors.InvalidArray.selector);
+        vm.prank(issuer1Asset);
+        issuerStakingController.claimUnstake(claimableTimestamps);
+    }
+
+    function testRevert_ClaimUnstake_InvalidTimestamp() public {
+        uint256[] memory claimableTimestamps = new uint256[](1);
+        claimableTimestamps[0] = block.timestamp;
+
+        vm.expectRevert(Errors.InvalidTimestamp.selector);
+        
+        vm.prank(issuer1Asset);
+        issuerStakingController.claimUnstake(claimableTimestamps);
+    }
+
+    function testRevert_ClaimUnstake_NothingToClaim() public {
+
+        uint256[] memory claimableTimestamps = new uint256[](1);
+        claimableTimestamps[0] = 3 + issuerStakingController.UNSTAKE_DELAY();
+
+        vm.expectRevert(Errors.NothingToClaim.selector);
+        vm.prank(issuer1Asset);
+        issuerStakingController.claimUnstake(claimableTimestamps);
+    }
+
+    // state transition: issuer1 can claim unstake
+    function testCan_ClaimFullUnstaked() public {
+        uint256 latestClaimableTimestamp = 2 + issuerStakingController.UNSTAKE_DELAY();
+        vm.warp(latestClaimableTimestamp);
+
+        uint256 claimableAmount = ISSUER1_MOCA/2;
 
         // --- Before: check contract & balance states ---
         // Contract state before
         uint256 issuerMocaStakedBefore = issuerStakingController.issuers(issuer1Asset);
-        uint256 pendingUnstakedMocaBefore = issuerStakingController.pendingUnstakedMoca(issuer1Asset, claimableTimestamp);
+        uint256 pendingUnstakedMocaBefore = issuerStakingController.pendingUnstakedMoca(issuer1Asset, latestClaimableTimestamp);
         uint256 totalMocaStakedBefore = issuerStakingController.TOTAL_MOCA_STAKED();
         uint256 totalMocaPendingUnstakeBefore = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
 
@@ -259,23 +315,25 @@ contract StateT1_InitiateUnstake_Partial_Test is StateT1_InitiateUnstake_Partial
         emit Events.UnstakeClaimed(issuer1Asset, claimableAmount);
 
         // create array of claimable timestamps
-        uint256[] memory claimableTimestamps = new uint256[](1);
-        claimableTimestamps[0] = claimableTimestamp;
+        uint256[] memory claimableTimestamps = new uint256[](2);
+        claimableTimestamps[0] = 1 + issuerStakingController.UNSTAKE_DELAY();
+        claimableTimestamps[1] = 2 + issuerStakingController.UNSTAKE_DELAY();
 
         // --- Claim unstake ---
         vm.prank(issuer1Asset);
-        issuerStakingController.claimUnstake([claimableTimestamp]);
+        issuerStakingController.claimUnstake(claimableTimestamps);
 
         // --- After: check contract & balance states ---
         // Contract state after
-        assertEq(issuerStakingController.issuers(issuer1Asset), issuerMocaStakedBefore - claimableAmount, "issuer's moca staked not set correctly after claimUnstake");
-        assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), totalMocaStakedBefore, "total moca staked should not change after claimUnstake");
+        assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's moca staked not zero after claimUnstake");
+        assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "total moca staked should not change after claimUnstake");
         assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), 0, "pending unstake should be zero after claimUnstake");
-        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, claimableTimestamp), pendingUnstakedMocaBefore - claimableAmount, "pendingUnstakedMoca should be zero after claimUnstake");
+        // pending mapping
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, 1 + issuerStakingController.UNSTAKE_DELAY()), 0, "pendingUnstakedMoca should be zero after claimUnstake");
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, 2 + issuerStakingController.UNSTAKE_DELAY()), 0, "pendingUnstakedMoca should be zero after claimUnstake");
 
         // Token balances after
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), contractMocaBalanceBefore + claimableAmount, "contract moca balance not correct after claimUnstake");
-        assertEq(mockMoca.balanceOf(issuer1Asset), issuerMocaBalanceBefore + claimableAmount, "issuer moca balance not correct after claimUnstake");
+        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 0, "contract moca balance not correct after claimUnstake");
+        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA, "issuer moca balance not correct after claimUnstake");
     }
-
- */
+}
