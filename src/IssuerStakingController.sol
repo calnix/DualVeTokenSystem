@@ -107,14 +107,15 @@ contract IssuerStakingController is Pausable {
 
         emit Events.UnstakeClaimed(msg.sender, totalClaimable);
     }
-//------------------------------- Admin: update functions---------------------------------------------------------------
+
+//------------------------------- Admin: setUnstakeDelay -------------------------------------------------------------
 
     /**
      * @notice Sets the unstake delay.
      * @dev Only callable by the IssuerStakingController admin.
      * @param newUnstakeDelay The new unstake delay.
      */
-    function setUnstakeDelay(uint256 newUnstakeDelay) external onlyIssuerStakingControllerAdmin {
+    function setUnstakeDelay(uint256 newUnstakeDelay) external onlyIssuerStakingControllerAdmin whenNotPaused {
         require(newUnstakeDelay > 0, Errors.InvalidDelayPeriod());
 
         // cache old + update to new unstake delay
