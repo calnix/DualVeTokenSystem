@@ -195,7 +195,7 @@ contract StateT1_InitiateUnstake_Partial_Test is StateT1_InitiateUnstake_Partial
     }
 
 
-    // state transition: issuer1 initiates unstake [partial unstake]
+    // state transition: issuer1 initiates unstake the remaining balance
     function testCan_InitiateUnstake_FullUnstake() public {
 
         // calculate claimable timestamp
