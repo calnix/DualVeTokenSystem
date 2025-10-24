@@ -198,6 +198,5 @@ library Events {
     event MaxStakeAmountUpdated(uint256 oldMaxStakeAmount, uint256 newMaxStakeAmount);
     event IssuerStakingControllerAdminAdded(address indexed admin, address indexed addedBy);
     event IssuerStakingControllerAdminRemoved(address indexed admin, address indexed removedBy);
-    event EmergencyExit(address indexed issuer, uint256 totalMoca);
-    event EmergencyExitBatch(address[] issuerAddresses, uint256 totalMoca);
+    event EmergencyExit(address[] issuerAddresses, uint256 totalMoca);
 }
