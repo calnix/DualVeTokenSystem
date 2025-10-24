@@ -842,22 +842,22 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
     function testRevert_UserCannotCallEmergencyExit_WhenFrozen() public {
         vm.prank(issuer1Asset);
         vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
-        issuerStakingController.emergencyExit();
+        issuerStakingController.emergencyExit(new address[](0));
     }
     
     function testRevert_MonitorCannotCallEmergencyExit_WhenFrozen() public {
         vm.prank(monitor);
         vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
-        issuerStakingController.emergencyExit();
+        issuerStakingController.emergencyExit(new address[](0));
     }
 
     function testRevert_IssuerStakingControllerAdminCannotCallEmergencyExit_WhenFrozen() public {
         vm.prank(issuerStakingControllerAdmin);
         vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
-        issuerStakingController.emergencyExit();
+        issuerStakingController.emergencyExit(new address[](0));
     }
 
-    function test_OnlyEmergencyExitHandler_CanEmergencyExit_WhenFrozen() public {
+    function test_EmergencyExitHandler_CanEmergencyExitBatch_WhenFrozen() public {
         // Setup before state for balances and contract variables
         uint256 totalStaked = issuerStakingController.TOTAL_MOCA_STAKED();
         uint256 totalPendingUnstake = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
@@ -868,13 +868,17 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         uint256 contractBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
         assertEq(contractBalanceBefore, totalMoca, "contract must have expected totalMoca");
 
-        // expect event emission
-        vm.expectEmit(true, true, false, true, address(issuerStakingController));
-        emit Events.EmergencyExit(treasury, totalMoca);
+        // Create array of issuer addresses for batch processing
+        address[] memory issuerAddresses = new address[](1);
+        issuerAddresses[0] = issuer1Asset;
 
-        // Emergency exit call
+        // expect event emission for batch processing
+        vm.expectEmit(true, true, false, true, address(issuerStakingController));
+        emit Events.EmergencyExitBatch(issuerAddresses, totalMoca);
+
+        // Emergency exit call with issuer addresses array
         vm.prank(emergencyExitHandler);
-        issuerStakingController.emergencyExit();
+        issuerStakingController.emergencyExit(issuerAddresses);
 
         // After checks
         assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "TOTAL_MOCA_STAKED should be reset");

@@ -43,6 +43,8 @@ contract IssuerStakingController is Pausable {
 
     mapping(address issuer => mapping(uint256 timestamp => uint256 pendingUnstake)) public pendingUnstakedMoca;
 
+    mapping(address issuer => uint256 totalPendingUnstake) public totalPendingUnstakedMoca;
+
 //------------------------------- Constructor---------------------------------------------------------------------
 
     constructor(address addressBook_, uint256 unstakeDelay, uint256 maxStakeAmount) {
@@ -96,6 +98,7 @@ contract IssuerStakingController is Pausable {
 
         // book pending unstake
         pendingUnstakedMoca[msg.sender][claimableTimestamp] += amount;
+        totalPendingUnstakedMoca[msg.sender] += amount;
         TOTAL_MOCA_PENDING_UNSTAKE += amount;
      
         // decrement active staked 
@@ -113,6 +116,7 @@ contract IssuerStakingController is Pausable {
     function claimUnstake(uint256[] calldata timestamps) external whenNotPaused {
         uint256 length = timestamps.length;
         if(length == 0) revert Errors.InvalidArray();
+        if(totalPendingUnstakedMoca[msg.sender] == 0) revert Errors.NothingToClaim();
 
         uint256 totalClaimable;
 
@@ -133,6 +137,7 @@ contract IssuerStakingController is Pausable {
         
         // update global: only update pending unstake [active staked is not affected]
         TOTAL_MOCA_PENDING_UNSTAKE -= totalClaimable;
+        totalPendingUnstakedMoca[msg.sender] -= totalClaimable;
 
         // transfer moca to issuer
         _moca().safeTransfer(msg.sender, totalClaimable);
@@ -231,30 +236,77 @@ contract IssuerStakingController is Pausable {
 
 
     /**
-     * @notice Exfiltrate all Moca from contract to the treasury during emergency exit.
-     * @dev Only callable by the emergency exit handler when the contract is frozen.
-     *      Transfers the sum of TOTAL_MOCA_STAKED and TOTAL_MOCA_PENDING_UNSTAKE to the treasury address.
-     *      Resets the global totals to zero after transfer.
+     * @notice Allows issuers or the emergency exit handler to withdraw all staked and pending-unstake MOCA for specified issuers during an emergency.
+     * @dev If called by an issuer, transfers their staked and pending-unstake MOCA to themselves and resets their balances.
+     *      If called by the emergency exit handler, processes each address in issuerAddresses, transferring their MOCA and resetting their balances.
+     *      Can only be called when the contract is frozen.
+     *      mapping `pendingUnstakedMoca` will retain its values per timestamp. No impact, since contract is frozen.
+     * @param issuerAddresses List of issuer addresses to process in batch (used only when called by the emergency exit handler).
      */
-    function emergencyExit() external onlyEmergencyExitHandler {
+    function emergencyExit(address[] calldata issuerAddresses) external {
         if(isFrozen == 0) revert Errors.NotFrozen();
 
-        // get treasury address
-        address treasury = addressBook.getTreasury();
-        if(treasury == address(0)) revert Errors.InvalidAddress();
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
+        bool isEmergencyExitHandler = accessController.isEmergencyExitHandler(msg.sender);
 
-        // get total moca
-        uint256 totalMoca = TOTAL_MOCA_STAKED + TOTAL_MOCA_PENDING_UNSTAKE;
-        if(totalMoca == 0) revert Errors.InvalidAmount();
+        // caller is expected to be an issuer
+        if(!isEmergencyExitHandler){
 
-        // transfer moca to treasury
-        _moca().safeTransfer(treasury, totalMoca);
+            // get issuer's moca staked
+            uint256 mocaStaked = issuers[msg.sender];
+            uint256 mocaPendingUnstake = totalPendingUnstakedMoca[msg.sender];
+            
+            // sanity check
+            uint256 totalMoca = mocaStaked + mocaPendingUnstake;
+            if(totalMoca == 0) revert Errors.InvalidAmount();
 
-        // reset global totals
-        delete TOTAL_MOCA_STAKED;
-        delete TOTAL_MOCA_PENDING_UNSTAKE;
+            // transfer moca to issuer
+            _moca().safeTransfer(msg.sender, totalMoca);
 
-        emit Events.EmergencyExit(treasury, totalMoca);
+            // reset issuer's moca staked and pending unstake
+            delete issuers[msg.sender];
+            delete totalPendingUnstakedMoca[msg.sender];
+
+            // globals: decrement accordingly
+            TOTAL_MOCA_STAKED -= mocaStaked;
+            TOTAL_MOCA_PENDING_UNSTAKE -= mocaPendingUnstake;
+            
+            emit Events.EmergencyExit(msg.sender, totalMoca);
+            
+        } else { // emergency exit handler is calling onBehalfOf
+
+            uint256 totalMocaStaked;
+            uint256 totalMocaPendingUnstake;
+
+            for(uint256 i; i < issuerAddresses.length; ++i) {
+                
+                address issuerAddress = issuerAddresses[i];
+                
+                // get issuer's total moca: staked and pending unstake
+                uint256 mocaStaked = issuers[issuerAddress];
+                uint256 mocaPendingUnstake = totalPendingUnstakedMoca[issuerAddress];
+                uint256 totalMocaAmount = mocaStaked + mocaPendingUnstake;
+                
+                // if 0, skip [no need for address check]
+                if(totalMocaAmount == 0) continue;
+
+                // transfer moca to issuer
+                _moca().safeTransfer(issuerAddress, totalMocaAmount);
+
+                // reset issuer's moca staked and pending unstake
+                delete issuers[issuerAddress];
+                delete totalPendingUnstakedMoca[issuerAddress];
+
+                totalMocaStaked += mocaStaked;
+                totalMocaPendingUnstake += mocaPendingUnstake;
+            }
+
+            // globals: decrement accordingly
+            TOTAL_MOCA_STAKED -= totalMocaStaked;
+            TOTAL_MOCA_PENDING_UNSTAKE -= totalMocaPendingUnstake;
+
+            emit Events.EmergencyExitBatch(issuerAddresses, (totalMocaStaked + totalMocaPendingUnstake));
+        }
     }
 
 }
