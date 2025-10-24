@@ -26,6 +26,9 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
 
         // Check max stake amount
         assertEq(issuerStakingController.MAX_STAKE_AMOUNT(), 1000 ether, "max stake amount not set correctly");
+
+        // check admin
+        assertTrue(accessController.isIssuerStakingControllerAdmin(issuerStakingControllerAdmin), "issuerStakingControllerAdmin not set correctly");
     }
 
     function testRevert_Constructor_InvalidAddressBook() public {
@@ -164,12 +167,16 @@ contract StateT1_Issuer1Staked_Test is StateT1_Issuer1Staked {
 
 abstract contract StateT1_InitiateUnstake_Partial is StateT1_Issuer1Staked {
 
+    uint256 public firstClaimableTimestamp;
+
     function setUp() public virtual override {
         super.setUp();
 
         // initiate unstake [partial unstake]
         vm.prank(issuer1Asset);
         issuerStakingController.initiateUnstake(ISSUER1_MOCA / 4);
+
+        firstClaimableTimestamp = block.timestamp + issuerStakingController.UNSTAKE_DELAY();
     }
 }
 
@@ -194,12 +201,62 @@ contract StateT1_InitiateUnstake_Partial_Test is StateT1_InitiateUnstake_Partial
         issuerStakingController.initiateUnstake(ISSUER1_MOCA);
     }
 
+    // state transition: admin updates unstake delay, including before/after state and event emission check
+    function testCan_UpdateUnstakeDelay() public {
+        // --- Before ---
+        uint256 oldUnstakeDelay = issuerStakingController.UNSTAKE_DELAY();
+        assertTrue(oldUnstakeDelay != 1 days, "Test precondition, unstake delay should not already be 1 day");
+
+        // --- Expect event emitted ---
+        vm.expectEmit(false, false, false, true);
+        emit Events.UnstakeDelayUpdated(oldUnstakeDelay, 1 days);
+
+        // --- Update unstake delay ---
+        vm.prank(issuerStakingControllerAdmin);
+        issuerStakingController.setUnstakeDelay(1 days);
+
+        // --- After: check contract state ---
+        assertEq(issuerStakingController.UNSTAKE_DELAY(), 1 days, "unstake delay not set correctly after updateUnstakeDelay");
+    }
+
+}
+
+abstract contract StateT1_UpdateUnstakeDelay is StateT1_InitiateUnstake_Partial {
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        // update unstake delay
+        vm.prank(issuerStakingControllerAdmin);
+        issuerStakingController.setUnstakeDelay(1 days);
+    }
+}
+
+contract StateT1_UpdateUnstakeDelay_Test is StateT1_UpdateUnstakeDelay {
+
+    function testVerifyState_UnstakeDelayUpdated() public {
+        assertEq(issuerStakingController.UNSTAKE_DELAY(), 1 days, "unstake delay not set correctly");
+    }
+
+    function testRevert_UpdateUnstakeDelay_ZeroDelay() public {
+        vm.prank(issuerStakingControllerAdmin);
+        vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+        issuerStakingController.setUnstakeDelay(0);
+    }
+
+    function testRevert_UserCannotUpdateUnstakeDelay() public {
+        vm.prank(issuer1Asset);
+        vm.expectRevert(Errors.OnlyCallableByIssuerStakingControllerAdmin.selector);
+        issuerStakingController.setUnstakeDelay(1 days);
+    }
 
     // state transition: issuer1 initiates unstake the remaining balance
     function testCan_InitiateUnstake_FullUnstake() public {
 
         // calculate claimable timestamp
         uint256 claimableTimestamp = block.timestamp + issuerStakingController.UNSTAKE_DELAY();
+
+        uint256 claimableAmount = ISSUER1_MOCA / 4;
 
         // --- Before: check contract & balance states ---
         // Contract state before
@@ -214,19 +271,19 @@ contract StateT1_InitiateUnstake_Partial_Test is StateT1_InitiateUnstake_Partial
 
         // --- Expect event emitted ---
         vm.expectEmit(true, true, true, true);
-        emit Events.UnstakeInitiated(issuer1Asset, ISSUER1_MOCA / 4, claimableTimestamp);
+        emit Events.UnstakeInitiated(issuer1Asset, claimableAmount, claimableTimestamp);
 
         // --- Initiate unstake ---
         vm.prank(issuer1Asset);
-        issuerStakingController.initiateUnstake(ISSUER1_MOCA / 4);
+        issuerStakingController.initiateUnstake(claimableAmount);
 
         // --- After: check contract & balance states ---
 
         // Contract state after
         assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's moca staked not zero after initiateUnstake");
         assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "total moca staked not zero after initiateUnstake");
-        assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), pendingUnstakedMocaBefore + ISSUER1_MOCA / 4, "pending unstake not set after initiateUnstake");
-        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, claimableTimestamp), totalMocaPendingUnstakeBefore + ISSUER1_MOCA / 4, "pendingUnstakedMoca not set after initiateUnstake");
+        assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), totalMocaPendingUnstakeBefore + claimableAmount, "TOTAL_MOCA_PENDING_UNSTAKE not set after initiateUnstake");
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, claimableTimestamp), pendingUnstakedMocaBefore + claimableAmount, "pendingUnstakedMoca not set after initiateUnstake");
 
         // Token balances after
         assertEq(mockMoca.balanceOf(address(issuerStakingController)), contractMocaBalanceBefore, "contract moca balance not correct after initiateUnstake");
@@ -234,15 +291,20 @@ contract StateT1_InitiateUnstake_Partial_Test is StateT1_InitiateUnstake_Partial
     }
 }
 
-abstract contract StateT2_InitiateUnstake_Full is StateT1_InitiateUnstake_Partial {
-    
+abstract contract StateT2_InitiateUnstake_Full is StateT1_UpdateUnstakeDelay {
+
+    uint256 public secondClaimableTimestamp;
+
     function setUp() public virtual override {
         super.setUp();
 
         vm.warp(2);
+        
         // initiate unstake [full unstaked]
         vm.prank(issuer1Asset);
         issuerStakingController.initiateUnstake(ISSUER1_MOCA / 4);
+
+        secondClaimableTimestamp = block.timestamp + issuerStakingController.UNSTAKE_DELAY();
     }
 }
 
@@ -261,8 +323,8 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
         assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA/2, "issuer moca balance not set correctly after full unstake");
 
         // Check pending unstake
-        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, 1 + issuerStakingController.UNSTAKE_DELAY()), ISSUER1_MOCA/4, "pending unstake not set correctly after full unstake");
-        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, 2 + issuerStakingController.UNSTAKE_DELAY()), ISSUER1_MOCA/4, "pending unstake not set correctly after full unstake");
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, firstClaimableTimestamp), ISSUER1_MOCA/4, "pending unstake for 1st claim not set correctly");
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, secondClaimableTimestamp), ISSUER1_MOCA/4, "pending unstake for 2nd claim not set correctly");
     }
 
     function testRevert_ClaimUnstake_InvalidArray() public {
@@ -274,10 +336,10 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
 
     function testRevert_ClaimUnstake_InvalidTimestamp() public {
         uint256[] memory claimableTimestamps = new uint256[](1);
-        claimableTimestamps[0] = block.timestamp;
+        claimableTimestamps[0] = block.timestamp + 1;
 
         vm.expectRevert(Errors.InvalidTimestamp.selector);
-        
+
         vm.prank(issuer1Asset);
         issuerStakingController.claimUnstake(claimableTimestamps);
     }
@@ -285,7 +347,7 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
     function testRevert_ClaimUnstake_NothingToClaim() public {
 
         uint256[] memory claimableTimestamps = new uint256[](1);
-        claimableTimestamps[0] = 3 + issuerStakingController.UNSTAKE_DELAY();
+        claimableTimestamps[0] = block.timestamp - 1;
 
         vm.expectRevert(Errors.NothingToClaim.selector);
         vm.prank(issuer1Asset);
@@ -294,15 +356,15 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
 
     // state transition: issuer1 can claim unstake
     function testCan_ClaimFullUnstaked() public {
-        uint256 latestClaimableTimestamp = 2 + issuerStakingController.UNSTAKE_DELAY();
-        vm.warp(latestClaimableTimestamp);
+        // note: firstClaimableTimestamp  > secondClaimableTimestamp | admin reduced unstake delay
+        vm.warp(firstClaimableTimestamp);
 
         uint256 claimableAmount = ISSUER1_MOCA/2;
 
         // --- Before: check contract & balance states ---
         // Contract state before
         uint256 issuerMocaStakedBefore = issuerStakingController.issuers(issuer1Asset);
-        uint256 pendingUnstakedMocaBefore = issuerStakingController.pendingUnstakedMoca(issuer1Asset, latestClaimableTimestamp);
+        uint256 pendingUnstakedMocaBefore = issuerStakingController.pendingUnstakedMoca(issuer1Asset, secondClaimableTimestamp);
         uint256 totalMocaStakedBefore = issuerStakingController.TOTAL_MOCA_STAKED();
         uint256 totalMocaPendingUnstakeBefore = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
 
@@ -310,14 +372,18 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
         uint256 contractMocaBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
         uint256 issuerMocaBalanceBefore = mockMoca.balanceOf(issuer1Asset);
 
+        // pending mapping
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, firstClaimableTimestamp), ISSUER1_MOCA/4, "pendingUnstakedMoca should be set correctly after initiateUnstake");
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, secondClaimableTimestamp), ISSUER1_MOCA/4, "pendingUnstakedMoca should be set correctly after initiateUnstake");
+
         // --- Expect event emitted ---
         vm.expectEmit(true, true, true, true);
         emit Events.UnstakeClaimed(issuer1Asset, claimableAmount);
 
         // create array of claimable timestamps
         uint256[] memory claimableTimestamps = new uint256[](2);
-        claimableTimestamps[0] = 1 + issuerStakingController.UNSTAKE_DELAY();
-        claimableTimestamps[1] = 2 + issuerStakingController.UNSTAKE_DELAY();
+        claimableTimestamps[0] = firstClaimableTimestamp;
+        claimableTimestamps[1] = secondClaimableTimestamp;
 
         // --- Claim unstake ---
         vm.prank(issuer1Asset);
@@ -329,11 +395,164 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
         assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "total moca staked should not change after claimUnstake");
         assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), 0, "pending unstake should be zero after claimUnstake");
         // pending mapping
-        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, 1 + issuerStakingController.UNSTAKE_DELAY()), 0, "pendingUnstakedMoca should be zero after claimUnstake");
-        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, 2 + issuerStakingController.UNSTAKE_DELAY()), 0, "pendingUnstakedMoca should be zero after claimUnstake");
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, firstClaimableTimestamp), 0, "pendingUnstakedMoca should be zero after claimUnstake");
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, secondClaimableTimestamp), 0, "pendingUnstakedMoca should be zero after claimUnstake");
 
         // Token balances after
         assertEq(mockMoca.balanceOf(address(issuerStakingController)), 0, "contract moca balance not correct after claimUnstake");
         assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA, "issuer moca balance not correct after claimUnstake");
     }
 }
+
+// note: since admin reduced unstake delay, we need to warp to second claimable timestamp to test available for first claim
+// firstClaimableTimestamp: 604,801 > secondClaimableTimestamp: 8,6402
+abstract contract State_FirstAvailableUnstakeClaim is StateT2_InitiateUnstake_Full {
+    function setUp() public virtual override {
+        super.setUp();
+
+        vm.warp(secondClaimableTimestamp);
+    }
+}
+
+contract State_FirstAvailableUnstakeClaim_Test is State_FirstAvailableUnstakeClaim {
+
+    function testRevert_CannotClaimBothUnstaked() public {
+        console2.log("block.timestamp", block.timestamp);
+        console2.log("firstClaimableTimestamp", firstClaimableTimestamp);
+        console2.log("secondClaimableTimestamp", secondClaimableTimestamp);
+        assertTrue(block.timestamp == secondClaimableTimestamp, "Test precondition, block.timestamp should be before 2nd claimable timestamp");
+
+
+        // create array of claimable timestamps
+        uint256[] memory claimableTimestamps = new uint256[](2);
+        claimableTimestamps[0] = firstClaimableTimestamp;
+        claimableTimestamps[1] = secondClaimableTimestamp;
+
+        // --- Claim unstake ---
+        vm.prank(issuer1Asset);
+        vm.expectRevert(Errors.InvalidTimestamp.selector);
+        issuerStakingController.claimUnstake(claimableTimestamps);
+    }
+
+    // note: secondClaimableTimestamp 
+    function test_CanClaimFirstAvailableUnstake() public {
+        // --- Before: check contract & balance states ---
+        // Contract state before
+        uint256 issuerMocaStakedBefore = issuerStakingController.issuers(issuer1Asset);
+        uint256 pendingUnstakedMocaBefore = issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp);
+        uint256 totalMocaStakedBefore = issuerStakingController.TOTAL_MOCA_STAKED();
+        uint256 totalMocaPendingUnstakeBefore = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
+
+        // Token balances before
+        uint256 contractMocaBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
+        uint256 issuerMocaBalanceBefore = mockMoca.balanceOf(issuer1Asset);
+
+        // pending mapping
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp), ISSUER1_MOCA/4);
+
+        // create array of claimable timestamps
+        uint256[] memory claimableTimestamps = new uint256[](1);
+        claimableTimestamps[0] = block.timestamp;
+
+        // --- Claim unstake ---
+        vm.prank(issuer1Asset);
+        issuerStakingController.claimUnstake(claimableTimestamps);
+
+        // --- After: check contract & balance states ---
+
+        // Contract state after
+        assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's moca must be 0");
+        assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "total moca staked must be 0");
+        assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), ISSUER1_MOCA/4, "pending unstake must be decremented after claimUnstake");
+        // pending mapping
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp), 0, "pendingUnstakedMoca must be deleted after claimUnstake");
+
+        // Token balances after
+        assertEq(mockMoca.balanceOf(address(issuerStakingController)), ISSUER1_MOCA/4, "contract moca balance not correct after claimUnstake");
+        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA/4 * 3, "issuer moca balance not correct after claimUnstake");
+    }
+}
+
+abstract contract State_SecondAvailableUnstakeClaim is State_FirstAvailableUnstakeClaim {
+    function setUp() public virtual override {
+        super.setUp();
+
+        // create array of claimable timestamps
+        uint256[] memory claimableTimestamps = new uint256[](1);
+        claimableTimestamps[0] = secondClaimableTimestamp;
+        
+        // claim first unstake      
+        vm.prank(issuer1Asset);
+        issuerStakingController.claimUnstake(claimableTimestamps);
+
+        // warp to first claimable timestamp
+        vm.warp(firstClaimableTimestamp);
+    }
+}
+
+contract State_SecondAvailableUnstakeClaim_Test is State_SecondAvailableUnstakeClaim {
+
+    // note: firstClaimableTimestamp
+    function test_CanClaimSecondAvailableUnstake() public {
+        // --- Before: check contract & balance states ---
+        // Contract state before
+        uint256 issuerMocaStakedBefore = issuerStakingController.issuers(issuer1Asset);
+        uint256 pendingUnstakedMocaBefore = issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp);
+        uint256 totalMocaStakedBefore = issuerStakingController.TOTAL_MOCA_STAKED();
+        uint256 totalMocaPendingUnstakeBefore = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
+
+        // pending mapping
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp), ISSUER1_MOCA/4);
+
+        // create array of claimable timestamps
+        uint256[] memory claimableTimestamps = new uint256[](1);
+        claimableTimestamps[0] = block.timestamp;
+
+        // --- Claim unstake ---
+        vm.prank(issuer1Asset);
+        issuerStakingController.claimUnstake(claimableTimestamps);
+
+        // --- After: check contract & balance states ---
+        // Contract state after
+        assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's moca must be 0");
+        assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "total moca staked must be 0");
+        assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), 0, "pending unstake must be 0");
+        // pending mapping
+        assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp), 0, "pendingUnstakedMoca must be deleted after claimUnstake");
+
+        // Token balances after
+        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 0, "contract moca balance not correct after claimUnstake");
+        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA, "issuer moca balance not correct after claimUnstake");        
+    }
+
+
+    // state transition: setMaxStakeAmount
+    function testCan_SetMaxStakeAmount() public {
+        // --- Before ---
+        uint256 oldMaxStakeAmount = issuerStakingController.MAX_STAKE_AMOUNT();
+        assertTrue(oldMaxStakeAmount != 10 ether, "Test precondition, max stake amount should not already be 1000 ether");
+
+        // --- Expect event emitted ---
+        vm.expectEmit(false, false, false, true);
+        emit Events.MaxStakeAmountUpdated(oldMaxStakeAmount, 10 ether);
+
+        // --- Set max stake amount ---
+        vm.prank(issuerStakingControllerAdmin);
+        issuerStakingController.setMaxStakeAmount(10 ether);
+
+        // --- After: check contract state ---
+        assertEq(issuerStakingController.MAX_STAKE_AMOUNT(), 10 ether, "max stake amount not set correctly after setMaxStakeAmount");
+    }
+}
+
+abstract contract StateT1_SetMaxStakeAmount_ReducedMaxStakeAmount is StateT1_InitiateUnstake_Partial {
+    function setUp() public virtual override {
+        super.setUp();
+
+        // set max stake amount
+        vm.prank(issuerStakingControllerAdmin);
+        issuerStakingController.setMaxStakeAmount(10 ether);
+    }
+}
+
+

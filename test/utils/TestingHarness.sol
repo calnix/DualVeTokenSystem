@@ -145,6 +145,7 @@ abstract contract TestingHarness is Test {
             accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin);
             accessController.grantRole(accessController.MONITOR_ADMIN_ROLE(), monitorAdmin);
             accessController.grantRole(accessController.CRON_JOB_ADMIN_ROLE(), cronJobAdmin);
+            accessController.grantRole(accessController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE(), issuerStakingControllerAdmin);
             accessController.grantRole(accessController.PAYMENTS_CONTROLLER_ADMIN_ROLE(), paymentsControllerAdmin);
             accessController.grantRole(accessController.VOTING_CONTROLLER_ADMIN_ROLE(), votingControllerAdmin);
             accessController.grantRole(accessController.VOTING_ESCROW_MOCA_ADMIN_ROLE(), votingEscrowMocaAdmin);
