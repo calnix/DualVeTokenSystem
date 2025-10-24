@@ -60,7 +60,6 @@ contract IssuerStakingController is Pausable {
 
 //------------------------------- External functions---------------------------------------------------------------
 
-
     /**
      * @notice Allows an issuer to stake a specified amount of MOCA tokens.
      * @dev Transfers MOCA tokens from the sender to this contract.
@@ -82,9 +81,9 @@ contract IssuerStakingController is Pausable {
         emit Events.Staked(msg.sender, amount);
     }
 
-    // note: does not transfer moca to issuer
+
     /**
-     * @notice Initiates the unstaking process for the caller's MOCA tokens.
+     * @notice Initiates the unstaking process for the caller's MOCA tokens. [note: does not transfer moca to issuer]
      * @dev Decrements the issuer's active staked balance and the global staked total.
      *      Increases the global pending unstake total.
      * @param amount The amount of MOCA tokens to unstake. Must be > 0 and <= the issuer's staked balance.
@@ -107,6 +106,7 @@ contract IssuerStakingController is Pausable {
 
         emit Events.UnstakeInitiated(msg.sender, amount, claimableTimestamp);
     }
+
 
     /**
      * @notice Claims unstaked MOCA tokens for the caller. Can claim multiple timestamps at once.
