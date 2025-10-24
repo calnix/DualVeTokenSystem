@@ -742,6 +742,9 @@ contract StateT604801_Unpaused_Test is StateT604801_Unpaused {
 
     function test_UserCannotInitiateUnstake_WhenUnpaused() public {
         vm.prank(issuer1Asset);
+        issuerStakingController.stakeMoca(1 ether);
+
+        vm.prank(issuer1Asset);
         issuerStakingController.initiateUnstake(1 ether);
     }
 
@@ -817,27 +820,44 @@ contract StateT604801_Paused_Again_Test is StateT604801_Paused_Again {
         assertEq(issuerStakingController.paused(), true, "contract should be frozen after freeze");
         assertEq(issuerStakingController.isFrozen(), 1, "contract should be frozen after freeze");
     }
+}
 
-    // state transition: emergencyExit
-    function testRevert_UserCannotCallEmergencyExit() public {
+abstract contract StateT604801_Frozen is StateT604801_Paused_Again {
+    function setUp() public virtual override {
+        super.setUp();
+
+        // freeze
+        vm.prank(globalAdmin);
+        issuerStakingController.freeze();
+    }
+}
+
+contract StateT604801_Frozen_Test is StateT604801_Frozen {
+
+    function testVerifyState_Frozen() public {
+        assertEq(issuerStakingController.paused(), true, "contract should be frozen after freeze");
+        assertEq(issuerStakingController.isFrozen(), 1, "contract should be frozen after freeze");
+    }
+
+    function testRevert_UserCannotCallEmergencyExit_WhenFrozen() public {
         vm.prank(issuer1Asset);
         vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
         issuerStakingController.emergencyExit();
     }
     
-    function testRevert_MonitorCannotCallEmergencyExit() public {
+    function testRevert_MonitorCannotCallEmergencyExit_WhenFrozen() public {
         vm.prank(monitor);
         vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
         issuerStakingController.emergencyExit();
     }
 
-    function testRevert_IssuerStakingControllerAdminCannotCallEmergencyExit() public {
+    function testRevert_IssuerStakingControllerAdminCannotCallEmergencyExit_WhenFrozen() public {
         vm.prank(issuerStakingControllerAdmin);
         vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
         issuerStakingController.emergencyExit();
     }
 
-    function test_OnlyEmergencyExitHandler_CanEmergencyExit() public {
+    function test_OnlyEmergencyExitHandler_CanEmergencyExit_WhenFrozen() public {
         // Setup before state for balances and contract variables
         uint256 totalStaked = issuerStakingController.TOTAL_MOCA_STAKED();
         uint256 totalPendingUnstake = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
@@ -863,10 +883,6 @@ contract StateT604801_Paused_Again_Test is StateT604801_Paused_Again {
         uint256 contractBalanceAfter = mockMoca.balanceOf(address(issuerStakingController));
 
         assertEq(contractBalanceAfter, 0, "contract balance should be zero after emergency exit");
-        assertEq(
-            treasuryBalanceAfter,
-            treasuryBalanceBefore + totalMoca,
-            "treasury should receive all Moca from the contract"
-        );
+        assertEq(treasuryBalanceAfter, treasuryBalanceBefore + totalMoca, "treasury should receive all Moca from the contract");
     }
 }
