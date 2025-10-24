@@ -135,7 +135,7 @@ contract IssuerStakingController is Pausable {
             delete pendingUnstakedMoca[msg.sender][timestamp];
         }
         
-        // update global: only update pending unstake [active staked is not affected]
+        // update global + user aggregate: only update pending unstake [active staked is not affected]
         TOTAL_MOCA_PENDING_UNSTAKE -= totalClaimable;
         totalPendingUnstakedMoca[msg.sender] -= totalClaimable;
 
@@ -161,6 +161,12 @@ contract IssuerStakingController is Pausable {
 
         emit Events.UnstakeDelayUpdated(oldUnstakeDelay, newUnstakeDelay);
     }
+
+    /**
+     * @notice Sets the maximum amount of MOCA that can be staked by an issuer.
+     * @dev Only callable by the IssuerStakingController admin.
+     * @param newMaxStakeAmount The new maximum stake amount.
+     */
 
     function setMaxStakeAmount(uint256 newMaxStakeAmount) external onlyIssuerStakingControllerAdmin whenNotPaused {
         require(newMaxStakeAmount > 0, Errors.InvalidAmount());
