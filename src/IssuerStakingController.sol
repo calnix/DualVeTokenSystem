@@ -48,13 +48,13 @@ contract IssuerStakingController is Pausable {
 //------------------------------- Constructor---------------------------------------------------------------------
 
     constructor(address addressBook_, uint256 unstakeDelay, uint256 maxStakeAmount) {
-        if(addressBook_ == address(0)) revert Errors.InvalidAddress();
+        require(addressBook_ != address(0), Errors.InvalidAddress());
         addressBook = IAddressBook(addressBook_);
 
-        if(unstakeDelay == 0) revert Errors.InvalidDelayPeriod();
+        require(unstakeDelay > 0, Errors.InvalidDelayPeriod());
         UNSTAKE_DELAY = unstakeDelay;
 
-        if(maxStakeAmount == 0) revert Errors.InvalidAmount();
+        require(maxStakeAmount > 0, Errors.InvalidAmount());
         MAX_STAKE_AMOUNT = maxStakeAmount;
     }
 
@@ -67,8 +67,8 @@ contract IssuerStakingController is Pausable {
      * @param amount The amount of MOCA tokens to stake. Must be > 0 and <= MAX_STAKE_AMOUNT.
      */
     function stakeMoca(uint256 amount) external whenNotPaused {
-        if(amount == 0) revert Errors.InvalidAmount();
-        if(amount > MAX_STAKE_AMOUNT) revert Errors.InvalidAmount();
+        require(amount > 0, Errors.InvalidAmount());
+        require(amount <= MAX_STAKE_AMOUNT, Errors.InvalidAmount());
         
         // update total moca staked
         TOTAL_MOCA_STAKED += amount;
@@ -90,8 +90,8 @@ contract IssuerStakingController is Pausable {
      * @param amount The amount of MOCA tokens to unstake. Must be > 0 and <= the issuer's staked balance.
      */
     function initiateUnstake(uint256 amount) external whenNotPaused {
-        if(amount == 0) revert Errors.InvalidAmount();
-        if(amount > issuers[msg.sender]) revert Errors.InsufficientBalance();
+        require(amount > 0, Errors.InvalidAmount());
+        require(amount <= issuers[msg.sender], Errors.InsufficientBalance());
 
         // calculate claimable timestamp
         uint256 claimableTimestamp = block.timestamp + UNSTAKE_DELAY;
@@ -115,8 +115,8 @@ contract IssuerStakingController is Pausable {
      */
     function claimUnstake(uint256[] calldata timestamps) external whenNotPaused {
         uint256 length = timestamps.length;
-        if(length == 0) revert Errors.InvalidArray();
-        if(totalPendingUnstakedMoca[msg.sender] == 0) revert Errors.NothingToClaim();
+        require(length > 0, Errors.InvalidArray());
+        require(totalPendingUnstakedMoca[msg.sender] > 0, Errors.NothingToClaim());
 
         uint256 totalClaimable;
 
@@ -125,8 +125,8 @@ contract IssuerStakingController is Pausable {
             uint256 timestamp = timestamps[i];
             
             // sanity checks
-            if(timestamp > block.timestamp) revert Errors.InvalidTimestamp();
-            if(pendingUnstakedMoca[msg.sender][timestamp] == 0) revert Errors.NothingToClaim();
+            require(timestamp <= block.timestamp, Errors.InvalidTimestamp());
+            require(pendingUnstakedMoca[msg.sender][timestamp] > 0, Errors.NothingToClaim());
 
             // add to total claimable
             totalClaimable += pendingUnstakedMoca[msg.sender][timestamp];
@@ -153,7 +153,7 @@ contract IssuerStakingController is Pausable {
      * @param newUnstakeDelay The new unstake delay.
      */
     function setUnstakeDelay(uint256 newUnstakeDelay) external onlyIssuerStakingControllerAdmin whenNotPaused {
-        if(newUnstakeDelay == 0) revert Errors.InvalidDelayPeriod();
+        require(newUnstakeDelay > 0, Errors.InvalidDelayPeriod());
 
         // cache old + update to new unstake delay
         uint256 oldUnstakeDelay = UNSTAKE_DELAY;
@@ -163,7 +163,7 @@ contract IssuerStakingController is Pausable {
     }
 
     function setMaxStakeAmount(uint256 newMaxStakeAmount) external onlyIssuerStakingControllerAdmin whenNotPaused {
-        if(newMaxStakeAmount == 0) revert Errors.InvalidAmount();
+        require(newMaxStakeAmount > 0, Errors.InvalidAmount());
 
         // cache old + update to new max stake amount
         uint256 oldMaxStakeAmount = MAX_STAKE_AMOUNT;
@@ -218,7 +218,7 @@ contract IssuerStakingController is Pausable {
      * @notice Unpause pool. Cannot unpause once frozen
      */
     function unpause() external onlyGlobalAdmin whenPaused {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        require(isFrozen == 0, Errors.IsFrozen()); 
         _unpause();
     }
 
@@ -229,7 +229,7 @@ contract IssuerStakingController is Pausable {
      *      Enables emergencyExit() to be called.
      */
     function freeze() external onlyGlobalAdmin whenPaused {
-        if(isFrozen == 1) revert Errors.IsFrozen();
+        require(isFrozen == 0, Errors.IsFrozen());
         isFrozen = 1;
         emit Events.ContractFrozen();
     }  
@@ -244,8 +244,8 @@ contract IssuerStakingController is Pausable {
      * @param issuerAddresses Array of issuer addresses to process in batch.
      */
     function emergencyExit(address[] calldata issuerAddresses) external onlyEmergencyExitHandler {
-        if(isFrozen == 0) revert Errors.NotFrozen();
-        if(issuerAddresses.length == 0) revert Errors.InvalidArray();
+        require(isFrozen == 1, Errors.NotFrozen());
+        require(issuerAddresses.length > 0, Errors.InvalidArray());
 
         uint256 totalMocaStaked;
         uint256 totalMocaPendingUnstake;
@@ -269,7 +269,7 @@ contract IssuerStakingController is Pausable {
             delete issuers[issuerAddress];
             delete totalPendingUnstakedMoca[issuerAddress];
 
-
+            // update counters
             totalMocaStaked += mocaStaked;
             totalMocaPendingUnstake += mocaPendingUnstake;
         }
@@ -280,5 +280,4 @@ contract IssuerStakingController is Pausable {
 
         emit Events.EmergencyExit(issuerAddresses, (totalMocaStaked + totalMocaPendingUnstake));
     }
-
 }
