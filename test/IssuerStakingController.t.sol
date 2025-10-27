@@ -25,14 +25,15 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
         assertEq(issuerStakingController.UNSTAKE_DELAY(), 7 days, "unstake delay not set correctly");
 
         // Check max stake amount
-        assertEq(issuerStakingController.MAX_STAKE_AMOUNT(), 1000 ether, "max stake amount not set correctly");
-
+        assertEq(issuerStakingController.MAX_SINGLE_STAKE_AMOUNT(), 1000 ether, "max stake amount not set correctly");
+        
         // check admin
         assertTrue(accessController.isIssuerStakingControllerAdmin(issuerStakingControllerAdmin), "issuerStakingControllerAdmin not set correctly");
     }
 
+    //note: addressBook and accessController were not set correctly; constructor reverts 
     function testRevert_Constructor_InvalidAddressBook() public {
-        vm.expectRevert(Errors.InvalidAddress.selector);
+        vm.expectRevert();
         new IssuerStakingController(address(0), 7 days, 1000 ether);
     }
 
@@ -111,11 +112,11 @@ contract StateT1_Issuer1Staked_Test is StateT1_Issuer1Staked {
     //note: foundry bug, when using expectRevert, the call doesn't revert.
     // but when removing vm.expectRevert, the call reverts as expected.
     // so we use try/catch to verify the call reverted.
-    function testRevert_StakeMoca_ExceedsMaxStakeAmount() public {
+    function testRevert_StakeMoca_ExceedsMaxSingleStakeAmount() public {
             
         bool success;
 
-        try issuerStakingController.stakeMoca(issuerStakingController.MAX_STAKE_AMOUNT() + 10000 ether) {
+        try issuerStakingController.stakeMoca(issuerStakingController.MAX_SINGLE_STAKE_AMOUNT() + 10000 ether) {
             // If we get here, the call succeeded (unexpected)
             success = true;
         } catch {
@@ -244,6 +245,12 @@ contract StateT1_UpdateUnstakeDelay_Test is StateT1_UpdateUnstakeDelay {
         vm.prank(issuerStakingControllerAdmin);
         vm.expectRevert(Errors.InvalidDelayPeriod.selector);
         issuerStakingController.setUnstakeDelay(0);
+    }
+
+    function testRevert_UpdateUnstakeDelay_Exceeds90Days() public {
+        vm.prank(issuerStakingControllerAdmin);
+        vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+        issuerStakingController.setUnstakeDelay(91 days);
     }
 
     function testRevert_UserCannotUpdateUnstakeDelay() public {
@@ -537,56 +544,56 @@ contract StateT604801_SecondAvailableUnstakeClaim_Test is StateT604801_SecondAva
     }
 
 
-    // state transition: setMaxStakeAmount
-    function testCan_SetMaxStakeAmount() public {
+    // state transition: setMaxSingleStakeAmount
+    function testCan_SetMaxSingleStakeAmount() public {
         // --- Before ---
-        uint256 oldMaxStakeAmount = issuerStakingController.MAX_STAKE_AMOUNT();
-        assertTrue(oldMaxStakeAmount != 10 ether, "Test precondition, max stake amount should not already be 1000 ether");
+        uint256 oldMaxSingleStakeAmount = issuerStakingController.MAX_SINGLE_STAKE_AMOUNT();
+        assertTrue(oldMaxSingleStakeAmount != 10 ether, "Test precondition, max stake amount should not already be 1000 ether");
 
         // --- Expect event emitted ---
         vm.expectEmit(false, false, false, true);
-        emit Events.MaxStakeAmountUpdated(oldMaxStakeAmount, 10 ether);
+        emit Events.MaxSingleStakeAmountUpdated(oldMaxSingleStakeAmount, 10 ether);
 
-        // --- Set max stake amount ---
+        // --- Set max single stake amount ---
         vm.prank(issuerStakingControllerAdmin);
-        issuerStakingController.setMaxStakeAmount(10 ether);
+        issuerStakingController.setMaxSingleStakeAmount(10 ether);
 
         // --- After: check contract state ---
-        assertEq(issuerStakingController.MAX_STAKE_AMOUNT(), 10 ether, "max stake amount not set correctly after setMaxStakeAmount");
+        assertEq(issuerStakingController.MAX_SINGLE_STAKE_AMOUNT(), 10 ether, "max stake amount not set correctly after setMaxSingleStakeAmount");
     }
 }
 
-abstract contract StateT604801_SetMaxStakeAmount_ReducedMaxStakeAmount is StateT604801_SecondAvailableUnstakeClaim {
+abstract contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount is StateT604801_SecondAvailableUnstakeClaim {
     function setUp() public virtual override {
         super.setUp();
 
         
         // set max stake amount
         vm.prank(issuerStakingControllerAdmin);
-        issuerStakingController.setMaxStakeAmount(10 ether);
+        issuerStakingController.setMaxSingleStakeAmount(10 ether);
     }
 }
 
-contract StateT604801_SetMaxStakeAmount_ReducedMaxStakeAmount_Test is StateT604801_SetMaxStakeAmount_ReducedMaxStakeAmount {
+contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount_Test is StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount {
  
     function testVerifyState_ReducedMaxStakeAmount() public {
-        assertEq(issuerStakingController.MAX_STAKE_AMOUNT(), 10 ether, "max stake amount not set correctly after setMaxStakeAmount");
+        assertEq(issuerStakingController.MAX_SINGLE_STAKE_AMOUNT(), 10 ether, "max single stake amount not set correctly after setMaxSingleStakeAmount");
     }
 
-    function testRevert_SetMaxStakeAmount_ZeroAmount() public {
+    function testRevert_SetMaxSingleStakeAmount_ZeroAmount() public {
         vm.prank(issuerStakingControllerAdmin);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        issuerStakingController.setMaxStakeAmount(0);
+        issuerStakingController.setMaxSingleStakeAmount(0);
     }
 
-    function testRevert_UserCannotSetMaxStakeAmount() public {
+    function testRevert_UserCannotSetMaxSingleStakeAmount() public {
         vm.prank(issuer1Asset);
         vm.expectRevert(Errors.OnlyCallableByIssuerStakingControllerAdmin.selector);
-        issuerStakingController.setMaxStakeAmount(10 ether);
+        issuerStakingController.setMaxSingleStakeAmount(10 ether);
     }
 
 
-    function testRevert_UserCannotExceedNewMaxStakeAmount() public {
+    function testRevert_UserCannotExceedNewMaxSingleStakeAmount() public {
         vm.prank(issuer1Asset);
         vm.expectRevert(Errors.InvalidAmount.selector);
         issuerStakingController.stakeMoca(11 ether);
@@ -645,7 +652,7 @@ contract StateT604801_SetMaxStakeAmount_ReducedMaxStakeAmount_Test is StateT6048
     }
 }
 
-abstract contract StateT604801_Paused is StateT604801_SetMaxStakeAmount_ReducedMaxStakeAmount {
+abstract contract StateT604801_Paused is StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount {
     function setUp() public virtual override {
         super.setUp();
 
@@ -685,10 +692,10 @@ contract StateT604801_Paused_Test is StateT604801_Paused {
     }
 
 // --------- Admin functions that should revert when contract is paused ---------
-    function testRevert_AdminCannotSetMaxStakeAmount_WhenPaused() public {
+    function testRevert_AdminCannotSetMaxSingleStakeAmount_WhenPaused() public {
         vm.prank(issuerStakingControllerAdmin);
         vm.expectRevert(Pausable.EnforcedPause.selector);
-        issuerStakingController.setMaxStakeAmount(10 ether);
+        issuerStakingController.setMaxSingleStakeAmount(10 ether);
     }
     
     
@@ -769,7 +776,7 @@ contract StateT604801_Unpaused_Test is StateT604801_Unpaused {
     // --------- Admin functions that should not revert when contract is unpaused ---------
     function test_AdminCanSetMaxStakeAmount_WhenUnpaused() public {
         vm.prank(issuerStakingControllerAdmin);
-        issuerStakingController.setMaxStakeAmount(10 ether);
+        issuerStakingController.setMaxSingleStakeAmount(10 ether);
     }
     
     
@@ -861,25 +868,7 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         assertEq(issuerStakingController.paused(), true, "contract should be frozen after freeze");
         assertEq(issuerStakingController.isFrozen(), 1, "contract should be frozen after freeze");
     }
-
-    function testRevert_User_CannotCallEmergencyExit_WhenFrozen() public {
-        vm.prank(issuer1Asset);
-        vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
-        issuerStakingController.emergencyExit(new address[](0));
-    }
-    
-    function testRevert_Monitor_CannotCallEmergencyExit_WhenFrozen() public {
-        vm.prank(monitor);
-        vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
-        issuerStakingController.emergencyExit(new address[](0));
-    }
-
-    function testRevert_IssuerStakingControllerAdmin_CannotCallEmergencyExit_WhenFrozen() public {
-        vm.prank(issuerStakingControllerAdmin);
-        vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
-        issuerStakingController.emergencyExit(new address[](0));
-    }
-
+   
     // Test case: emergencyExit with empty array
     function testRevert_EmergencyExit_EmptyArray() public {
         address[] memory emptyArray = new address[](0);
@@ -889,6 +878,30 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         issuerStakingController.emergencyExit(emptyArray);
     }
 
+    // Test case: random user cannot emergency exit for others
+    function testRevert_UserCannotEmergencyExit_ForOthers() public {
+        address randomUser = makeAddr("randomUser");
+        
+        address[] memory issuerAddresses = new address[](1);
+        issuerAddresses[0] = issuer1Asset; // Issuer's address but called by random user
+        
+        vm.prank(randomUser);
+        vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandlerOrIssuer.selector);
+        issuerStakingController.emergencyExit(issuerAddresses);
+    }
+
+    // Test case: issuer cannot emergency exit for others in batch
+    function testRevert_IssuerCannotEmergencyExit_ForOthersInBatch() public {
+        address anotherIssuer = makeAddr("anotherIssuer");
+        
+        address[] memory issuerAddresses = new address[](2);
+        issuerAddresses[0] = issuer1Asset; // Own address
+        issuerAddresses[1] = anotherIssuer; // Another issuer's address
+        
+        vm.prank(issuer1Asset);
+        vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandlerOrIssuer.selector);
+        issuerStakingController.emergencyExit(issuerAddresses);
+    }
 
     // Test case: emergencyExit with issuers having zero balances (should skip)
     function test_EmergencyExit_SkipsZeroBalanceIssuers() public {
@@ -913,7 +926,7 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         assertEq(issuerStakingController.issuers(zeroBalanceIssuer), 0);
     }
 
-    function test_OnlyEmergencyExitHandler_CanEmergencyExit_WhenFrozen() public {
+    function test_EmergencyExitHandler_CanEmergencyExit_WhenFrozen() public {
         // Setup before state for balances and contract variables
         uint256 totalStaked = issuerStakingController.TOTAL_MOCA_STAKED();
         uint256 totalPendingUnstake = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
@@ -951,6 +964,32 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
 
         assertEq(contractBalanceAfter, 0, "contract balance should be zero after emergency exit");
         assertEq(issuerBalanceAfter, issuerBalanceBefore + totalMoca, "issuer should receive all their Moca from the contract");
+    }
+
+    // Test case: issuer can emergency exit for themselves
+    function test_Issuer_CanEmergencyExit_ForThemselves() public {
+        uint256 totalStaked = issuerStakingController.TOTAL_MOCA_STAKED();
+        uint256 totalPendingUnstake = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
+        uint256 totalMoca = totalStaked + totalPendingUnstake;
+
+        uint256 issuerBalanceBefore = mockMoca.balanceOf(issuer1Asset);
+        uint256 contractBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
+
+        address[] memory issuerAddresses = new address[](1);
+        issuerAddresses[0] = issuer1Asset;
+
+        vm.expectEmit(true, true, false, true, address(issuerStakingController));
+        emit Events.EmergencyExit(issuerAddresses, totalMoca);
+
+        vm.prank(issuer1Asset);
+        issuerStakingController.emergencyExit(issuerAddresses);
+
+        assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "TOTAL_MOCA_STAKED should be reset");
+        assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), 0, "TOTAL_MOCA_PENDING_UNSTAKE should be reset");
+        assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's staked balance should be reset");
+        assertEq(issuerStakingController.totalPendingUnstakedMoca(issuer1Asset), 0, "issuer's pending unstake balance should be reset");
+        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 0, "contract balance should be zero");
+        assertEq(mockMoca.balanceOf(issuer1Asset), issuerBalanceBefore + totalMoca, "issuer should receive all their Moca");
     }
 
     // --------- Others ---------

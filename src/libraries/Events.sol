@@ -195,7 +195,7 @@ library Events {
     event UnstakeInitiated(address indexed caller, uint256 amount, uint256 claimableTimestamp);
     event UnstakeClaimed(address indexed caller, uint256 amount);
     event UnstakeDelayUpdated(uint256 oldDelay, uint256 newDelay);
-    event MaxStakeAmountUpdated(uint256 oldMaxStakeAmount, uint256 newMaxStakeAmount);
+    event MaxSingleStakeAmountUpdated(uint256 oldMaxSingleStakeAmount, uint256 newMaxSingleStakeAmount);
     event IssuerStakingControllerAdminAdded(address indexed admin, address indexed addedBy);
     event IssuerStakingControllerAdminRemoved(address indexed admin, address indexed removedBy);
     event EmergencyExit(address[] issuerAddresses, uint256 totalMoca);

@@ -19,7 +19,8 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
  * @title IssuerStakingController
  * @author Calnix [@cal_nix]
  * @notice Central contract managing issuer staking and unstaking
- * @dev Integrates with external controllers and enforces protocol-level access and safety checks
+ * @dev Integrates with external controllers and enforces protocol-level access and safety checks.
+ *      Works with Native Moca - not ERC20 MOCA.
  */
 
 
@@ -32,7 +33,7 @@ contract IssuerStakingController is Pausable {
     uint256 public TOTAL_MOCA_PENDING_UNSTAKE;
     
     uint256 public UNSTAKE_DELAY;
-    uint256 public MAX_STAKE_AMOUNT;    // to prevent fat-finger mistakes on excess allocation on staking
+    uint256 public MAX_SINGLE_STAKE_AMOUNT;    // to prevent fat-finger mistakes on excess allocation on staking
     
     // risk management
     uint256 public isFrozen;
@@ -48,14 +49,18 @@ contract IssuerStakingController is Pausable {
 //------------------------------- Constructor---------------------------------------------------------------------
 
     constructor(address addressBook_, uint256 unstakeDelay, uint256 maxStakeAmount) {
-        require(addressBook_ != address(0), Errors.InvalidAddress());
+       
+        // check: access controller is set on address book [ensures tt both addressBook and accessController are set]
         addressBook = IAddressBook(addressBook_);
-
+        require(addressBook.getAccessController() != address(0), Errors.InvalidAddress());
+        
+        // sanity checks
         require(unstakeDelay > 0, Errors.InvalidDelayPeriod());
+        require(unstakeDelay <= 90 days, Errors.InvalidDelayPeriod());
         UNSTAKE_DELAY = unstakeDelay;
 
         require(maxStakeAmount > 0, Errors.InvalidAmount());
-        MAX_STAKE_AMOUNT = maxStakeAmount;
+        MAX_SINGLE_STAKE_AMOUNT = maxStakeAmount;
     }
 
 //------------------------------- External functions---------------------------------------------------------------
@@ -67,7 +72,7 @@ contract IssuerStakingController is Pausable {
      */
     function stakeMoca(uint256 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
-        require(amount <= MAX_STAKE_AMOUNT, Errors.InvalidAmount());
+        require(amount <= MAX_SINGLE_STAKE_AMOUNT, Errors.InvalidAmount());
         
         // update total moca staked
         TOTAL_MOCA_STAKED += amount;
@@ -148,12 +153,13 @@ contract IssuerStakingController is Pausable {
 //------------------------------- Admin: setUnstakeDelay -------------------------------------------------------------
 
     /**
-     * @notice Sets the unstake delay.
-     * @dev Only callable by the IssuerStakingController admin.
+     * @notice Sets the unstake delay. Only applies to new unstakes initiated after the update.
+     * @dev Only callable by the IssuerStakingController admin. Must be > 0 and <= 90 days.
      * @param newUnstakeDelay The new unstake delay.
      */
     function setUnstakeDelay(uint256 newUnstakeDelay) external onlyIssuerStakingControllerAdmin whenNotPaused {
         require(newUnstakeDelay > 0, Errors.InvalidDelayPeriod());
+        require(newUnstakeDelay <= 90 days, Errors.InvalidDelayPeriod());
 
         // cache old + update to new unstake delay
         uint256 oldUnstakeDelay = UNSTAKE_DELAY;
@@ -163,19 +169,19 @@ contract IssuerStakingController is Pausable {
     }
 
     /**
-     * @notice Sets the maximum amount of MOCA that can be staked by an issuer.
+     * @notice Sets the maximum amount of MOCA that can be staked by an issuer in a single transaction.
      * @dev Only callable by the IssuerStakingController admin.
-     * @param newMaxStakeAmount The new maximum stake amount.
+     * @param newMaxSingleStakeAmount The new maximum single stake amount.
      */
 
-    function setMaxStakeAmount(uint256 newMaxStakeAmount) external onlyIssuerStakingControllerAdmin whenNotPaused {
-        require(newMaxStakeAmount > 0, Errors.InvalidAmount());
+    function setMaxSingleStakeAmount(uint256 newMaxSingleStakeAmount) external onlyIssuerStakingControllerAdmin whenNotPaused {
+        require(newMaxSingleStakeAmount > 0, Errors.InvalidAmount());
 
         // cache old + update to new max stake amount
-        uint256 oldMaxStakeAmount = MAX_STAKE_AMOUNT;
-        MAX_STAKE_AMOUNT = newMaxStakeAmount;
+        uint256 oldMaxSingleStakeAmount = MAX_SINGLE_STAKE_AMOUNT;
+        MAX_SINGLE_STAKE_AMOUNT = newMaxSingleStakeAmount;
 
-        emit Events.MaxStakeAmountUpdated(oldMaxStakeAmount, newMaxStakeAmount);
+        emit Events.MaxSingleStakeAmountUpdated(oldMaxSingleStakeAmount, newMaxSingleStakeAmount);
     }
 
 //------------------------------- Internal functions---------------------------------------------------------------
@@ -242,48 +248,56 @@ contract IssuerStakingController is Pausable {
 
 
     /**
-     * @notice Allows the emergency exit handler to withdraw all staked and pending-unstake MOCA for specified issuers during an emergency.
-     * @dev Only callable by the emergency exit handler when the contract is frozen.
-     *      For each address in `issuerAddresses`, transfers the issuer's staked and pending-unstake MOCA to the issuer, 
-     *      resets staked and pending-unstake balances, and emits an EmergencyExit event with the processed issuers and total MOCA transferred.
+     * @notice Allows issuers or the emergency exit handler to withdraw all staked and pending-unstake MOCA for specified issuers during an emergency.
+     * @dev If called by an issuer, they should pass an array of length 1 with their own address.
+     *      If called by the emergency exit handler, they should pass an array of length > 1 with the addresses of the issuers to exit.
+     *      Can only be called when the contract is frozen.
      *      The mapping `pendingUnstakedMoca` is not cleared per timestamp; this is a non-issue since the contract is frozen.
      * @param issuerAddresses Array of issuer addresses to process in batch.
      */
-    function emergencyExit(address[] calldata issuerAddresses) external onlyEmergencyExitHandler {
+    function emergencyExit(address[] calldata issuerAddresses) external {
         require(isFrozen == 1, Errors.NotFrozen());
         require(issuerAddresses.length > 0, Errors.InvalidArray());
 
         uint256 totalMocaStaked;
         uint256 totalMocaPendingUnstake;
 
-        for(uint256 i; i < issuerAddresses.length; ++i) {
+        IAccessController accessController = IAccessController(addressBook.getAccessController());
 
+        for(uint256 i; i < issuerAddresses.length; ++i) { 
             address issuerAddress = issuerAddresses[i];
+            
+            // check: if NOT emergency exit handler, AND NOT, the issuer themselves, revert
+            if (!accessController.isEmergencyExitHandler(msg.sender)) {
+                if (msg.sender != issuerAddress) {
+                    revert Errors.OnlyCallableByEmergencyExitHandlerOrIssuer();
+                }
+            }
 
             // get issuer's total moca: staked and pending unstake
-            uint256 mocaStaked = issuers[issuerAddress];
-            uint256 mocaPendingUnstake = totalPendingUnstakedMoca[issuerAddress];
+            uint256 mocaStaked = issuers[issuerAddress]; 
+            uint256 mocaPendingUnstake = totalPendingUnstakedMoca[issuerAddress]; 
 
             // sanity check: skip if 0; no need for address check
             uint256 totalMocaAmount = mocaStaked + mocaPendingUnstake;
             if(totalMocaAmount == 0) continue;
 
             // transfer moca to issuer
-            _moca().safeTransfer(issuerAddress, totalMocaAmount);
+            _moca().safeTransfer(issuerAddress, totalMocaAmount); 
 
-            // reset issuer's moca staked and pending unstake
-            delete issuers[issuerAddress];
-            delete totalPendingUnstakedMoca[issuerAddress];
+            // reset issuer's moca staked and pending unstake 
+            delete issuers[issuerAddress]; 
+            delete totalPendingUnstakedMoca[issuerAddress]; 
 
             // update counters
-            totalMocaStaked += mocaStaked;
-            totalMocaPendingUnstake += mocaPendingUnstake;
+            totalMocaStaked += mocaStaked; 
+            totalMocaPendingUnstake += mocaPendingUnstake; 
         }
 
         // globals: decrement accordingly
-        TOTAL_MOCA_STAKED -= totalMocaStaked;
-        TOTAL_MOCA_PENDING_UNSTAKE -= totalMocaPendingUnstake;
+        TOTAL_MOCA_STAKED -= totalMocaStaked; 
+        TOTAL_MOCA_PENDING_UNSTAKE -= totalMocaPendingUnstake; 
 
-        emit Events.EmergencyExit(issuerAddresses, (totalMocaStaked + totalMocaPendingUnstake));
+        emit Events.EmergencyExit(issuerAddresses, (totalMocaStaked + totalMocaPendingUnstake)); 
     }
 }

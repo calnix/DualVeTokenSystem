@@ -41,6 +41,7 @@ library Errors {
     error ProtocolFeeAlreadyWithdrawn();
     error VotersFeeAlreadyWithdrawn();
     error ZeroVotersFee();
+    error OnlyCallableByEmergencyExitHandlerOrIssuer();
 
 // --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();
