@@ -235,7 +235,7 @@ contract IssuerStakingController is Pausable {
      *      If called by the emergency exit handler, they should pass an array of length > 1 with the addresses of the issuers to exit.
      *      Can only be called when the contract is frozen.
      *      The mapping `pendingUnstakedMoca` is not cleared per timestamp; this is a non-issue since the contract is frozen.
-     * @param issuerAddresses Array of issuer addresses to process in batch.
+     * @param issuerAddresses Array of issuer addresses to process in batch
      */
     function emergencyExit(address[] calldata issuerAddresses) external {
         require(isFrozen == 1, Errors.NotFrozen());
