@@ -41,7 +41,6 @@ library Errors {
     error ProtocolFeeAlreadyWithdrawn();
     error VotersFeeAlreadyWithdrawn();
     error ZeroVotersFee();
-    error OnlyCallableByEmergencyExitHandlerOrIssuer();
 
 // --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();
@@ -122,4 +121,7 @@ library Errors {
     error OnlyCallableByAddressBook();
     error OldAdminDoesNotHaveRole();
 
+// --------- IssuerStakingController.sol ---------
+    error TransferFailed();
+    error OnlyCallableByEmergencyExitHandlerOrIssuer();
 }

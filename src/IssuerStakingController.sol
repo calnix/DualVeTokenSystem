@@ -2,8 +2,6 @@
 pragma solidity 0.8.27;
 
 // External: OZ
-import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
@@ -25,7 +23,6 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
 
 
 contract IssuerStakingController is Pausable {
-    using SafeERC20 for IERC20;
 
     IAddressBook public immutable addressBook;
 
@@ -66,11 +63,11 @@ contract IssuerStakingController is Pausable {
 //------------------------------- External functions---------------------------------------------------------------
 
     /**
-     * @notice Allows an issuer to stake a specified amount of MOCA tokens.
-     * @dev Transfers MOCA tokens from the sender to this contract.
-     * @param amount The amount of MOCA tokens to stake. Must be > 0 and <= MAX_STAKE_AMOUNT.
+     * @notice Allows an issuer to stake native MOCA.
+     * @dev Accepts native MOCA via msg.value. Must be > 0 and <= MAX_SINGLE_STAKE_AMOUNT.
      */
-    function stakeMoca(uint256 amount) external whenNotPaused {
+    function stakeMoca() external payable whenNotPaused {
+        uint256 amount = msg.value;
         require(amount > 0, Errors.InvalidAmount());
         require(amount <= MAX_SINGLE_STAKE_AMOUNT, Errors.InvalidAmount());
         
@@ -79,9 +76,6 @@ contract IssuerStakingController is Pausable {
 
         // update issuer's moca staked
         issuers[msg.sender] += amount;
-
-        // transfer moca from msg.sender to contract
-        _moca().safeTransferFrom(msg.sender, address(this), amount);
 
         emit Events.Staked(msg.sender, amount);
     }
@@ -118,7 +112,7 @@ contract IssuerStakingController is Pausable {
      * @dev Unstaked MOCA tokens are claimable after the UNSTAKE_DELAY period.
      * @param timestamps Array of timestamps at which the unstaked MOCA tokens are claimable.
      */
-    function claimUnstake(uint256[] calldata timestamps) external whenNotPaused {
+    function claimUnstake(uint256[] calldata timestamps) external payable whenNotPaused {
         uint256 length = timestamps.length;
         require(length > 0, Errors.InvalidArray());
         require(totalPendingUnstakedMoca[msg.sender] > 0, Errors.NothingToClaim());
@@ -145,7 +139,8 @@ contract IssuerStakingController is Pausable {
         totalPendingUnstakedMoca[msg.sender] -= totalClaimable;
 
         // transfer moca to issuer
-        _moca().safeTransfer(msg.sender, totalClaimable);
+        (bool success, ) = payable(msg.sender).call{value: totalClaimable}("");
+        require(success, Errors.TransferFailed());
 
         emit Events.UnstakeClaimed(msg.sender, totalClaimable);
     }
@@ -184,13 +179,6 @@ contract IssuerStakingController is Pausable {
         emit Events.MaxSingleStakeAmountUpdated(oldMaxSingleStakeAmount, newMaxSingleStakeAmount);
     }
 
-//------------------------------- Internal functions---------------------------------------------------------------
-
-    // if zero address, reverts automatically
-    function _moca() internal view returns (IERC20){
-        return IERC20(addressBook.getMoca());
-    }
-
 //------------------------------- Modifiers -------------------------------------------------------
 
     modifier onlyMonitor() {
@@ -204,12 +192,6 @@ contract IssuerStakingController is Pausable {
         require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
         _;
     } 
-
-    modifier onlyEmergencyExitHandler() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
-        require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
-        _;
-    }
 
     modifier onlyIssuerStakingControllerAdmin() {
         IAccessController accessController = IAccessController(addressBook.getAccessController());
@@ -267,7 +249,7 @@ contract IssuerStakingController is Pausable {
         for(uint256 i; i < issuerAddresses.length; ++i) { 
             address issuerAddress = issuerAddresses[i];
             
-            // check: if NOT emergency exit handler, AND NOT, the issuer themselves, revert
+            // check: if NOT emergency exit handler, AND NOT, the issuer themselves: revert
             if (!accessController.isEmergencyExitHandler(msg.sender)) {
                 if (msg.sender != issuerAddress) {
                     revert Errors.OnlyCallableByEmergencyExitHandlerOrIssuer();
@@ -283,7 +265,8 @@ contract IssuerStakingController is Pausable {
             if(totalMocaAmount == 0) continue;
 
             // transfer moca to issuer
-            _moca().safeTransfer(issuerAddress, totalMocaAmount); 
+            (bool success, ) = payable(issuerAddress).call{value: totalMocaAmount}("");
+            require(success, Errors.TransferFailed());
 
             // reset issuer's moca staked and pending unstake 
             delete issuers[issuerAddress]; 

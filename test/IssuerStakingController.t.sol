@@ -51,11 +51,8 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
     function testCan_StakeMoca() public {
 
         // fund issuer with Moca
-        vm.startPrank(issuer1Asset);
-            mockMoca.mint(issuer1Asset, 100 ether);
-            mockMoca.approve(address(issuerStakingController), 100 ether);
-        vm.stopPrank();
-
+        vm.deal(issuer1Asset, 100 ether);
+        assertEq(address(issuer1Asset).balance, 100 ether, "issuer must hold moca tokens");
 
         // Check event
         vm.expectEmit(true, true, true, true);
@@ -63,15 +60,15 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
 
         // Check issuer can stake moca
         vm.prank(issuer1Asset);
-        issuerStakingController.stakeMoca(50 ether);
+        issuerStakingController.stakeMoca{value: 50 ether}();
 
         // Check contract state
         assertEq(issuerStakingController.issuers(issuer1Asset), 50 ether, "issuer's moca staked not set correctly");
         assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 50 ether, "total moca staked not set correctly");
 
-        // Check token balance
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 50 ether, "contract moca balance not set correctly");
-        assertEq(mockMoca.balanceOf(issuer1Asset), 50 ether, "issuer moca balance not set correctly");
+        // Check Native token balance
+        assertEq(address(issuerStakingController).balance, 50 ether, "contract moca balance not set correctly");
+        assertEq(address(issuer1Asset).balance, 50 ether, "issuer moca balance not set correctly");
 
     }
 }
@@ -84,10 +81,10 @@ abstract contract StateT1_Issuer1Staked is StateT0_Deploy {
         super.setUp();
 
         // fund issuer with Moca
+        vm.deal(issuer1Asset, 100 ether);
+
         vm.startPrank(issuer1Asset);
-            mockMoca.mint(issuer1Asset, ISSUER1_MOCA);
-            mockMoca.approve(address(issuerStakingController), ISSUER1_MOCA);
-            issuerStakingController.stakeMoca(ISSUER1_MOCA / 2);
+            issuerStakingController.stakeMoca{value: ISSUER1_MOCA / 2}();
         vm.stopPrank();
     }
 }
@@ -100,13 +97,13 @@ contract StateT1_Issuer1Staked_Test is StateT1_Issuer1Staked {
         assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), ISSUER1_MOCA / 2, "total moca staked not set correctly");
 
         // Check token balance
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), ISSUER1_MOCA / 2, "contract moca balance not set correctly");
-        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA / 2, "issuer moca balance not set correctly");
+        assertEq(address(issuerStakingController).balance, ISSUER1_MOCA / 2, "contract moca balance not set correctly");
+        assertEq(address(issuer1Asset).balance, ISSUER1_MOCA / 2, "issuer moca balance not set correctly");
     }
 
     function testRevert_StakeMoca_InvalidAmount() public {
         vm.expectRevert(Errors.InvalidAmount.selector);
-        issuerStakingController.stakeMoca(0);
+        issuerStakingController.stakeMoca{value: 0}();
     }
 
     //note: foundry bug, when using expectRevert, the call doesn't revert.
@@ -116,7 +113,7 @@ contract StateT1_Issuer1Staked_Test is StateT1_Issuer1Staked {
             
         bool success;
 
-        try issuerStakingController.stakeMoca(issuerStakingController.MAX_SINGLE_STAKE_AMOUNT() + 10000 ether) {
+        try issuerStakingController.stakeMoca{value: issuerStakingController.MAX_SINGLE_STAKE_AMOUNT() + 10000 ether}() {
             // If we get here, the call succeeded (unexpected)
             success = true;
         } catch {
@@ -141,9 +138,9 @@ contract StateT1_Issuer1Staked_Test is StateT1_Issuer1Staked {
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, claimableTimestamp), 0, "pendingUnstakedMoca should be zero before");
         assertEq(issuerStakingController.totalPendingUnstakedMoca(issuer1Asset), 0, "totalPendingUnstakedMoca should be zero before");
 
-        // Token balances before
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 50 ether, "contract moca balance not set correctly before");
-        assertEq(mockMoca.balanceOf(issuer1Asset), 50 ether, "issuer moca balance not set correctly before");
+        // Native Moca balances before
+        assertEq(address(issuerStakingController).balance, 50 ether, "contract moca balance not set correctly before");
+        assertEq(address(issuer1Asset).balance, 50 ether, "issuer moca balance not set correctly before");
 
         // --- Expect event emitted ---
         vm.expectEmit(true, true, true, true);
@@ -162,9 +159,9 @@ contract StateT1_Issuer1Staked_Test is StateT1_Issuer1Staked {
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, claimableTimestamp), 50 ether, "pendingUnstakedMoca not set after initiateUnstake");
         assertEq(issuerStakingController.totalPendingUnstakedMoca(issuer1Asset), 50 ether, "totalPendingUnstakedMoca not set after initiateUnstake");
 
-        // Token balances after
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 50 ether, "contract moca balance not correct after initiateUnstake");
-        assertEq(mockMoca.balanceOf(issuer1Asset), 50 ether, "issuer moca balance not correct after initiateUnstake");
+        // Native Moca balances after
+        assertEq(address(issuerStakingController).balance, 50 ether, "contract moca balance not correct after initiateUnstake");
+        assertEq(address(issuer1Asset).balance, 50 ether, "issuer moca balance not correct after initiateUnstake");
     }
 }
 
@@ -275,9 +272,9 @@ contract StateT1_UpdateUnstakeDelay_Test is StateT1_UpdateUnstakeDelay {
         uint256 totalMocaStakedBefore = issuerStakingController.TOTAL_MOCA_STAKED();
         uint256 totalMocaPendingUnstakeBefore = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
 
-        // Token balances before
-        uint256 contractMocaBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
-        uint256 issuerMocaBalanceBefore = mockMoca.balanceOf(issuer1Asset);
+        // Native token balances before
+        uint256 contractMocaBalanceBefore = address(issuerStakingController).balance;
+        uint256 issuerMocaBalanceBefore = address(issuer1Asset).balance;
 
         // --- Expect event emitted ---
         vm.expectEmit(true, true, true, true);
@@ -296,9 +293,9 @@ contract StateT1_UpdateUnstakeDelay_Test is StateT1_UpdateUnstakeDelay {
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, claimableTimestamp), pendingUnstakedMocaBefore + claimableAmount, "pendingUnstakedMoca not set after initiateUnstake");
         assertEq(issuerStakingController.totalPendingUnstakedMoca(issuer1Asset), totalPendingUnstakedMocaBefore + claimableAmount, "totalPendingUnstakedMoca not set after initiateUnstake");
 
-        // Token balances after
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), contractMocaBalanceBefore, "contract moca balance not correct after initiateUnstake");
-        assertEq(mockMoca.balanceOf(issuer1Asset), issuerMocaBalanceBefore, "issuer moca balance not correct after initiateUnstake");
+        // Native Moca balances after
+        assertEq(address(issuerStakingController).balance, contractMocaBalanceBefore, "contract moca balance not correct after initiateUnstake");
+        assertEq(address(issuer1Asset).balance, issuerMocaBalanceBefore, "issuer moca balance not correct after initiateUnstake");
     }
 }
 
@@ -329,9 +326,9 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
         assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "total moca staked not zero after full unstake");
         assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), ISSUER1_MOCA/2, "pending unstake not set correctly after full unstake");
 
-        // Check token balance
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), ISSUER1_MOCA/2, "contract moca balance not set correctly after full unstake");
-        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA/2, "issuer moca balance not set correctly after full unstake");
+        // Check Native Moca balances
+        assertEq(address(issuerStakingController).balance, ISSUER1_MOCA/2, "contract moca balance not set correctly after full unstake");
+        assertEq(address(issuer1Asset).balance, ISSUER1_MOCA/2, "issuer moca balance not set correctly after full unstake");
 
         // Check pending unstake
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, firstClaimableTimestamp), ISSUER1_MOCA/4, "pending unstake for 1st claim not set correctly");
@@ -380,9 +377,9 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
         uint256 totalMocaStakedBefore = issuerStakingController.TOTAL_MOCA_STAKED();
         uint256 totalMocaPendingUnstakeBefore = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
 
-        // Token balances before
-        uint256 contractMocaBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
-        uint256 issuerMocaBalanceBefore = mockMoca.balanceOf(issuer1Asset);
+        // Native token balances before
+        uint256 contractMocaBalanceBefore = address(issuerStakingController).balance;
+        uint256 issuerMocaBalanceBefore = address(issuer1Asset).balance;
 
         // pending mapping
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, firstClaimableTimestamp), ISSUER1_MOCA/4, "pendingUnstakedMoca should be set correctly after initiateUnstake");
@@ -412,9 +409,10 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, firstClaimableTimestamp), 0, "pendingUnstakedMoca should be zero after claimUnstake");
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, secondClaimableTimestamp), 0, "pendingUnstakedMoca should be zero after claimUnstake");
 
-        // Token balances after
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 0, "contract moca balance not correct after claimUnstake");
-        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA, "issuer moca balance not correct after claimUnstake");
+        // Native token balances after
+        assertEq(address(issuerStakingController).balance, 0, "contract native moca balance not correct after claimUnstake");
+        assertEq(address(issuer1Asset).balance, ISSUER1_MOCA, "issuer native moca balance not correct after claimUnstake");
+
     }
 }
 
@@ -458,9 +456,9 @@ contract StateT86402_FirstAvailableUnstakeClaim_Test is StateT86402_FirstAvailab
         uint256 totalMocaStakedBefore = issuerStakingController.TOTAL_MOCA_STAKED();
         uint256 totalMocaPendingUnstakeBefore = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
 
-        // Token balances before
-        uint256 contractMocaBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
-        uint256 issuerMocaBalanceBefore = mockMoca.balanceOf(issuer1Asset);
+        // Native token balances before
+        uint256 contractMocaBalanceBefore = address(issuerStakingController).balance;
+        uint256 issuerMocaBalanceBefore = address(issuer1Asset).balance;
 
         // pending mapping
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp), ISSUER1_MOCA/4);
@@ -483,9 +481,9 @@ contract StateT86402_FirstAvailableUnstakeClaim_Test is StateT86402_FirstAvailab
         // pending mapping
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp), 0, "pendingUnstakedMoca must be deleted after claimUnstake");
 
-        // Token balances after
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), ISSUER1_MOCA/4, "contract moca balance not correct after claimUnstake");
-        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA/4 * 3, "issuer moca balance not correct after claimUnstake");
+        // Native token balances after
+        assertEq(address(issuerStakingController).balance, ISSUER1_MOCA/4, "contract moca balance not correct after claimUnstake");
+        assertEq(address(issuer1Asset).balance, ISSUER1_MOCA/4 * 3, "issuer moca balance not correct after claimUnstake");
     }
 }
 
@@ -539,8 +537,8 @@ contract StateT604801_SecondAvailableUnstakeClaim_Test is StateT604801_SecondAva
         assertEq(issuerStakingController.pendingUnstakedMoca(issuer1Asset, block.timestamp), 0, "pendingUnstakedMoca must be deleted after claimUnstake");
 
         // Token balances after
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 0, "contract moca balance not correct after claimUnstake");
-        assertEq(mockMoca.balanceOf(issuer1Asset), ISSUER1_MOCA, "issuer moca balance not correct after claimUnstake");        
+        assertEq(address(issuerStakingController).balance, 0, "contract moca balance not correct after claimUnstake");
+        assertEq(address(issuer1Asset).balance, ISSUER1_MOCA, "issuer moca balance not correct after claimUnstake");        
     }
 
 
@@ -596,7 +594,7 @@ contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount_Test i
     function testRevert_UserCannotExceedNewMaxSingleStakeAmount() public {
         vm.prank(issuer1Asset);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        issuerStakingController.stakeMoca(11 ether);
+        issuerStakingController.stakeMoca{value: 11 ether}();
     }
 
     function test_UserStakesOnNewMaxStakeAmount() public {
@@ -606,8 +604,8 @@ contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount_Test i
         uint256 totalMocaPendingUnstakeBefore = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
 
         // Token balances before
-        uint256 contractMocaBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
-        uint256 issuerMocaBalanceBefore = mockMoca.balanceOf(issuer1Asset);
+        uint256 contractMocaBalanceBefore = address(issuerStakingController).balance;
+        uint256 issuerMocaBalanceBefore = address(issuer1Asset).balance;
 
         // --- Expect event emitted ---
         vm.expectEmit(false, false, false, true);
@@ -615,15 +613,15 @@ contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount_Test i
 
         // --- User stakes on new max stake amount ---
         vm.prank(issuer1Asset);
-        issuerStakingController.stakeMoca(10 ether);
+        issuerStakingController.stakeMoca{value: 10 ether}();
 
         // --- After: check contract & balance states ---
         assertEq(issuerStakingController.issuers(issuer1Asset), issuerMocaStakedBefore + 10 ether, "issuer's moca staked not set correctly after stakeMoca");
         assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), totalMocaStakedBefore + 10 ether, "total moca staked not set correctly after stakeMoca");
         assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), totalMocaPendingUnstakeBefore, "pending unstake not set correctly after stakeMoca");
         // Token balances after
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), contractMocaBalanceBefore + 10 ether, "contract moca balance not set correctly after stakeMoca");
-        assertEq(mockMoca.balanceOf(issuer1Asset), issuerMocaBalanceBefore - 10 ether, "issuer moca balance not set correctly after stakeMoca");
+        assertEq(address(issuerStakingController).balance, contractMocaBalanceBefore + 10 ether, "contract moca balance not set correctly after stakeMoca");
+        assertEq(address(issuer1Asset).balance, issuerMocaBalanceBefore - 10 ether, "issuer moca balance not set correctly after stakeMoca");
     }
 
 
@@ -672,7 +670,7 @@ contract StateT604801_Paused_Test is StateT604801_Paused {
     function testRevert_UserCannotStakeMoca_WhenPaused() public {
         vm.prank(issuer1Asset);
         vm.expectRevert(Pausable.EnforcedPause.selector);
-        issuerStakingController.stakeMoca(10 ether);
+        issuerStakingController.stakeMoca{value: 10 ether}();
     }
 
     function testRevert_UserCannotInitiateUnstake_WhenPaused() public {
@@ -752,13 +750,13 @@ contract StateT604801_Unpaused_Test is StateT604801_Unpaused {
     // --------- User functions that should not revert when contract is unpaused ---------
     function test_UserCanStakeMoca_WhenUnpaused() public {
         vm.prank(issuer1Asset);
-        issuerStakingController.stakeMoca(10 ether);
+        issuerStakingController.stakeMoca{value: 10 ether}();
     }
 
 
     function test_UserCannotInitiateUnstake_WhenUnpaused() public {
         vm.prank(issuer1Asset);
-        issuerStakingController.stakeMoca(1 ether);
+        issuerStakingController.stakeMoca{value: 1 ether}();
 
         vm.prank(issuer1Asset);
         issuerStakingController.initiateUnstake(1 ether);
@@ -933,10 +931,10 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         uint256 totalMoca = totalStaked + totalPendingUnstake;
 
         assertGt(totalMoca, 0, "There should be Moca to transfer");
-        uint256 contractBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
+        uint256 contractBalanceBefore = address(issuerStakingController).balance;
         assertEq(contractBalanceBefore, totalMoca, "contract must hold moca tokens");
 
-        uint256 issuerBalanceBefore = mockMoca.balanceOf(issuer1Asset);
+        uint256 issuerBalanceBefore = address(issuer1Asset).balance;
         assertGt(issuerBalanceBefore, 0, "issuer must hold moca tokens");
 
         // Create array of issuer addresses for batch processing
@@ -959,8 +957,8 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         assertEq(issuerStakingController.totalPendingUnstakedMoca(issuer1Asset), 0, "issuer's pending unstake balance should be reset");
         
         // After checks - token balances
-        uint256 issuerBalanceAfter = mockMoca.balanceOf(issuer1Asset);
-        uint256 contractBalanceAfter = mockMoca.balanceOf(address(issuerStakingController));
+        uint256 issuerBalanceAfter = address(issuer1Asset).balance;
+        uint256 contractBalanceAfter = address(issuerStakingController).balance;
 
         assertEq(contractBalanceAfter, 0, "contract balance should be zero after emergency exit");
         assertEq(issuerBalanceAfter, issuerBalanceBefore + totalMoca, "issuer should receive all their Moca from the contract");
@@ -972,8 +970,8 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         uint256 totalPendingUnstake = issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE();
         uint256 totalMoca = totalStaked + totalPendingUnstake;
 
-        uint256 issuerBalanceBefore = mockMoca.balanceOf(issuer1Asset);
-        uint256 contractBalanceBefore = mockMoca.balanceOf(address(issuerStakingController));
+        uint256 issuerBalanceBefore = address(issuer1Asset).balance;
+        uint256 contractBalanceBefore = address(issuerStakingController).balance;
 
         address[] memory issuerAddresses = new address[](1);
         issuerAddresses[0] = issuer1Asset;
@@ -988,8 +986,8 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), 0, "TOTAL_MOCA_PENDING_UNSTAKE should be reset");
         assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's staked balance should be reset");
         assertEq(issuerStakingController.totalPendingUnstakedMoca(issuer1Asset), 0, "issuer's pending unstake balance should be reset");
-        assertEq(mockMoca.balanceOf(address(issuerStakingController)), 0, "contract balance should be zero");
-        assertEq(mockMoca.balanceOf(issuer1Asset), issuerBalanceBefore + totalMoca, "issuer should receive all their Moca");
+        assertEq(address(issuerStakingController).balance, 0, "contract balance should be zero");
+        assertEq(address(issuer1Asset).balance, issuerBalanceBefore + totalMoca, "issuer should receive all their Moca");
     }
 
     // --------- Others ---------
