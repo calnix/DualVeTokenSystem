@@ -37,6 +37,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     IAccessController public immutable accessController;
     address public immutable WMOCA;
     IERC20 public immutable USD8;
+    address public VERIFIER_CONTRACT;
 
     // fees: 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy) [both fees can be 0]
     uint256 public PROTOCOL_FEE_PERCENTAGE;    
@@ -92,7 +93,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     // name: PaymentsController, version: 1
     constructor(
         address accessController_, uint256 protocolFeePercentage, uint256 voterFeePercentage, uint256 delayPeriod, 
-        address wMoca_, address usd8_, uint256 mocaTransferGasLimit,
+        address wMoca_, address usd8_, uint256 mocaTransferGasLimit, address verifierContract,
         string memory name, string memory version) EIP712(name, version) {
 
         // check: access controller is set [Treasury should be non-zero]
@@ -120,6 +121,10 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         require(delayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
         require(EpochMath.isValidEpochTime(delayPeriod), Errors.InvalidDelayPeriod());
         FEE_INCREASE_DELAY_PERIOD = delayPeriod;
+
+        // check if verifier contract is set
+        require(verifierContract != address(0), Errors.InvalidAddress());
+        VERIFIER_CONTRACT = verifierContract;
     }
 
 //-------------------------------Issuer functions-----------------------------------------------------------------
@@ -133,7 +138,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      */
     function createIssuer(address assetManagerAddress) external whenNotPaused returns (bytes32) {
         require(assetManagerAddress != address(0), Errors.InvalidAddress());
-
 
         bytes32 issuerId;
         // deterministic id generation: check if id already exists in ANY of the three mappings
@@ -514,9 +518,10 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
     function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
+        require(msg.sender == VERIFIER_CONTRACT, Errors.InvalidCaller());
         require(expiry > block.timestamp, Errors.SignatureExpired()); 
         require(amount > 0, Errors.InvalidAmount());
-
+        
         // cache schema in memory (saves ~800 gas)
         DataTypes.Schema storage schemaStorage = _schemas[schemaId];
         DataTypes.Schema memory schema = schemaStorage; // Load once into memory
@@ -546,7 +551,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
 
         // ----- Verify signature + Update nonce -----
         {
-            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, msg.sender, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
+            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
             // handles both EOA and contract signatures | returns true if signature is valid
             require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature()); 
             ++_verifierNonces[signerAddress];
@@ -596,7 +601,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
                 poolFees.feesAccruedToVoters += votingFee;
             }
         }
-        
+
 
         // Book fees: global + epoch [for AssetManager]
         DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[currentEpoch];
@@ -624,6 +629,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
     function deductBalanceZeroFee(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 expiry, bytes calldata signature) external whenNotPaused {
+        require(msg.sender == VERIFIER_CONTRACT, Errors.InvalidCaller());
         require(expiry > block.timestamp, Errors.SignatureExpired());
         
         // Verify schema has zero fee
@@ -740,6 +746,21 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         MOCA_TRANSFER_GAS_LIMIT = newMocaTransferGasLimit;
 
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
+    }
+
+    /**
+     * @notice Updates the verifier contract.
+     * @dev Only callable by the PaymentsController admin. The new verifier contract must be non-zero and different from the current one.
+     * @param newVerifierContract The new verifier contract.
+     */
+    function updateVerifierContract(address newVerifierContract) external onlyPaymentsAdmin whenNotPaused {
+        require(newVerifierContract != address(0), Errors.InvalidAddress());
+        require(newVerifierContract != VERIFIER_CONTRACT, Errors.InvalidAddress());
+
+        // cache old + update to new verifier contract
+        address oldVerifierContract = VERIFIER_CONTRACT;
+        VERIFIER_CONTRACT = newVerifierContract;
+        emit Events.VerifierContractUpdated(oldVerifierContract, newVerifierContract);
     }
 
 //-------------------------------AssetManager: withdraw functions-------------------------------------------------

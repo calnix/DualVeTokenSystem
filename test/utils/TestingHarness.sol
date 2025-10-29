@@ -103,6 +103,9 @@ abstract contract TestingHarness is Test {
     // deployer
     address public deployer = makeAddr("deployer");
 
+    // verifier contract
+    address public verifierContract = makeAddr("verifierContract");
+
 // ------------ Contract Parameters ------------
 
     // PaymentsController parameters
@@ -155,7 +158,7 @@ abstract contract TestingHarness is Test {
 
         // 5. Deploy PaymentsController
         paymentsController = new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
-             address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+             address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, address(verifierContract), "PaymentsController", "1");
     
 
         // 6. Deploy EscrowedMoca
@@ -303,6 +306,52 @@ abstract contract TestingHarness is Test {
         return paymentsController.getVerifierNonce(signerAddress);
     }
 
+
+    /// @notice Deterministically generates an unused issuerId based on issuer and salt, similar to PaymentsController
+    /// @dev Tries salt, salt+1, salt+2, ... until an unused id is found.
+    function generateUnusedIssuerId(address issuer) public view returns (bytes32 issuerId) {
+        uint256 salt = block.number;
+
+        issuerId = keccak256(abi.encode("ISSUER", issuer, salt));
+        // Check if id is used in any mapping
+        while (
+            paymentsController.getIssuer(issuerId).issuerId != bytes32(0) ||
+            paymentsController.getVerifier(issuerId).verifierId != bytes32(0) ||
+            paymentsController.getSchema(issuerId).schemaId != bytes32(0)
+        ) {
+            issuerId = keccak256(abi.encode("ISSUER", issuer, ++salt));
+        }
+    }
+
+    function generateUnusedVerifierId(address verifier) public view returns (bytes32 verifierId) {
+        uint256 salt = block.number;
+        
+        verifierId = keccak256(abi.encode("VERIFIER", verifier, salt));
+        // Check if id is used in any mapping
+        while (
+            paymentsController.getIssuer(verifierId).issuerId != bytes32(0) ||
+            paymentsController.getVerifier(verifierId).verifierId != bytes32(0) ||
+            paymentsController.getSchema(verifierId).schemaId != bytes32(0)
+        ) {
+            verifierId = keccak256(abi.encode("VERIFIER", verifier, ++salt));
+        }
+    }
+
+    function generateUnusedSchemaId(address issuer) public view returns (bytes32 schemaId) {
+        // get totalSchemas for this issuer
+        uint256 totalSchemas = paymentsController.getIssuer(keccak256(abi.encode("ISSUER", issuer, 0))).totalSchemas;
+        uint256 salt = block.number;
+        
+        schemaId = keccak256(abi.encode("SCHEMA", issuer, totalSchemas, salt));
+        // Check if id is used in any mapping
+        while (
+            paymentsController.getIssuer(schemaId).issuerId != bytes32(0) ||
+            paymentsController.getVerifier(schemaId).verifierId != bytes32(0) ||
+            paymentsController.getSchema(schemaId).schemaId != bytes32(0)
+        ) {
+            schemaId = keccak256(abi.encode("SCHEMA", issuer, totalSchemas, ++salt));
+        }
+    }
 }
 
 // Contract with expensive receive function

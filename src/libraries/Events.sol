@@ -128,7 +128,7 @@ library Events {
     event VerifierMocaUnstaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
     event VerifierSignerAddressUpdated(bytes32 indexed verifierId, address signerAddress);
 
-    // updateAssetAddress
+    // updateAssetManagerAddress
     event AssetManagerAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
 
     // deductBalance()
@@ -143,7 +143,9 @@ library Events {
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VotingFeePercentageUpdated(uint256 voterFeePercentage);
     event VerifierStakingTierUpdated(uint256 stakingAmount, uint256 subsidyPercentage);
-    
+    // updateVerifierContract
+    event VerifierContractUpdated(address oldVerifierContract, address newVerifierContract);
+        
     // withdrawProtocolFees, withdrawVotersFees
     event ProtocolFeesWithdrawn(uint256 epoch, uint256 protocolFees);
     event VotersFeesWithdrawn(uint256 epoch, uint256 votersFees);
