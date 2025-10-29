@@ -16,7 +16,9 @@ abstract contract StateT0_Deploy is TestingHarness {
 contract StateT0_Deploy_Test is StateT0_Deploy {
 
     function test_Constructor() public {
-        assertEq(address(esMoca.addressBook()), address(addressBook), "addressBook not set correctly");
+        assertEq(address(esMoca.accessController()), address(accessController), "accessController not set correctly");
+        assertEq(address(esMoca.wMoca()), address(wMoca), "wMoca not set correctly");
+        assertEq(esMoca.MOCA_TRANSFER_GAS_LIMIT(), 2300, "MOCA_TRANSFER_GAS_LIMIT not set correctly");
         assertEq(esMoca.VOTERS_PENALTY_SPLIT(), 1000, "VOTERS_PENALTY_SPLIT not set correctly");
         
         // erc20

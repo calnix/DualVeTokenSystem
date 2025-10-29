@@ -8,6 +8,24 @@ pragma solidity 0.8.27;
  */
 interface IAccessController {
 
+    /// @notice Returns the current treasury address.
+    function TREASURY() external view returns (address);
+
+    // -------------------- GENERIC ROLE ADMIN MANAGEMENT --------------------
+
+    /**
+     * @notice Sets the admin role for a specific role.
+     * @param role The role whose administrator is being updated.
+     * @param adminRole The new administrator role for the specified role.
+     */
+    function setRoleAdmin(bytes32 role, bytes32 adminRole) external;
+
+    /**
+     * @notice Sets the treasury address.
+     * @param newTreasury The new treasury address.
+     */
+    function setTreasury(address newTreasury) external;
+
 // -------------------- HIGH-FREQUENCY ROLES --------------------
 
     /**
@@ -194,31 +212,4 @@ interface IAccessController {
      */
     function isGlobalAdmin(address addr) external view returns (bool);
 
-    /**
-     * @notice Adds an address as GlobalAdmin.
-     * @param addr The address to add.
-     */
-    function addGlobalAdmin(address addr) external;
-
-    /**
-     * @notice Removes an address from GlobalAdmin role.
-     * @param addr The address to remove.
-     */
-    function removeGlobalAdmin(address addr) external;
-
-    /**
-     * @notice Transfers the GlobalAdmin role from one address to another.
-     * @param oldAdmin The address to remove the role from.
-     * @param newAdmin The address to add the role to.
-     */
-    function transferGlobalAdminFromAddressBook(address oldAdmin, address newAdmin) external;
-
-    // -------------------- GENERIC ROLE ADMIN MANAGEMENT --------------------
-
-    /**
-     * @notice Sets the admin role for a specific role.
-     * @param role The role whose administrator is being updated.
-     * @param adminRole The new administrator role for the specified role.
-     */
-    function setRoleAdmin(bytes32 role, bytes32 adminRole) external;
 }

@@ -4,12 +4,11 @@ pragma solidity 0.8.27;
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 
 // import all contracts
-import {AddressBook} from "../../src/AddressBook.sol";
 import {AccessController} from "../../src/AccessController.sol";
 import {PaymentsController} from "../../src/PaymentsController.sol";
-import {VotingController} from "../../src/VotingController.sol";
-import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
-import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
+//import {VotingController} from "../../src/VotingController.sol";
+//import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
+//import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
 import {IssuerStakingController} from "../../src/IssuerStakingController.sol";
 
 // import all libraries
@@ -20,11 +19,10 @@ import {Constants} from "../../src/libraries/Constants.sol";
 import {EpochMath} from "../../src/libraries/EpochMath.sol";
 
 // mocks
-import {MockMoca} from "./MockMoca.sol";
+import {MockWMoca} from "./MockWMoca.sol";
 import {MockUSD8} from "./MockUSD8.sol";
 
 // interfaces
-import {IAddressBook} from "../../src/interfaces/IAddressBook.sol";
 import {IAccessController} from "../../src/interfaces/IAccessController.sol";
 import {IPaymentsController} from "../../src/interfaces/IPaymentsController.sol";
 import {IVotingEscrowMoca} from "../../src/interfaces/IVotingEscrowMoca.sol";
@@ -35,17 +33,18 @@ abstract contract TestingHarness is Test {
     using stdStorage for StdStorage;
     
     // actual contracts
-    AddressBook public addressBook;    
     AccessController public accessController;
     PaymentsController public paymentsController;
-    VotingEscrowMoca public veMoca;
-    VotingController public votingController;
-    EscrowedMoca public esMoca;
+    //VotingEscrowMoca public veMoca;
+    //VotingController public votingController;
+    //EscrowedMoca public esMoca;
     IssuerStakingController public issuerStakingController;
 
     // mocks
-    MockMoca public mockMoca;
+    MockWMoca public mockWMoca;
     MockUSD8 public mockUSD8;
+
+    uint256 public constant MOCA_TRANSFER_GAS_LIMIT = 2300;
 
 // ------------ Actors ------------
 
@@ -125,22 +124,13 @@ abstract contract TestingHarness is Test {
         (verifier3Signer, verifier3SignerPrivateKey) = makeAddrAndKey("verifier3Signer");
 
         // 0. Deploy mock contracts
-        mockMoca = new MockMoca();
+        mockWMoca = new MockWMoca();
         mockUSD8 = new MockUSD8();
 
-        // 1. Deploy address book and access controller
-        addressBook = new AddressBook(globalAdmin);
-        accessController = new AccessController(address(addressBook));
+        // 1. Deploy access controller
+        accessController = new AccessController(globalAdmin, treasury);
 
-        // 2. Register AccessController, MOCA, USD8 in AddressBook
-        vm.startPrank(globalAdmin);
-            addressBook.setAddress(addressBook.ACCESS_CONTROLLER(), address(accessController));
-            addressBook.setAddress(addressBook.MOCA(), address(mockMoca));
-            addressBook.setAddress(addressBook.USD8(), address(mockUSD8));
-            addressBook.setAddress(addressBook.TREASURY(), treasury);
-        vm.stopPrank();
-
-        // 3. Initialize roles
+        // 2. Initialize roles
         vm.startPrank(globalAdmin);
             accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin);
             accessController.grantRole(accessController.MONITOR_ADMIN_ROLE(), monitorAdmin);
@@ -159,52 +149,37 @@ abstract contract TestingHarness is Test {
         vm.prank(cronJobAdmin);
             accessController.addCronJob(cronJob);
 
-        // 4. Deploy IssuerStakingController + set address in AddressBook
-        issuerStakingController = new IssuerStakingController(address(addressBook), 7 days, 1000 ether);
-        vm.startPrank(globalAdmin);
-            addressBook.setAddress(addressBook.ISSUER_STAKING_CONTROLLER(), address(issuerStakingController));
-        vm.stopPrank();
+        // 4. Deploy IssuerStakingController
+        issuerStakingController = new IssuerStakingController(address(accessController), 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
 
-        // 5. Deploy PaymentsController + set address in AddressBook
-        paymentsController = new PaymentsController(address(addressBook), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
-             "PaymentsController", "1");
+
+        // 5. Deploy PaymentsController
+        paymentsController = new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
+             address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+    
+
+        // 6. Deploy EscrowedMoca
+        //esMoca = new EscrowedMoca(address(accessController), 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); // 10% penalty split
+
+
+        // 7. Deploy VotingEscrowMoca
+        //veMoca = new VotingEscrowMoca(address(accessController));
         
-        vm.startPrank(globalAdmin);
-            addressBook.setAddress(addressBook.PAYMENTS_CONTROLLER(), address(paymentsController));
-        vm.stopPrank();
+        // 8. Whitelist VotingEscrowMoca in EscrowedMoca for transfers
+        //vm.prank(escrowedMocaAdmin);
+        //esMoca.setWhitelistStatus(address(veMoca), true);
 
-
-        // 6. Deploy EscrowedMoca + set address in AddressBook
-        esMoca = new EscrowedMoca(address(addressBook), 1000); // 10% penalty split
-        vm.startPrank(globalAdmin);
-            addressBook.setAddress(addressBook.ES_MOCA(), address(esMoca));
-        vm.stopPrank();
-
-        // 7. Deploy VotingEscrowMoca + set address in AddressBook
-        veMoca = new VotingEscrowMoca(address(addressBook));
-        vm.startPrank(globalAdmin);
-            addressBook.setAddress(addressBook.VOTING_ESCROW_MOCA(), address(veMoca));
-        vm.stopPrank();
         
-        // Whitelist VotingEscrowMoca in EscrowedMoca for transfers
-        vm.prank(escrowedMocaAdmin);
-        esMoca.setWhitelistStatus(address(veMoca), true);
-
-
-
-        //addressBook.setAddress(addressBook.ES_MOCA(), address(escrowedMoca));
-        //addressBook.setAddress(addressBook.VOTING_ESCROW_MOCA(), address(veMoca));
-        //addressBook.setAddress(addressBook.ACCESS_CONTROLLER(), address(accessController));
-        //addressBook.setAddress(addressBook.VOTING_CONTROLLER(), address(votingController));
-
+        // ---- Misc. ---------
 
         // PaymentsController: minting tokens
         mockUSD8.mint(verifier1Asset, 100 ether);
         mockUSD8.mint(verifier2Asset, 100 ether);
         mockUSD8.mint(verifier3Asset, 100 ether);
-        mockMoca.mint(verifier1Asset, 100 ether);
-        mockMoca.mint(verifier2Asset, 100 ether);
-        mockMoca.mint(verifier3Asset, 100 ether);
+        // deal native moca to verifiers
+        vm.deal(verifier1Asset, 100 ether);
+        vm.deal(verifier2Asset, 100 ether);
+        vm.deal(verifier3Asset, 100 ether);
 
 
     }
@@ -328,4 +303,18 @@ abstract contract TestingHarness is Test {
         return paymentsController.getVerifierNonce(signerAddress);
     }
 
+}
+
+// Contract with expensive receive function
+contract GasGuzzler {
+    uint256[] private storageArray;
+    
+    receive() external payable {
+        // Do multiple storage operations to consume > 2300 gas
+        // First-time SSTORE costs ~20,000 gas
+        // We'll do operations that definitely exceed 2300
+        for (uint256 i = 0; i < 5; i++) {
+            storageArray.push(block.timestamp + i);
+        }
+    }
 }

@@ -14,8 +14,8 @@ library DataTypes {
 
     struct Issuer {
         bytes32 issuerId;
-        address adminAddress;       // for interacting w/ contract 
-        address assetAddress;       // for claiming fees 
+        address adminAddress;              // for interacting w/ contract 
+        address assetManagerAddress;       // for claiming fees 
                 
         // credentials
         uint128 totalVerified; // incremented on each verification
@@ -29,8 +29,8 @@ library DataTypes {
 
     struct Verifier {
         bytes32 verifierId;
-        address adminAddress;   // msg.sender   
-        address assetAddress;   // used for both deposit/withdrawing fees + staking Moca
+        address adminAddress;           // msg.sender   
+        address assetManagerAddress;    // used for both deposit/withdrawing fees + staking Moca
         address signerAddress;
 
         // MOCA | 18 dp precision

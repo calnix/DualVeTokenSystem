@@ -13,10 +13,13 @@ import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
 
 // interfaces
-import {IAddressBook} from "./interfaces/IAddressBook.sol";
 import {IAccessController} from "./interfaces/IAccessController.sol";
 import {IPaymentsController} from "./interfaces/IPaymentsController.sol";
 import {IVotingEscrowMoca} from "./interfaces/IVotingEscrowMoca.sol";
+
+// contracts
+import {LowLevelWMoca} from "./LowLevelWMoca.sol";
+
 
 /**
  * @title VotingController
@@ -27,11 +30,12 @@ import {IVotingEscrowMoca} from "./interfaces/IVotingEscrowMoca.sol";
  */
 
 
-contract VotingController is Pausable {
+contract VotingController is Pausable, LowLevelWMoca {
     using SafeERC20 for IERC20;
 
-    // protocol yellow pages
-    IAddressBook public immutable addressBook;
+    // Contracts
+    IAccessController public immutable accessController;
+    address public immutable wMoca;
     
     // safety check
     uint256 public TOTAL_NUMBER_OF_POOLS;
@@ -51,10 +55,13 @@ contract VotingController is Pausable {
     uint256 public TOTAL_REGISTRATION_FEES;    // total registration fees collected [MOCA]
     uint256 public REGISTRATION_FEES_CLAIMED;  // total registration fees claimed [MOCA]
     
+    // gas limit for moca transfer
+    uint256 public MOCA_TRANSFER_GAS_LIMIT;
+
     // risk management
     uint256 public isFrozen;
 
-//-------------------------------mapping----------------------------------------------
+//-------------------------------Mappings----------------------------------------------
 
     // epoch data
     mapping(uint256 epochNum => DataTypes.Epoch epoch) public epochs;    
@@ -88,14 +95,15 @@ contract VotingController is Pausable {
     mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => uint256 totalSubsidies))) public verifierEpochPoolData;
     
 
-//-------------------------------constructor------------------------------------------
+//-------------------------------Constructor------------------------------------------
 
-    constructor(address addressBook_, uint256 registrationFee, uint256 maxDelegateFeePct, uint256 delayDuration) {
-        require(addressBook_ != address(0), Errors.InvalidAddress());
+    constructor(address accessController_, uint256 registrationFee, uint256 maxDelegateFeePct, uint256 delayDuration, address wMoca_, uint256 mocaTransferGasLimit) {
         require(registrationFee > 0, Errors.InvalidAmount());
         
-        addressBook = IAddressBook(addressBook_);
-
+        // check: access controller is set [Treasury should be non-zero]
+        accessController = IAccessController(accessController_);
+        require(accessController.TREASURY() != address(0), Errors.InvalidAddress());
+        
         // initial unclaimed delay & fee increase delay
         require(delayDuration > 0, Errors.InvalidDelayPeriod());
         require(delayDuration % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
@@ -107,6 +115,14 @@ contract VotingController is Pausable {
         // set max delegate fee percentage
         require(maxDelegateFeePct > 0 && maxDelegateFeePct <= Constants.PRECISION_BASE, Errors.InvalidFeePct());
         MAX_DELEGATE_FEE_PCT = maxDelegateFeePct;
+
+        // wrapped moca 
+        require(wMoca_ != address(0), Errors.InvalidAddress());
+        wMoca = wMoca_;
+
+        // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
+        require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
+        MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
 
     }
 
@@ -910,6 +926,21 @@ contract VotingController is Pausable {
         REGISTRATION_FEE = newRegistrationFee;
     }
 
+
+    /**
+     * @notice Sets the gas limit for moca transfer.
+     * @dev Only callable by the IssuerStakingController admin.
+     * @param newMocaTransferGasLimit The new gas limit for moca transfer.
+     */
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyIssuerStakingControllerAdmin whenNotPaused {
+        require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
+
+        // cache old + update to new gas limit
+        uint256 oldMocaTransferGasLimit = MOCA_TRANSFER_GAS_LIMIT;
+        MOCA_TRANSFER_GAS_LIMIT = newMocaTransferGasLimit;
+
+        emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
+    }
 
 //-------------------------------onlyVotingControllerAdmin: pool functions----------------------------------------------------
 

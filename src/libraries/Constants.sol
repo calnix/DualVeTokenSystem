@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.27;
 
 /**
@@ -20,7 +20,7 @@ library Constants {
     uint256 internal constant MOCA_PRECISION = 1E18;
 
     // signature for PaymentsController::deductBalance()
-    bytes32 internal constant DEDUCT_BALANCE_TYPEHASH = keccak256("DeductBalance(bytes32 issuerId,bytes32 verifierId,bytes32 schemaId,uint128 amount,uint256 expiry,uint256 nonce)");
+    bytes32 internal constant DEDUCT_BALANCE_TYPEHASH = keccak256("DeductBalance(address caller,bytes32 issuerId,bytes32 verifierId,bytes32 schemaId,uint128 amount,uint256 expiry,uint256 nonce)");
     // signature for PaymentsController::deductBalanceZeroFee() | does not include amount
-    bytes32 internal constant DEDUCT_BALANCE_ZERO_FEE_TYPEHASH = keccak256("DeductBalanceZeroFee(bytes32 issuerId,bytes32 verifierId,bytes32 schemaId,uint256 expiry,uint256 nonce)"); 
+    bytes32 internal constant DEDUCT_BALANCE_ZERO_FEE_TYPEHASH = keccak256("DeductBalanceZeroFee(address caller,bytes32 issuerId,bytes32 verifierId,bytes32 schemaId,uint256 expiry,uint256 nonce)"); 
 }

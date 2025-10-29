@@ -28,6 +28,8 @@ library Errors {
     error NoFeesToClaim();
     error InvalidTimestamp();
     error InsufficientBalance();
+    error InvalidGasLimit();
+    error OnlyCallableByEmergencyExitHandlerOrIssuer();
 
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
@@ -41,6 +43,7 @@ library Errors {
     error ProtocolFeeAlreadyWithdrawn();
     error VotersFeeAlreadyWithdrawn();
     error ZeroVotersFee();
+    error OnlyCallableByEmergencyExitHandlerOrVerifier();
 
 // --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();
@@ -104,6 +107,7 @@ library Errors {
     error WhitelistStatusUnchanged();
     error OnlyCallableByWhitelistedAddress();
     error TotalMocaEscrowedExceeded();
+    error OnlyCallableByEmergencyExitHandlerOrUser();
 
 // --------- AccessController.sol ---------
     error CallerNotRiskOrPoolAdmin();
@@ -123,5 +127,4 @@ library Errors {
 
 // --------- IssuerStakingController.sol ---------
     error TransferFailed();
-    error OnlyCallableByEmergencyExitHandlerOrIssuer();
 }
