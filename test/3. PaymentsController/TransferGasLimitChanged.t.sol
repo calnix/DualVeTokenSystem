@@ -36,13 +36,8 @@ contract StateT11_TransferGasLimitChanged_Test is StateT11_TransferGasLimitChang
         // We'll use vm.etch to replace verifier1Asset with this contract's code
         
         GasGuzzler gasGuzzler = new GasGuzzler();
-        bytes memory gasGuzzlerCode = address(gasGuzzler).code;
-        
-        // Replace issuer1Asset with contract code that has expensive receive
+        bytes memory gasGuzzlerCode = address(gasGuzzler).code;        
         vm.etch(verifier1Asset, gasGuzzlerCode);
-
-        // Ensure contract is at correct claimable state
-        vm.warp(firstClaimableTimestamp);
 
         uint128 amount = 10 ether;
 
@@ -52,24 +47,31 @@ contract StateT11_TransferGasLimitChanged_Test is StateT11_TransferGasLimitChang
         // wrapped moca balances before
         uint256 verifier1WMocaBalanceBefore = mockWMoca.balanceOf(verifier1Asset);
         uint256 contractWMocaBalanceBefore = mockWMoca.balanceOf(address(paymentsController));
+        // native moca balances before
+        uint256 verifier1AssetNativeBalanceBefore = verifier1Asset.balance;
+        uint256 contractNativeBalanceBefore = address(paymentsController).balance;
 
         // Expect event emission
         vm.expectEmit(true, true, false, true, address(paymentsController));
         emit Events.VerifierMocaUnstaked(verifier1_Id, verifier1Asset, amount);
 
         // -- Unstake: should fallback to sending wMoca --
-        vm.prank(verifierContract);
+        vm.prank(verifier1Asset);
         paymentsController.unstakeMoca(verifier1_Id, amount);
 
 
         // Check storage state after
         DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier1_Id);
-        assertEq(verifier.mocaStaked, verifier1MocaStakedBefore - amount, "Verifier mocaStaked not updated correctly");
+        assertEq(verifier.mocaStaked, verifier1MocaStakedBefore - amount, "VerifierAssetAddress unstaked MOCA");
         assertEq(paymentsController.TOTAL_MOCA_STAKED(), totalMocaStakedBefore - amount, "TOTAL_MOCA_STAKED not updated correctly");
 
         // Check wrapped moca balances after
-        assertEq(mockWMoca.balanceOf(verifier1Asset), verifier1WMocaBalanceBefore + amount, "Verifier asset wrapped MOCA balance not increased correctly");
-        assertEq(mockWMoca.balanceOf(address(paymentsController)), contractWMocaBalanceBefore - amount, "Contract wrapped MOCA balance not decreased correctly");
+        assertEq(mockWMoca.balanceOf(verifier1Asset), verifier1WMocaBalanceBefore + amount, "VerifierAssetAddress received wrapped MOCA");
+        assertEq(mockWMoca.balanceOf(address(paymentsController)), 0, "Contract has no wrapped MOCA");
+
+        // Check native moca balances after
+        assertEq(verifier1Asset.balance, verifier1AssetNativeBalanceBefore, "VerifierAssetAddress did not receive native MOCA");
+        assertEq(address(paymentsController).balance, contractNativeBalanceBefore - amount, "Contract gave out native MOCA");
     }
 
 }

@@ -37,7 +37,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     IAccessController public immutable accessController;
     address public immutable WMOCA;
     IERC20 public immutable USD8;
-    address public VERIFIER_CONTRACT;
 
     // fees: 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy) [both fees can be 0]
     uint256 public PROTOCOL_FEE_PERCENTAGE;    
@@ -93,7 +92,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     // name: PaymentsController, version: 1
     constructor(
         address accessController_, uint256 protocolFeePercentage, uint256 voterFeePercentage, uint256 delayPeriod, 
-        address wMoca_, address usd8_, uint256 mocaTransferGasLimit, address verifierContract,
+        address wMoca_, address usd8_, uint256 mocaTransferGasLimit,
         string memory name, string memory version) EIP712(name, version) {
 
         // check: access controller is set [Treasury should be non-zero]
@@ -121,10 +120,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         require(delayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
         require(EpochMath.isValidEpochTime(delayPeriod), Errors.InvalidDelayPeriod());
         FEE_INCREASE_DELAY_PERIOD = delayPeriod;
-
-        // check if verifier contract is set
-        require(verifierContract != address(0), Errors.InvalidAddress());
-        VERIFIER_CONTRACT = verifierContract;
     }
 
 //-------------------------------Issuer functions-----------------------------------------------------------------
@@ -145,9 +140,9 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
             uint256 salt = block.number;
             issuerId = keccak256(abi.encode("ISSUER", msg.sender, salt));
             while (
-                _issuers[issuerId].issuerId != bytes32(0) ||
-                _verifiers[issuerId].verifierId != bytes32(0) ||
-                _schemas[issuerId].schemaId != bytes32(0)
+                _issuers[issuerId].issuerId != bytes32(0) 
+                || _verifiers[issuerId].verifierId != bytes32(0) 
+                || _schemas[issuerId].schemaId != bytes32(0)
             ) {
                 issuerId = keccak256(abi.encode("ISSUER", msg.sender, ++salt));
             }
@@ -173,10 +168,10 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @return schemaId The unique id assigned to the new schema.
      */
     function createSchema(bytes32 issuerId, uint128 fee) external whenNotPaused returns (bytes32) {
-        // check if issuerId's admin address matches msg.sender
+        // caller must be issuer's admin address
         require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
 
-        // sanity check: fee cannot be greater than 1000 USD8
+        // sanity check: fee cannot be greater than 10_000 USD8
         // fee is an absolute value expressed in USD8 terms | free credentials are allowed
         require(fee < 10_000 * Constants.USD8_PRECISION, Errors.InvalidAmount());
 
@@ -187,9 +182,9 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
             uint256 salt = block.number;
             schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, salt));
             while (
-                _issuers[schemaId].issuerId != bytes32(0) ||
-                _verifiers[schemaId].verifierId != bytes32(0) ||
-                _schemas[schemaId].schemaId != bytes32(0)
+                _issuers[schemaId].issuerId != bytes32(0) 
+                || _verifiers[schemaId].verifierId != bytes32(0) 
+                || _schemas[schemaId].schemaId != bytes32(0)
             ) {
                 schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, ++salt));
             }
@@ -222,7 +217,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
 
-        // check if issuerId's admin address matches msg.sender
+        // caller must be issuer's admin address
         require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
 
         // check if schemaId is valid
@@ -271,7 +266,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         // cache pointers
         DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
 
-        // check if issuerId's asset manager address matches msg.sender
+        // caller must be issuer's asset manager address
         require(issuerPtr.assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
         uint256 claimableFees = issuerPtr.totalNetFeesAccrued - issuerPtr.totalClaimed;
@@ -311,9 +306,9 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
             uint256 salt = block.number;
             verifierId = keccak256(abi.encode("VERIFIER", msg.sender, salt));
             while (
-                _issuers[verifierId].issuerId != bytes32(0) ||
-                _verifiers[verifierId].verifierId != bytes32(0) ||
-                _schemas[verifierId].schemaId != bytes32(0)
+                _issuers[verifierId].issuerId != bytes32(0) 
+                || _verifiers[verifierId].verifierId != bytes32(0)
+                || _schemas[verifierId].schemaId != bytes32(0)
             ) {
                 verifierId = keccak256(abi.encode("VERIFIER", msg.sender, ++salt));
             }
@@ -345,7 +340,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         // cache pointer
         DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
 
-        // check msg.sender is verifierId's assetManagerAddress
+        // caller must be verifier's asset manager address
         address assetManagerAddress = verifierPtr.assetManagerAddress;
         require(assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
@@ -372,7 +367,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         // cache pointer
         DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
 
-        // check msg.sender is verifierId's asset manager address
+        // caller must be verifier's asset manager address
         address assetManagerAddress = verifierPtr.assetManagerAddress;
         require(assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
@@ -401,7 +396,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         // cache pointer
         DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
 
-        // check msg.sender is verifierId's admin address
+        // caller must be verifier's admin address
         require(verifierPtr.adminAddress == msg.sender, Errors.InvalidCaller());
 
         // check if new signer address is different from current one
@@ -426,7 +421,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         // cache pointer
         DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
         
-        // check msg.sender is verifierId's asset manager address
+        // caller must be verifier's asset manager address
         address assetManagerAddress = verifierPtr.assetManagerAddress;
         require(assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
@@ -451,7 +446,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         // cache pointer
         DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
 
-        // check msg.sender is verifierId's asset manager address
+        // caller must be verifier's asset manager address
         address assetManagerAddress = verifierPtr.assetManagerAddress;
         require(assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
@@ -463,12 +458,12 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         TOTAL_MOCA_STAKED -= amount;
 
         // transfer moca to issuer [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, msg.sender, amount, MOCA_TRANSFER_GAS_LIMIT);
+        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, assetManagerAddress, amount, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.VerifierMocaUnstaked(verifierId, assetManagerAddress, amount);
     }
 
-//----------------------------updateAssetManagerAddress: common to both issuer and verifier --------------------------
+//------------------------------- updateAssetManagerAddress: common to both issuer and verifier ------------------
 
     /**
      * @notice Generic function to update the asset manager address for either an issuer or a verifier.
@@ -504,7 +499,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         return newAssetManagerAddress;
     }
 
-//-------------------------------UniversalVerificationContract functions------------------------------------------
+//------------------------------- UniversalVerificationContract functions-----------------------------------------
 
     /**
      * @notice Deducts the verifier's balance for a verification, distributing protocol and voting fees.
@@ -518,7 +513,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
     function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
-        require(msg.sender == VERIFIER_CONTRACT, Errors.InvalidCaller());
         require(expiry > block.timestamp, Errors.SignatureExpired()); 
         require(amount > 0, Errors.InvalidAmount());
         
@@ -629,7 +623,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
     function deductBalanceZeroFee(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 expiry, bytes calldata signature) external whenNotPaused {
-        require(msg.sender == VERIFIER_CONTRACT, Errors.InvalidCaller());
         require(expiry > block.timestamp, Errors.SignatureExpired());
         
         // Verify schema has zero fee
@@ -640,7 +633,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         bytes32 hash = _hashTypedDataV4(
             keccak256(abi.encode(
                 Constants.DEDUCT_BALANCE_ZERO_FEE_TYPEHASH,
-                msg.sender,
                 issuerId, 
                 verifierId, 
                 schemaId, 
@@ -661,7 +653,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     }
 
  
-//-------------------------------Internal functions---------------------------------------------------------------
+//------------------------------- Internal functions--------------------------------------------------------------
 
     // for VotingController to identify how much subsidies owed to each verifier; based on their staking tier+expenditure
     // expectation: amount is non-zero
@@ -683,7 +675,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         }
     }
    
-//-------------------------------PaymentsControllerAdmin: update functions----------------------------------------
+//------------------------------- PaymentsControllerAdmin: update functions---------------------------------------
 
     // add/update/remove | can be 0 
     function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin whenNotPaused {
@@ -748,22 +740,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
     }
 
-    /**
-     * @notice Updates the verifier contract.
-     * @dev Only callable by the PaymentsController admin. The new verifier contract must be non-zero and different from the current one.
-     * @param newVerifierContract The new verifier contract.
-     */
-    function updateVerifierContract(address newVerifierContract) external onlyPaymentsAdmin whenNotPaused {
-        require(newVerifierContract != address(0), Errors.InvalidAddress());
-        require(newVerifierContract != VERIFIER_CONTRACT, Errors.InvalidAddress());
-
-        // cache old + update to new verifier contract
-        address oldVerifierContract = VERIFIER_CONTRACT;
-        VERIFIER_CONTRACT = newVerifierContract;
-        emit Events.VerifierContractUpdated(oldVerifierContract, newVerifierContract);
-    }
-
-//-------------------------------AssetManager: withdraw functions-------------------------------------------------
+//------------------------------- AssetManager: withdraw functions------------------------------------------------
 
     /**
      * @notice Allows withdrawal of protocol fees only after the specified epoch has ended.
@@ -966,7 +943,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     }
     
 
-//------------------------------- Modifiers -------------------------------------------------------
+//------------------------------- Modifiers ----------------------------------------------------------------------
 
     modifier onlyMonitor() {
         require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
@@ -994,9 +971,18 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     }
 
 
-//------------------------------ View functions --------------------------------------------------------
+//------------------------------ View functions ------------------------------------------------------------------
    
     // note: called by VotingController.claimSubsidies | no need for zero address check on the caller
+    /**
+     * @notice Returns the total subsidies per epoch, for a pool and {verifier, pool}.
+     * @param epoch The epoch.
+     * @param poolId The pool id.
+     * @param verifierId The verifier id.
+     * @param caller The verifier's asset manager address. [Called through VotingController.claimSubsidies()].
+     * @return verifierAccruedSubsidies The total subsidies for the {verifier, pool}, for the epoch.
+     * @return poolAccruedSubsidies The total subsidies for the pool, for the epoch.
+     */
     function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint256, uint256) {
         // verifiers's asset manager address must be the caller of VotingController.claimSubsidies
         require(caller == _verifiers[verifierId].assetManagerAddress, Errors.InvalidCaller());
@@ -1039,24 +1025,52 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         return _verifierNonces[signerAddress];
     }
 
+    /**
+     * @notice Returns the subsidy percentage for a given moca staked.
+     * @param mocaStaked The amount of moca staked.
+     * @return subsidyPercentage The subsidy percentage.
+     */
     function getVerifierSubsidyPercentage(uint256 mocaStaked) external view returns (uint256) {
         return _verifiersSubsidyPercentages[mocaStaked];
     }
 
-    // note: overlap with getVerifierAndPoolAccruedSubsidies
+    /**
+     * @notice Returns the total subsidies for a given pool and epoch.
+     * @param epoch The epoch.
+     * @param poolId The pool id.
+     * @return totalSubsidies The total subsidies for the pool and epoch.
+     */
     function getEpochPoolSubsidies(uint256 epoch, bytes32 poolId) external view returns (uint256) {
         return _epochPoolSubsidies[epoch][poolId];
     }
 
+    /**
+     * @notice Returns the total subsidies for a given pool and verifier and epoch.
+     * @param epoch The epoch.
+     * @param poolId The pool id.
+     * @param verifierId The verifier id.
+     * @return totalSubsidies The total subsidies for the pool and verifier and epoch.
+     */
     function getEpochPoolVerifierSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId) external view returns (uint256) {
         return _epochPoolVerifierSubsidies[epoch][poolId][verifierId];
     }
 
     // note: manually refer to this, to know how much esMoca to deposit per pool on VotingController.depositRewardsForEpoch()
+    /**
+     * @notice Returns the fees accrued for a given pool and epoch.
+     * @param epoch The epoch.
+     * @param poolId The pool id.
+     * @return feesAccrued The fees accrued for the pool and epoch.
+     */
     function getEpochPoolFeesAccrued(uint256 epoch, bytes32 poolId) external view returns (DataTypes.FeesAccrued memory) {
         return _epochPoolFeesAccrued[epoch][poolId];
     }
 
+    /**
+     * @notice Returns the fees accrued for a given epoch.
+     * @param epoch The epoch.
+     * @return feesAccrued The fees accrued for the epoch.
+     */
     function getEpochFeesAccrued(uint256 epoch) external view returns (DataTypes.FeesAccrued memory) {
         return _epochFeesAccrued[epoch];
     }

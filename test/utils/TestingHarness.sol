@@ -103,9 +103,6 @@ abstract contract TestingHarness is Test {
     // deployer
     address public deployer = makeAddr("deployer");
 
-    // verifier contract
-    address public verifierContract = makeAddr("verifierContract");
-
 // ------------ Contract Parameters ------------
 
     // PaymentsController parameters
@@ -158,7 +155,7 @@ abstract contract TestingHarness is Test {
 
         // 5. Deploy PaymentsController
         paymentsController = new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
-             address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, address(verifierContract), "PaymentsController", "1");
+             address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
     
 
         // 6. Deploy EscrowedMoca
@@ -337,19 +334,19 @@ abstract contract TestingHarness is Test {
         }
     }
 
-    function generateUnusedSchemaId(address issuer) public view returns (bytes32 schemaId) {
+    function generateUnusedSchemaId(bytes32 issuerId) public view returns (bytes32 schemaId) {
         // get totalSchemas for this issuer
-        uint256 totalSchemas = paymentsController.getIssuer(keccak256(abi.encode("ISSUER", issuer, 0))).totalSchemas;
+        uint256 totalSchemas = paymentsController.getIssuer(issuerId).totalSchemas;
         uint256 salt = block.number;
-        
-        schemaId = keccak256(abi.encode("SCHEMA", issuer, totalSchemas, salt));
+
+        schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, salt));
         // Check if id is used in any mapping
         while (
             paymentsController.getIssuer(schemaId).issuerId != bytes32(0) ||
             paymentsController.getVerifier(schemaId).verifierId != bytes32(0) ||
             paymentsController.getSchema(schemaId).schemaId != bytes32(0)
         ) {
-            schemaId = keccak256(abi.encode("SCHEMA", issuer, totalSchemas, ++salt));
+            schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, ++salt));
         }
     }
 }
