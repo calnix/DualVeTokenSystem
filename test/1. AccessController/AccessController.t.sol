@@ -4,17 +4,16 @@ pragma solidity 0.8.27;
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 
 // External: OZ
-import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
-import {IAccessControl} from "./../lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
-import {Pausable} from "./../lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessControl.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // import contracts
-import {AccessController, IAddressBook} from "./../src/AccessController.sol";
-import {AddressBook} from "./../src/AddressBook.sol";
+import {AccessController} from "../../src/AccessController.sol";
 
 // import libraries
-import {Events} from "./../src/libraries/Events.sol";
-import {Errors} from "./../src/libraries/Errors.sol";
+import {Events} from "../../src/libraries/Events.sol";
+import {Errors} from "../../src/libraries/Errors.sol";
 
 
 abstract contract State_DeployAccessController is Test {
@@ -22,7 +21,6 @@ abstract contract State_DeployAccessController is Test {
 
 // ------------ Contracts ------------
     
-    AddressBook public addressBook;
     AccessController public accessController;
 
 // ------------ Actors ------------
@@ -34,6 +32,7 @@ abstract contract State_DeployAccessController is Test {
     address public monitorAdmin = makeAddr("monitorAdmin");
     address public cronJobAdmin = makeAddr("cronJobAdmin");
 
+    address public treasury = makeAddr("treasury");
     address public monitor = makeAddr("monitor");
     address public cronJob = makeAddr("cronJob");
 
@@ -46,21 +45,18 @@ abstract contract State_DeployAccessController is Test {
     address public emergencyExitHandler = makeAddr("emergencyExitHandler");
 
     function setUp() public virtual {
-        addressBook = new AddressBook(globalAdmin);
-        accessController = new AccessController(address(addressBook));
+        accessController = new AccessController(globalAdmin, treasury);
     }
 }
 
-
 contract State_DeployAccessController_Test is State_DeployAccessController {
 
-    // constructor test: AccessController gets global admin from address book
-    function test_Constructor_SetsGlobalAdmin() public {
-        // check address book
-        assertTrue(accessController.getAddressBook() == address(addressBook));      
+    // constructor test: AccessController gets global admin and treasury
+    function test_Constructor_SetsGlobalAdminAndTreasury() public {
         // check global admin
         assertTrue(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin));
-
+        // check treasury
+        assertTrue(accessController.TREASURY() == treasury);
         // globalAdmin has DEFAULT_ADMIN_ROLE
         assertTrue(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin));
         
@@ -790,49 +786,6 @@ contract State_EmergencyExitHandlerSet_Test is State_EmergencyExitHandlerSet {
             assertTrue(accessController.isGlobalAdmin(globalAdmin));
             assertFalse(accessController.isGlobalAdmin(userA));
             assertFalse(accessController.isGlobalAdmin(address(0)));
-        }
-
-    // ------ transferGlobalAdminFromAddressBook ------
-        
-        // only address book can call transferGlobalAdminFromAddressBook
-        function test_OnlyAddressBook_CanTransferGlobalAdmin() public {
-            vm.expectRevert(Errors.OnlyCallableByAddressBook.selector);
-            vm.prank(globalAdmin);
-            accessController.transferGlobalAdminFromAddressBook(globalAdmin, newGlobalAdmin);
-        }
-
-        // address book can transfer global admin
-        function test_AddressBook_CanTransferGlobalAdmin() public {
-            // expect event emission
-            vm.expectEmit(true, true, false, true, address(accessController));
-            emit Events.GlobalAdminTransferred(globalAdmin, newGlobalAdmin);
-
-            vm.prank(address(addressBook));
-            accessController.transferGlobalAdminFromAddressBook(globalAdmin, newGlobalAdmin);
-
-            // verify the transfer
-            assertTrue(accessController.isGlobalAdmin(newGlobalAdmin));
-            assertFalse(accessController.isGlobalAdmin(globalAdmin));
-        }
-
-        // cannot transfer from non-admin: old admin does not have role
-        function test_transferGlobalAdminFromAddressBook_CannotTransferFromNonAdmin() public {
-            vm.expectRevert(Errors.OldAdminDoesNotHaveRole.selector);
-            vm.prank(address(addressBook));
-            accessController.transferGlobalAdminFromAddressBook(userA, newGlobalAdmin);
-        }
-
-        // cannot transfer to zero address
-        function test_transferGlobalAdminFromAddressBook_CannotTransferToZeroAddress() public {
-            vm.expectRevert(Errors.InvalidAddress.selector);
-            vm.prank(address(addressBook));
-            accessController.transferGlobalAdminFromAddressBook(globalAdmin, address(0));
-        }
-
-    // ------ getAddressBook ------
-        
-        function test_getAddressBook() public {
-            assertEq(accessController.getAddressBook(), address(addressBook));
         }
 
     // ------ noZeroAddress modifier tests ------

@@ -14,15 +14,16 @@ import {Events} from "./libraries/Events.sol";
 import {Constants} from "./libraries/Constants.sol";
 
 // interfaces
-import {IAddressBook} from "./interfaces/IAddressBook.sol";
 import {IAccessController} from "./interfaces/IAccessController.sol";
 
+// contracts
+import {LowLevelWMoca} from "./LowLevelWMoca.sol";
 
 /**
  * @title VotingEscrowMoca
  * @author Calnix [@cal_nix]
  * @notice VotingEscrowMoca is a dual-token, quad-accounting type veToken system.
- * @dev    Users lock MOCA or esMOCA to receive veMOCA, with voting power scaling by amount and lock duration.
+ * @dev    Users lock native MOCA or esMOCA to receive veMOCA, with voting power scaling by amount and lock duration.
  *        The amount of veMOCA received increases with both the amount of MOCA locked and the length of the lock period, and decays linearly as the lock approaches expiry.
  *        Implements quad-accounting for user, delegate, and global balances.
  *        Integrates with external controllers and enforces protocol-level access and safety checks.
@@ -37,7 +38,10 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
 contract VotingEscrowMoca is ERC20, Pausable {
     using SafeERC20 for IERC20;
 
-    IAddressBook public immutable addressBook;
+    // Contracts
+    IAccessController public immutable accessController;
+    address public immutable wMoca;
+    IERC20 public immutable esMoca;
 
     // global principal
     uint256 public TOTAL_LOCKED_MOCA;
@@ -47,6 +51,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
     DataTypes.VeBalance public veGlobal;
     uint256 public lastUpdatedTimestamp;  
     
+    // gas limit for moca transfer
+    uint256 public MOCA_TRANSFER_GAS_LIMIT;
+
     uint256 public isFrozen;
 
 // ===== TO REMOVE: DEBUGGING ONLY =====
@@ -89,16 +96,28 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
 //-------------------------------Constructor-------------------------------------------------
 
-        constructor(address addressBook_) ERC20("veMoca", "veMoca") {
-            require(addressBook_ != address(0), Errors.InvalidAddress());
-            addressBook = IAddressBook(addressBook_);
+    constructor(address accessController_, address esMoca_, address wMoca_, uint256 mocaTransferGasLimit) ERC20("veMoca", "veMOCA") {
 
-            // note: has to be done on AddressBook contract after deployment
-            //addressBook.getAddress(Constants.VOTING_CONTROLLER);
-        }
+        // check: access controller is set [Treasury should be non-zero]
+        accessController = IAccessController(accessController_);
+        require(accessController.TREASURY() != address(0), Errors.InvalidAddress());
+
+        // wrapped moca 
+        require(wMoca_ != address(0), Errors.InvalidAddress());
+        wMoca = wMoca_;
+
+        // esMoca 
+        require(esMoca_ != address(0), Errors.InvalidAddress());
+        esMoca = IERC20(esMoca_);
+
+        // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
+        require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
+        MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
+    }
 
 //-------------------------------User functions---------------------------------------------
 
+        // TODO: split entrypoint for esmoca[ERC20] and Moca[native] - native uses function with no amount param.
         // note: locks are booked to currentEpochStart
         /**
          * @notice Creates a new lock with the specified expiry, moca, esMoca, and optional delegate.
@@ -176,7 +195,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             }
             if(esMocaToIncrease > 0){
                 TOTAL_LOCKED_ESMOCA += esMocaToIncrease;
-                _esMocaToken().safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
+                esMoca.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
             }
         }
         
@@ -502,43 +521,59 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
 //-------------------------------Admin function: createLockFor()---------------------------------------------
 
-        // when creating lock onBehalfOf - we will not delegate for the user
-        function createLockFor(address user, uint128 expiry, uint128 moca, uint128 esMoca) external onlyCronJobRole whenNotPaused returns (bytes32) { 
-            return _createLockFor(user, expiry, moca, esMoca, address(0));
-        }
+    // when creating lock onBehalfOf - we will not delegate for the user
+    function createLockFor(address user, uint128 expiry, uint128 moca, uint128 esMoca) external onlyCronJobRole whenNotPaused returns (bytes32) { 
+        return _createLockFor(user, expiry, moca, esMoca, address(0));
+    }
+
+    /**
+        * @notice Sets the gas limit for moca transfer.
+        * @dev Only callable by the VotingEscrowMoca admin.
+        * @param newMocaTransferGasLimit The new gas limit for moca transfer.
+        */
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyVotingEscrowMocaAdmin whenNotPaused {
+        require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
+
+        // cache old + update to new gas limit
+        uint256 oldMocaTransferGasLimit = MOCA_TRANSFER_GAS_LIMIT;
+        MOCA_TRANSFER_GAS_LIMIT = newMocaTransferGasLimit;
+
+        emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
+    }
+
 
 //-------------------------------VotingController.sol functions------------------------------------------
     
-        // note: registration fees were collected by VotingController
-        // require(delegate != address(0) not needed since external contract call
-        function registerAsDelegate(address delegate) external onlyVotingControllerContract whenNotPaused {
-            require(!isRegisteredDelegate[delegate], "Already registered");
+    // note: registration fees were collected by VotingController
+    // require(delegate != address(0) not needed since external contract call
+    function registerAsDelegate(address delegate) external onlyVotingControllerContract whenNotPaused {
+        require(!isRegisteredDelegate[delegate], "Already registered");
 
-            // storage: register delegate
-            isRegisteredDelegate[delegate] = true;
+        // storage: register delegate
+        isRegisteredDelegate[delegate] = true;
 
-            // event
-            emit Events.DelegateRegistered(delegate);
-        }
+        // event
+        emit Events.DelegateRegistered(delegate);
+    }
 
-        function unregisterAsDelegate(address delegate) external onlyVotingControllerContract whenNotPaused {
-            require(isRegisteredDelegate[delegate], "Delegate not registered");
-            isRegisteredDelegate[delegate] = false;
+    function unregisterAsDelegate(address delegate) external onlyVotingControllerContract whenNotPaused {
+        require(isRegisteredDelegate[delegate], "Delegate not registered");
+        isRegisteredDelegate[delegate] = false;
 
-            // event
-            emit Events.DelegateUnregistered(delegate);
-        }
+        // event
+        emit Events.DelegateUnregistered(delegate);
+    }
 
 //-------------------------------Internal: update functions----------------------------------------------       
         
         // delegate can be address(0)
         // lock must last for at least 2 Epochs: to meaningfully vote for the next epoch [we are sure] 
-        function _createLockFor(address user, uint128 expiry, uint128 moca, uint128 esMoca, address delegate) internal returns (bytes32) {
+        function _createLockFor(address user, uint128 expiry, uint128 mocaAmount, uint128 esMocaAmount, address delegate) internal returns (bytes32) {
             require(user != address(0), Errors.InvalidUser());
             require(EpochMath.isValidEpochTime(expiry), Errors.InvalidExpiry());
 
             // minimum total amount to avoid flooring to zero
-            uint256 totalAmount = moca + esMoca;
+            uint256 totalAmount = mocaAmount + esMocaAmount;
             require(totalAmount >= Constants.MIN_LOCK_AMOUNT, Errors.InvalidAmount());
 
             require(expiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, Errors.InvalidLockDuration());
@@ -570,8 +605,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
                     newLock.lockId = lockId; 
                     newLock.owner = user;
                     newLock.delegate = delegate;                //note: might be setting this to zero; but no point doing if(delegate != address(0))
-                    newLock.moca = moca;
-                    newLock.esMoca = esMoca;
+                    newLock.moca = mocaAmount;
+                    newLock.esMoca = esMocaAmount;
                     newLock.expiry = expiry;
                 // STORAGE: book lock
                 locks[lockId] = newLock;
@@ -581,7 +616,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 _pushCheckpoint(lockHistory[lockId], veIncoming, EpochMath.getCurrentEpochStart()); 
 
                 // emit
-                emit Events.LockCreated(lockId, user, delegate, moca, esMoca, expiry);
+                emit Events.LockCreated(lockId, user, delegate, mocaAmount, esMocaAmount, expiry);
 
             // --------- Conditional update: based on delegation ---------
 
@@ -617,13 +652,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
             _mint(account, veIncoming.bias);
 
             // STORAGE: increment global TOTAL_LOCKED_MOCA/TOTAL_LOCKED_ESMOCA + transfer tokens to contract
-            if (moca > 0) {
-                TOTAL_LOCKED_MOCA += moca;
-                _mocaToken().safeTransferFrom(msg.sender, address(this), moca);
+            if (mocaAmount > 0) {
+                TOTAL_LOCKED_MOCA += mocaAmount;
+                _mocaToken().safeTransferFrom(msg.sender, address(this), mocaAmount);
             } 
-            if (esMoca > 0) {
-                TOTAL_LOCKED_ESMOCA += esMoca;
-                _esMocaToken().safeTransferFrom(msg.sender, address(this), esMoca);
+            if (esMocaAmount > 0) {
+                TOTAL_LOCKED_ESMOCA += esMocaAmount;
+                esMoca.safeTransferFrom(msg.sender, address(this), esMocaAmount);
             } 
 
             return lockId;
@@ -855,42 +890,28 @@ contract VotingEscrowMoca is ERC20, Pausable {
             }
         }
 
-        // if zero address, reverts automatically
-        function _mocaToken() internal view returns (IERC20){
-            return IERC20(addressBook.getMoca());
-        }
-
-        // if zero address, reverts automatically
-        function _esMocaToken() internal view returns (IERC20){
-            return IERC20(addressBook.getEscrowedMoca());
-        }
-
 //-------------------------------Modifiers---------------------------------------------------------------
 
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyMonitorRole(){
-            IAccessController accessController = IAccessController(addressBook.getAccessController());
             require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
             _;
         }
 
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyCronJobRole() {
-            IAccessController accessController = IAccessController(addressBook.getAccessController());
             require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
             _;
         }
 
         // not using internal function: only 2 occurrences of this modifier
         modifier onlyGlobalAdminRole(){
-            IAccessController accessController = IAccessController(addressBook.getAccessController());
             require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
             _;
         }
         
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyEmergencyExitHandlerRole(){
-            IAccessController accessController = IAccessController(addressBook.getAccessController());
             require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
             _;
         }
@@ -907,117 +928,116 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
 //-------------------------------Block: transfer/transferFrom -----------------------------------------
 
-        function transfer(address, uint256) public pure override returns (bool) {
-            revert Errors.IsNonTransferable();
-        }
+    function transfer(address, uint256) public pure override returns (bool) {
+        revert Errors.IsNonTransferable();
+    }
 
-        function transferFrom(address, address, uint256) public pure override returns (bool) {
-            revert Errors.IsNonTransferable();
-        }
+    function transferFrom(address, address, uint256) public pure override returns (bool) {
+        revert Errors.IsNonTransferable();
+    }
 
 //-------------------------------Risk management--------------------------------------------------------
 
-        /**
-         * @notice Pause contract. Cannot pause once frozen
-         */
-        function pause() external whenNotPaused onlyMonitorRole {
-            _pause();
-        }
+    /**
+        * @notice Pause contract. Cannot pause once frozen
+        */
+    function pause() external whenNotPaused onlyMonitorRole {
+        _pause();
+    }
 
-        /**
-         * @notice Unpause pool. Cannot unpause once frozen
-         */
-        function unpause() external whenPaused onlyGlobalAdminRole {
-            if(isFrozen == 1) revert Errors.IsFrozen(); 
-            _unpause();
-        }
+    /**
+        * @notice Unpause pool. Cannot unpause once frozen
+        */
+    function unpause() external whenPaused onlyGlobalAdminRole {
+        require(isFrozen == 0, Errors.IsFrozen()); 
+        _unpause();
+    }
 
-        /**
-         * @notice To freeze the pool in the event of something untoward occurring
-         * @dev Only callable from a paused state, affirming that staking should not resume
-         *      Nothing to be updated. Freeze as is.
-         *      Enables emergencyExit() to be called.
-         */
-        function freeze() external whenPaused onlyGlobalAdminRole {
-            if(isFrozen == 1) revert Errors.IsFrozen();
+    /**
+        * @notice To freeze the pool in the event of something untoward occurring
+        * @dev Only callable from a paused state, affirming that staking should not resume
+        *      Nothing to be updated. Freeze as is.
+        *      Enables emergencyExit() to be called.
+        */
+    function freeze() external whenPaused onlyGlobalAdminRole {
+        require(isFrozen == 0, Errors.IsFrozen());
 
-            isFrozen = 1;
-            emit Events.ContractFrozen();
-        }  
+        isFrozen = 1;
+        emit Events.ContractFrozen();
+    }  
 
-        /**
-         * @notice Returns principal tokens (esMoca, Moca) to users for specified locks during emergency exit.
-         * @dev Only callable by the Emergency Exit Handler when the contract is frozen.
-         *      Ignores all contract state updates except returning principals; assumes system failure.
-         *      NOTE: Expectation is that VotingController is paused or undergoing emergencyExit(), to prevent phantom votes.
-                      Phantom votes since we do not update state when returning principals; too complicated and not worth the effort.
-         * @param lockIds Array of lock IDs for which principals should be returned.
-         * @custom:security No state updates except principal return; system is assumed failed.
-         */
-        function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole returns(uint256, uint256, uint256){
-            require(isFrozen == 1, Errors.NotFrozen());
-            require(lockIds.length > 0, Errors.InvalidAmount());
+    /**
+        * @notice Returns principal tokens (esMoca, Moca) to users for specified locks during emergency exit.
+        * @dev Only callable by the Emergency Exit Handler when the contract is frozen.
+        *      Ignores all contract state updates except returning principals; assumes system failure.
+        *      NOTE: Expectation is that VotingController is paused or undergoing emergencyExit(), to prevent phantom votes.
+                    Phantom votes since we do not update state when returning principals; too complicated and not worth the effort.
+        * @param lockIds Array of lock IDs for which principals should be returned.
+        * @custom:security No state updates except principal return; system is assumed failed.
+        */
+    function emergencyExit(bytes32[] calldata lockIds) external onlyEmergencyExitHandlerRole returns(uint256, uint256, uint256){
+        require(isFrozen == 1, Errors.NotFrozen());
+        require(lockIds.length > 0, Errors.InvalidAmount());
 
-            // Cache token interfaces
-            IERC20 mocaToken = _mocaToken();
-            IERC20 esMocaToken = _esMocaToken();
+        // Cache token interfaces
+        IERC20 mocaToken = _mocaToken();
+        
+        // Track totals for single event emission
+        uint256 totalMocaReturned;
+        uint256 totalEsMocaReturned;
+        uint256 validLocks;
+        
+        // get user's veBalance for each lock
+        for(uint256 i; i < lockIds.length; ++i) {
+            DataTypes.Lock memory lock = locks[lockIds[i]];
 
-            // Track totals for single event emission
-            uint256 totalMocaReturned;
-            uint256 totalEsMocaReturned;
-            uint256 validLocks;
+            // Skip invalid/already processed locks
+            if(lock.owner == address(0) || lock.isUnlocked) continue;            
             
-            // get user's veBalance for each lock
-            for(uint256 i; i < lockIds.length; ++i) {
-                DataTypes.Lock memory lock = locks[lockIds[i]];
+            // Determine who holds the veMOCA tokens
+            bool isDelegated = lock.delegate != address(0);
+            address veHolder = isDelegated ? lock.delegate : lock.owner;
 
-                // Skip invalid/already processed locks
-                if(lock.owner == address(0) || lock.isUnlocked) continue;            
-                
-                // Determine who holds the veMOCA tokens
-                bool isDelegated = lock.delegate != address(0);
-                address veHolder = isDelegated ? lock.delegate : lock.owner;
+            // Calculate expected veMOCA to burn
+            uint256 veMocaToBurn = uint256(_convertToVeBalance(lock).bias);
 
-                // Calculate expected veMOCA to burn
-                uint256 veMocaToBurn = uint256(_convertToVeBalance(lock).bias);
+            // Burn veMOCA tokens
+            uint256 actualBalance = balanceOf(veHolder);
+            uint256 burnAmount = veMocaToBurn > actualBalance ? actualBalance : veMocaToBurn;
+            if (burnAmount > 0) _burn(veHolder, burnAmount);                
+            // Note: If burnAmount < veMocaToBurn, we accept the discrepancy
+            // Emergency exit prioritizes returning principals over perfect accounting
 
-                // Burn veMOCA tokens
-                uint256 actualBalance = balanceOf(veHolder);
-                uint256 burnAmount = veMocaToBurn > actualBalance ? actualBalance : veMocaToBurn;
-                if (burnAmount > 0) _burn(veHolder, burnAmount);                
-                // Note: If burnAmount < veMocaToBurn, we accept the discrepancy
-                // Emergency exit prioritizes returning principals over perfect accounting
-
-                // direct storage updates - only write changed fields
-                if(lock.moca > 0) {
-                    TOTAL_LOCKED_MOCA -= lock.moca;  
-                    totalMocaReturned += lock.moca;
-                    mocaToken.safeTransfer(lock.owner, lock.moca);
-                    delete lock.moca;
-                }
-
-                if(lock.esMoca > 0) {
-                    TOTAL_LOCKED_ESMOCA -= lock.esMoca;
-                    totalEsMocaReturned += lock.esMoca;
-                    esMocaToken.safeTransfer(lock.owner, lock.esMoca);
-                    delete lock.esMoca;
-                }
-
-                // mark exited 
-                lock.isUnlocked = true;
-
-                // STORAGE: update lock
-                locks[lockIds[i]] = lock;
-
-                ++validLocks;
+            // direct storage updates - only write changed fields
+            if(lock.moca > 0) {
+                TOTAL_LOCKED_MOCA -= lock.moca;  
+                totalMocaReturned += lock.moca;
+                mocaToken.safeTransfer(lock.owner, lock.moca);
+                delete lock.moca;
             }
 
-            if(validLocks > 0) {
-                emit Events.EmergencyExit(lockIds, validLocks, totalMocaReturned, totalEsMocaReturned);
+            if(lock.esMoca > 0) {
+                TOTAL_LOCKED_ESMOCA -= lock.esMoca;
+                totalEsMocaReturned += lock.esMoca;
+                esMoca.safeTransfer(lock.owner, lock.esMoca);
+                delete lock.esMoca;
             }
 
-            return (validLocks, totalMocaReturned, totalEsMocaReturned);
+            // mark exited 
+            lock.isUnlocked = true;
+
+            // STORAGE: update lock
+            locks[lockIds[i]] = lock;
+
+            ++validLocks;
         }
+
+        if(validLocks > 0) {
+            emit Events.EmergencyExit(lockIds, validLocks, totalMocaReturned, totalEsMocaReturned);
+        }
+
+        return (validLocks, totalMocaReturned, totalEsMocaReturned);
+    }
 
 //-------------------------------Internal: view-----------------------------------------------------
 

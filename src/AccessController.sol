@@ -8,10 +8,6 @@ import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/Ac
 import {Errors} from "./libraries/Errors.sol";
 import {Events} from "./libraries/Events.sol";
 
-// interfaces
-import {IAddressBook} from "./interfaces/IAddressBook.sol";
-
-
 /**
  * @title AccessController
  * @author Calnix [@cal_nix]
@@ -26,11 +22,8 @@ import {IAddressBook} from "./interfaces/IAddressBook.sol";
  *      while role management remains deliberately slow and secure through multi-sig coordination.
  */
 
-//note: get addresses from address book
 contract AccessController is AccessControl {
-
-    IAddressBook internal immutable _addressBook;
-  
+ 
     // ______ HIGH-FREQUENCY ROLES [AUTOMATED OPERATIONAL FUNCTIONS] ______
     bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");      // Pause only
     bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");    // Automated tasks: createLockFor, finalizeEpoch, depositSubsidies
@@ -51,6 +44,8 @@ contract AccessController is AccessControl {
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE");                   // withdraw fns on PaymentsController, VotingController
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
 
+    // Treasury address for withdrawals
+    address public TREASURY;
 
     // Risk
     uint256 public isFrozen;
@@ -59,14 +54,15 @@ contract AccessController is AccessControl {
 
     /**
      * @dev Constructor
-     * @param addressBook The address of the AddressBook
+     * @param globalAdmin The address of the global admin
+     * @param treasury The address of the treasury
     */
-    constructor(address addressBook) {
-        _addressBook = IAddressBook(addressBook);
-        
-        // Get global admin from AddressBook
-        address globalAdmin = _addressBook.getGlobalAdmin();
+    constructor(address globalAdmin, address treasury) {
         require(globalAdmin != address(0), Errors.InvalidAddress());
+        require(treasury != address(0), Errors.InvalidAddress());
+
+        // treasury address
+        TREASURY = treasury;
 
         // Grant supreme admin role
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
@@ -100,6 +96,21 @@ contract AccessController is AccessControl {
     */
     function setRoleAdmin(bytes32 role, bytes32 adminRole) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRoleAdmin(role, adminRole);
+    }
+
+    /**
+     * @notice Sets the treasury address
+     * @dev Only callable by the DEFAULT_ADMIN_ROLE
+     * @param newTreasury The new treasury address
+     * Emits a {TreasuryUpdated} event
+    */
+    function setTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) noZeroAddress(newTreasury) {
+        require(newTreasury != TREASURY, Errors.InvalidAddress());
+
+        address oldTreasury = TREASURY;
+        TREASURY = newTreasury;
+
+        emit Events.TreasuryUpdated(oldTreasury, newTreasury);
     }
 
 
@@ -288,34 +299,9 @@ contract AccessController is AccessControl {
 
 // -------------------- GLOBAL ADMIN FUNCTIONS ------------------------------------------------------------
 
-    function isGlobalAdmin(address addr) public view returns (bool) {
+    function isGlobalAdmin(address addr) external view returns (bool) {
         return hasRole(DEFAULT_ADMIN_ROLE, addr);
     }
-
-    /**
-     * @notice Atomically transfers the DEFAULT_ADMIN_ROLE (GlobalAdmin) from one address to another.
-     * @dev Only callable by the AddressBook contract to synchronize admin changes across the protocol.
-     *      Grants the role to the new admin before revoking from the old admin to ensure continuous access control.
-     *      Emits a {GlobalAdminTransferred} event.
-     * @param oldAdmin The address currently holding the DEFAULT_ADMIN_ROLE to be revoked.
-     * @param newAdmin The address to be granted the DEFAULT_ADMIN_ROLE.
-     */
-    function transferGlobalAdminFromAddressBook(address oldAdmin, address newAdmin) external noZeroAddress(newAdmin) {
-        // Only AddressBook can call this function
-        require(msg.sender == address(_addressBook), Errors.OnlyCallableByAddressBook());
-
-        // Verify the oldAdmin actually has the role
-        require(hasRole(DEFAULT_ADMIN_ROLE, oldAdmin), Errors.OldAdminDoesNotHaveRole());
-        
-        // Grant to new admin first (atomic operation)
-        _grantRole(DEFAULT_ADMIN_ROLE, newAdmin);
-        
-        // Revoke from old admin
-        _revokeRole(DEFAULT_ADMIN_ROLE, oldAdmin);
-        
-        emit Events.GlobalAdminTransferred(oldAdmin, newAdmin);
-    }
-
 
 // -------------------- MODIFIERS --------------------------------
 
@@ -324,9 +310,4 @@ contract AccessController is AccessControl {
         _;
     }
 
-// -------------------- Getters --------------------------------
-
-    function getAddressBook() external view returns (address) {
-        return address(_addressBook);
-    }
 }

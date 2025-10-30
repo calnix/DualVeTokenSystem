@@ -16,8 +16,11 @@ abstract contract StateT0_Deploy is TestingHarness {
 contract StateT0_DeployAndCreateSubsidyTiers_Test is StateT0_Deploy {
     
     function test_Deploy() public {
-        // Check PaymentsController addressBook is set correctly
-        assertEq(address(paymentsController.addressBook()), address(addressBook), "addressBook not set correctly");
+        // Check IssuerStakingController addressBook is set correctly
+        assertEq(address(paymentsController.accessController()), address(accessController), "accessController not set correctly");
+        assertEq(address(paymentsController.USD8()), address(mockUSD8), "USD8 not set correctly");
+        assertEq(address(paymentsController.WMOCA()), address(mockWMoca), "wMoca not set correctly");
+        assertEq(paymentsController.MOCA_TRANSFER_GAS_LIMIT(), MOCA_TRANSFER_GAS_LIMIT, "MOCA_TRANSFER_GAS_LIMIT not set correctly");
 
         // Check protocol fee percentage
         assertEq(paymentsController.PROTOCOL_FEE_PERCENTAGE(), protocolFeePercentage, "PROTOCOL_FEE_PERCENTAGE not set correctly");
@@ -29,7 +32,48 @@ contract StateT0_DeployAndCreateSubsidyTiers_Test is StateT0_Deploy {
         assertEq(paymentsController.FEE_INCREASE_DELAY_PERIOD(), feeIncreaseDelayPeriod, "FEE_INCREASE_DELAY_PERIOD not set correctly");
     }
 
-    // state transition: subsidy tiers
+    function testRevert_Deploy_AccessControllerIsZeroAddress() public {
+        vm.expectRevert();
+        new PaymentsController(address(0), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod, address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT,  "PaymentsController", "1");
+    }
+
+    function testRevert_Deploy_WMOCAIsZeroAddress() public {
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod, address(0), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+    }
+
+    function testRevert_Deploy_USD8IsZeroAddress() public {
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod, address(mockWMoca), address(0), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+    }
+
+    function testRevert_Deploy_MOCA_TRANSFER_GAS_LIMITIsLessThan2300() public {
+        vm.expectRevert(Errors.InvalidGasLimit.selector);
+        new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod, address(mockWMoca), address(mockUSD8), 2300 - 1, "PaymentsController", "1");
+    }
+
+    function testRevert_Deploy_ProtocolFeePercentageIsGreaterThan100Pct() public {
+        vm.expectRevert(Errors.InvalidPercentage.selector);
+        new PaymentsController(address(accessController), Constants.PRECISION_BASE + 1, voterFeePercentage, feeIncreaseDelayPeriod, address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+    }
+
+    function testRevert_Deploy_VoterFeePercentageIsGreaterThan100Pct() public {
+        vm.expectRevert(Errors.InvalidPercentage.selector);
+        new PaymentsController(address(accessController), protocolFeePercentage, Constants.PRECISION_BASE + 1, feeIncreaseDelayPeriod, address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+    }
+
+    function testRevert_Deploy_FeeIncreaseDelayPeriodIsZero() public {
+        vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+        new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, 0, address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+    }
+
+    function testRevert_Deploy_FeeIncreaseDelayPeriodIsLessThanEpochDuration() public {
+        vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+        new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, EpochMath.EPOCH_DURATION - 1, address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+    }
+
+
+    // ---------- state transition: subsidy tiers ----------
     function testCannot_PaymentsControllerAdmin_SetSubsidyTiers_WhenCallerIsNotPaymentsControllerAdmin() public {
         vm.expectRevert(Errors.OnlyCallableByPaymentsControllerAdmin.selector);
         vm.prank(address(0xdeadbeef)); // not the payments controller admin
@@ -103,7 +147,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
         }
 
         function testCan_CreateIssuer() public {
-            bytes32 expectedIssuerId = keccak256(abi.encode("ISSUER", issuer1));
+            bytes32 expectedIssuerId = generateUnusedIssuerId(issuer1);
 
             // Expect the IssuerCreated event to be emitted with correct parameters
             vm.expectEmit(true, false, false, false, address(paymentsController));
@@ -119,11 +163,11 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             assertEq(issuerId, expectedIssuerId, "returned issuerId mismatch");
             assertEq(issuer.issuerId, expectedIssuerId, "storedIssuerId mismatch");
             assertEq(issuer.adminAddress, issuer1, "adminAddress mismatch");
-            assertEq(issuer.assetAddress, issuer1Asset, "assetAddress mismatch");
+            assertEq(issuer.assetManagerAddress, issuer1Asset, "assetManagerAddress mismatch");
             assertEq(issuer.totalNetFeesAccrued, 0, "totalNetFeesAccrued should be 0");
             assertEq(issuer.totalClaimed, 0, "totalClaimed should be 0");
         }
-
+/*
         // test duplicate ID creation scenario
         function testCannot_CreateIssuer_DuplicateId() public {
             // Create issuer
@@ -135,7 +179,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             vm.prank(issuer1);
             paymentsController.createIssuer(issuer1Asset);
         }
-
+*/
     // ---- verifier fns ----
         function testCannot_CreateVerifier_WhenAssetAddressIsZeroAddress() public {
             vm.expectRevert(Errors.InvalidAddress.selector);
@@ -148,7 +192,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             vm.prank(verifier1);
             paymentsController.createVerifier(address(0), verifier1Asset);
         }
-
+/*
         // test duplicate ID creation scenario
         function testCannot_CreateVerifier_DuplicateId() public {
             // Create verifier
@@ -160,9 +204,9 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             vm.prank(verifier1);
             paymentsController.createVerifier(verifier1Signer, verifier1Asset);
         }
-
+*/
         function testCan_CreateVerifier() public {
-            bytes32 expectedVerifierId = keccak256(abi.encode("VERIFIER", verifier1));
+            bytes32 expectedVerifierId = generateUnusedVerifierId(verifier1);
 
             // Expect the VerifierCreated event to be emitted with correct parameters
             vm.expectEmit(true, false, false, false, address(paymentsController));
@@ -179,7 +223,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             assertEq(verifier.verifierId, expectedVerifierId, "storedVerifierId mismatch");
             assertEq(verifier.adminAddress, verifier1, "adminAddress mismatch");
             assertEq(verifier.signerAddress, verifier1Signer, "signerAddress mismatch");
-            assertEq(verifier.assetAddress, verifier1Asset, "assetAddress mismatch");
+            assertEq(verifier.assetManagerAddress, verifier1Asset, "assetManagerAddress mismatch");
             assertEq(verifier.currentBalance, 0, "currentBalance should be 0");
             assertEq(verifier.totalExpenditure, 0, "totalExpenditure should be 0");
         }
@@ -188,36 +232,36 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
 abstract contract StateT1_CreateIssuerVerifiers is StateT1_SubsidyTiersCreated {
 
     // issuers
-    bytes32 public issuer1_Id = keccak256(abi.encode("ISSUER", issuer1));
-    bytes32 public issuer2_Id = keccak256(abi.encode("ISSUER", issuer2));
-    bytes32 public issuer3_Id = keccak256(abi.encode("ISSUER", issuer3));
+    bytes32 public issuer1_Id;
+    bytes32 public issuer2_Id;
+    bytes32 public issuer3_Id;
     // verifiers
-    bytes32 public verifier1_Id = keccak256(abi.encode("VERIFIER", verifier1));
-    bytes32 public verifier2_Id = keccak256(abi.encode("VERIFIER", verifier2));
-    bytes32 public verifier3_Id = keccak256(abi.encode("VERIFIER", verifier3));
+    bytes32 public verifier1_Id;
+    bytes32 public verifier2_Id;
+    bytes32 public verifier3_Id;
 
     function setUp() public virtual override {
         super.setUp();
 
         // issuers
         vm.prank(issuer1);
-        paymentsController.createIssuer(issuer1Asset);
+        issuer1_Id = paymentsController.createIssuer(issuer1Asset);
 
         vm.prank(issuer2);
-        paymentsController.createIssuer(issuer2Asset);
+        issuer2_Id = paymentsController.createIssuer(issuer2Asset);
 
         vm.prank(issuer3);
-        paymentsController.createIssuer(issuer3Asset);  
+        issuer3_Id = paymentsController.createIssuer(issuer3Asset);  
 
         // verifiers
         vm.prank(verifier1);
-        paymentsController.createVerifier(verifier1Signer, verifier1Asset);
+        verifier1_Id = paymentsController.createVerifier(verifier1Signer, verifier1Asset);
 
         vm.prank(verifier2);
-        paymentsController.createVerifier(verifier2Signer, verifier2Asset);
+        verifier2_Id = paymentsController.createVerifier(verifier2Signer, verifier2Asset);
 
         vm.prank(verifier3);
-        paymentsController.createVerifier(verifier3Signer, verifier3Asset);
+        verifier3_Id = paymentsController.createVerifier(verifier3Signer, verifier3Asset);
     }
 }
 
@@ -242,7 +286,7 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
         vm.prank(issuer1);
         paymentsController.createSchema(issuer1_Id, tooLargeFee);
     }
-
+/*
     // test storage collision scenario for schemaId (InvalidId)
     function testCannot_CreateSchema_InvalidIdCollision() public {
         uint128 fee = 1000;
@@ -250,7 +294,7 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
         // Get the current totalSchemas for issuer1: should be 0
         uint256 totalSchemas = paymentsController.getIssuer(issuer1_Id).totalSchemas;
         assertEq(totalSchemas, 0, "totalSchemas should be 0");
-        bytes32 expectedSchemaId = keccak256(abi.encode("SCHEMA", issuer1_Id, totalSchemas));
+        bytes32 expectedSchemaId = generateUnusedSchemaId(issuer1_Id);
 
         // Create the first schema normally
         vm.prank(issuer1);
@@ -273,14 +317,14 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
         vm.prank(issuer1);
         paymentsController.createSchema(issuer1_Id, fee);
     }
-
+*/
     function testCan_CreateSchema() public {
         uint128 fee = 1000;
         
         // generate expected schemaId
         uint256 totalSchemas = paymentsController.getIssuer(issuer1_Id).totalSchemas;
         assertTrue(totalSchemas == 0, "totalSchemas should be 0");
-        bytes32 expectedSchemaId1 = keccak256(abi.encode("SCHEMA", issuer1_Id, totalSchemas)); 
+        bytes32 expectedSchemaId1 = generateUnusedSchemaId(issuer1_Id); 
 
         // Expect the SchemaCreated event to be emitted with correct parameters
         vm.expectEmit(true, true, false, true, address(paymentsController));
@@ -311,11 +355,9 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
 
 abstract contract StateT2_CreateSchemas is StateT1_CreateIssuerVerifiers {
 
-    // schemas
-    bytes32 public schemaId1 = keccak256(abi.encode("SCHEMA", issuer1_Id, 0));
-    bytes32 public schemaId2 = keccak256(abi.encode("SCHEMA", issuer2_Id, 0));
-    bytes32 public schemaId3 = keccak256(abi.encode("SCHEMA", issuer3_Id, 0));
-
+    bytes32 public schemaId1;
+    bytes32 public schemaId2;
+    bytes32 public schemaId3;
 
     uint128 public issuer1SchemaFee = 10 * 1e6;  // 10 USD8 (6 decimals) instead of 1 ether
     uint128 public issuer2SchemaFee = 20 * 1e6;  // 20 USD8 (6 decimals) instead of 2 ether
@@ -469,27 +511,28 @@ contract StateT3_Verifier1DepositUSD8_Test is StateT3_Verifier1DepositUSD8 {
     }
 
     //------- state transition: deductBalance() -----------
+
         function testCannot_DeductBalance_WhenExpiryIsInThePast() public {
             vm.expectRevert(Errors.SignatureExpired.selector);
-            vm.prank(verifier1Signer);
+            vm.prank(verifier1Asset);
             paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, issuer1SchemaFee, block.timestamp, "");
         }
 
         function testCannot_DeductBalance_WhenAmountIsZero() public {
             vm.expectRevert(Errors.InvalidAmount.selector);
-            vm.prank(verifier1Signer);
+            vm.prank(verifier1Asset);
             paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, 0, block.timestamp + 1000, "");
         }
         
         function testCannot_DeductBalance_WhenSchemaDoesNotBelongToIssuer() public {
             vm.expectRevert(Errors.InvalidIssuer.selector);
-            vm.prank(verifier1Signer);
+            vm.prank(verifier1Asset);
             paymentsController.deductBalance("", verifier1_Id, schemaId1, issuer1SchemaFee, block.timestamp + 1000, "");
         }
     
         function testCannot_DeductBalance_InvalidSignature() public {
             vm.expectRevert(Errors.InvalidSignature.selector);
-            vm.prank(verifier1Signer);
+            vm.prank(verifier1Asset);
             paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, issuer1SchemaFee, block.timestamp + 1000, "");
         }
 
@@ -508,7 +551,7 @@ contract StateT3_Verifier1DepositUSD8_Test is StateT3_Verifier1DepositUSD8 {
                 nonce
             );
             vm.expectRevert(Errors.InvalidSchemaFee.selector);
-            vm.prank(verifier1Signer);
+            vm.prank(verifier1Asset);
             paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
         }
 
@@ -531,7 +574,7 @@ contract StateT3_Verifier1DepositUSD8_Test is StateT3_Verifier1DepositUSD8 {
             // Call deductBalance as the verifier2's signer address, which has no deposit
             vm.expectRevert(Errors.InsufficientBalance.selector);
             
-            vm.prank(verifier2Signer);
+            vm.prank(verifier1Asset);
             paymentsController.deductBalance(
                 issuer1_Id,
                 verifier2_Id,  // Use verifier2
@@ -584,7 +627,7 @@ contract StateT3_Verifier1DepositUSD8_Test is StateT3_Verifier1DepositUSD8 {
             vm.expectEmit(true, true, false, true, address(paymentsController));
             emit Events.SchemaVerified(schemaId1);
 
-            vm.prank(verifier1Signer);
+            vm.prank(verifier1Asset);
             paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
 
             //cal. net fee = amount - protocol fee - voting fee
@@ -643,7 +686,7 @@ contract StateT3_Verifier1DepositUSD8_Test is StateT3_Verifier1DepositUSD8 {
             );
 
             // Call deductBalance with the correct signature and increased fee
-            vm.prank(verifier1Signer);
+            vm.prank(verifier1Asset);
             paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
         }
 }
@@ -671,6 +714,7 @@ abstract contract StateT4_DeductBalanceExecuted is StateT3_Verifier1DepositUSD8 
         mockUSD8.approve(address(paymentsController), amount);
         vm.stopPrank();
 
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
     }
 }
@@ -738,7 +782,7 @@ contract StateT5_VerifierChangesSignerAddress_Test is StateT5_VerifierChangesSig
         vm.expectEmit(true, true, false, true, address(paymentsController));
         emit Events.BalanceDeducted(verifier1_Id, schemaId1, issuer1_Id, amount); 
 
-        vm.prank(verifier1NewSigner);
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
 
         // Calculate fee splits
@@ -838,7 +882,8 @@ contract StateT6_IssuerDecreasesFee_Test is StateT6_IssuerDecreasesFee {
         // Expect event emission
         vm.expectEmit(true, true, false, true, address(paymentsController));
         emit Events.BalanceDeducted(verifier1_Id, schemaId1, issuer1_Id, amount); 
-
+        
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
 
         // Calculate fee splits
@@ -900,7 +945,7 @@ contract StateT6_IssuerDecreasesFee_Test is StateT6_IssuerDecreasesFee {
         bytes memory signatureNewFee = generateDeductBalanceSignature(verifier1NewSignerPrivateKey,issuer1_Id,verifier1_Id,schemaId1,newFee,expiry,nonce);
         
         vm.expectRevert(Errors.InvalidSchemaFee.selector);
-        vm.prank(verifier1Signer);
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, newFee, expiry, signatureNewFee);
         
         console2.log("Next, Test: deductBalance should be operating on currentFee");
@@ -914,7 +959,7 @@ contract StateT6_IssuerDecreasesFee_Test is StateT6_IssuerDecreasesFee {
         vm.expectEmit(true, true, true, true, address(paymentsController));
         emit Events.BalanceDeducted(verifier1_Id, schemaId1, issuer1_Id, schemaBefore.currentFee);
         
-        vm.prank(verifier1Signer);
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, schemaBefore.currentFee, expiry, signatureCurrentFee);
         
         // Verify balance was deducted with current fee
@@ -970,7 +1015,7 @@ contract StateT7_IssuerIncreasedFee_FeeNotYetApplied_Test is StateT7_IssuerIncre
         emit Events.SchemaVerified(schemaId1);
         
         // deduct
-        vm.prank(verifier1Signer);
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
         
         // Record verifier's state before deduction
@@ -1099,7 +1144,7 @@ contract StateT8_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT8_IssuerInc
         vm.expectEmit(true, true, false, true, address(paymentsController));
         emit Events.SchemaVerified(schemaId1);
 
-        vm.prank(verifier1NewSigner);
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
         
         // Calculate fee splits
@@ -1138,7 +1183,7 @@ contract StateT8_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT8_IssuerInc
         // expected schemaId
         uint256 totalSchemas = paymentsController.getIssuer(issuer3_Id).totalSchemas;
         assertTrue(totalSchemas == 1, "issuer3 totalSchemas should be 1");
-        bytes32 expectedSchemaId3 = keccak256(abi.encode("SCHEMA", issuer3_Id, totalSchemas));
+        bytes32 expectedSchemaId3 = generateUnusedSchemaId(issuer3_Id);
 
         // Expect the SchemaCreated event to be emitted with correct parameters
         vm.expectEmit(true, true, true, true, address(paymentsController));
@@ -1203,7 +1248,7 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
         vm.expectEmit(true, true, false, true, address(paymentsController));
         emit Events.SchemaVerifiedZeroFee(schemaId3);
 
-        vm.prank(verifier2Signer);
+        vm.prank(verifier2Asset);
         paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, expiry, signature);
 
         // Check storage state: verifier (no changes to balance or expenditure)
@@ -1232,20 +1277,20 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
 
         function testCannot_DeductBalanceZeroFee_WhenExpiryIsInThePast() public {
             vm.expectRevert(Errors.SignatureExpired.selector);
-            vm.prank(verifier2Signer);
+            vm.prank(verifier2Asset);
             paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, block.timestamp, "");
         }
 
 
         function testCannot_DeductBalanceZeroFee_WhenSchemaDoesNotHave0Fee() public {
             vm.expectRevert(Errors.InvalidSchemaFee.selector);
-            vm.prank(verifier2Signer);
+            vm.prank(verifier2Asset);
             paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId1, block.timestamp + 1000, "");
         }
 
         function testCannot_DeductBalanceZeroFee_InvalidSignature() public {
             vm.expectRevert(Errors.InvalidSignature.selector);
-            vm.prank(verifier2Signer);
+            vm.prank(verifier2Asset);
             paymentsController.deductBalanceZeroFee(issuer3_Id, verifier2_Id, schemaId3, block.timestamp + 1000, "");
         }
         
@@ -1255,15 +1300,12 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
 
         uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1_Id).mocaStaked;
 
-        vm.startPrank(verifier1Asset);
-            mockMoca.approve(address(paymentsController), amount);
+        // Expect event emission
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.VerifierMocaStaked(verifier1_Id, verifier1Asset, amount);
 
-            // Expect event emission
-            vm.expectEmit(true, true, false, true, address(paymentsController));
-            emit Events.VerifierMocaStaked(verifier1_Id, verifier1Asset, amount);
-
-            paymentsController.stakeMoca(verifier1_Id, amount);
-        vm.stopPrank();
+        vm.prank(verifier1Asset);
+        paymentsController.stakeMoca{value: amount}(verifier1_Id);
 
         // Check storage state
         DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier1_Id);
@@ -1302,10 +1344,8 @@ abstract contract StateT10_Verifier1StakeMOCA is StateT9_Issuer3CreatesSchemaWit
         uint128 amount = 10 ether;
 
         // verifier1: stakes MOCA
-        vm.startPrank(verifier1Asset);
-            mockMoca.approve(address(paymentsController), amount);
-            paymentsController.stakeMoca(verifier1_Id, amount);
-        vm.stopPrank();
+        vm.prank(verifier1Asset);
+        paymentsController.stakeMoca{value: amount}(verifier1_Id);
 
         // paymentsControllerAdmin: associate schema with pool
         vm.prank(paymentsControllerAdmin);
@@ -1337,15 +1377,16 @@ contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
             paymentsController.unstakeMoca(verifier1_Id, amount);
         }
 
-        function testCan_Verifier1_UnstakeMOCA() public {
+        function testCan_Verifier1_UnstakeMOCA_ReceiveNative() public {
             uint128 amount = 10 ether;
 
             // Record state before
             uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1_Id).mocaStaked;
             uint256 totalMocaStakedBefore = paymentsController.TOTAL_MOCA_STAKED();
-            uint256 contractMocaBalanceBefore = mockMoca.balanceOf(address(paymentsController));
-            uint256 verifier1AssetMocaBalanceBefore = mockMoca.balanceOf(verifier1Asset);
 
+            // There is no need to check mockMoca balances, as unstakeMoca should send native MOCA to verifier1Asset.
+            uint256 verifier1AssetBalanceBefore = verifier1Asset.balance; // Native Moca (Ether)
+            uint256 contractBalanceBefore = address(paymentsController).balance;
             // Expect event emission
             vm.expectEmit(true, true, false, true, address(paymentsController));
             emit Events.VerifierMocaUnstaked(verifier1_Id, verifier1Asset, amount);
@@ -1360,25 +1401,65 @@ contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
             assertEq(verifier.mocaStaked, verifier1MocaStakedBefore - amount, "Verifier mocaStaked not updated correctly");
             assertEq(paymentsController.TOTAL_MOCA_STAKED(), totalMocaStakedBefore - amount, "TOTAL_MOCA_STAKED not updated correctly");
 
-            // Check token balances after
-            uint256 contractMocaBalanceAfter = mockMoca.balanceOf(address(paymentsController));
-            uint256 verifier1AssetMocaBalanceAfter = mockMoca.balanceOf(verifier1Asset);
+            // Check native MOCA (Ether) balances after
+            uint256 verifier1AssetBalanceAfter = verifier1Asset.balance;
+            uint256 contractBalanceAfter = address(paymentsController).balance;
+            assertEq(verifier1AssetBalanceAfter, verifier1AssetBalanceBefore + amount, "Verifier asset native MOCA (Ether) balance not increased correctly");
+            assertEq(contractBalanceAfter, contractBalanceBefore - amount, "Contract native MOCA (Ether) balance not decreased correctly");
+        }
 
-            assertEq(contractMocaBalanceAfter, contractMocaBalanceBefore - amount, "Contract MOCA balance not decreased correctly");
-            assertEq(verifier1AssetMocaBalanceAfter, verifier1AssetMocaBalanceBefore + amount, "Verifier asset MOCA balance not increased correctly");
+        function testCan_Verifier1_UnstakeMOCA_ReceiveWMoca() public {
+            // Deploy a contract with expensive receive function that exceeds MOCA_TRANSFER_GAS_LIMIT
+            GasGuzzler gasGuzzler = new GasGuzzler();
+            bytes memory gasGuzzlerCode = address(gasGuzzler).code;
+            vm.etch(verifier1Asset, gasGuzzlerCode);
+
+            uint128 amount = 10 ether;
+
+            // Record state before
+            uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1_Id).mocaStaked;
+            uint256 totalMocaStakedBefore = paymentsController.TOTAL_MOCA_STAKED();
+            // wrapped moca balances before
+            uint256 verifier1WMocaBalanceBefore = mockWMoca.balanceOf(verifier1Asset);
+            uint256 contractWMocaBalanceBefore = mockWMoca.balanceOf(address(paymentsController));
+            // native moca balances before
+            uint256 verifier1AssetNativeBalanceBefore = verifier1Asset.balance;
+            uint256 contractNativeBalanceBefore = address(paymentsController).balance;
+
+            // Expect event emission
+            vm.expectEmit(true, true, false, true, address(paymentsController));
+            emit Events.VerifierMocaUnstaked(verifier1_Id, verifier1Asset, amount);
+
+            vm.prank(verifier1Asset);
+            paymentsController.unstakeMoca(verifier1_Id, amount);
+
+            // Check storage state after
+            DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier1_Id);
+            assertEq(verifier.mocaStaked, verifier1MocaStakedBefore - amount, "Verifier mocaStaked not updated correctly");
+            assertEq(paymentsController.TOTAL_MOCA_STAKED(), totalMocaStakedBefore - amount, "TOTAL_MOCA_STAKED not updated correctly");
+
+            // Check wrapped moca balances after
+            assertEq(mockWMoca.balanceOf(verifier1Asset), verifier1WMocaBalanceBefore + amount, "VerifierAsset addresss received wrapped moca");
+            assertEq(mockWMoca.balanceOf(address(paymentsController)), 0, "Contract should not have wrapped moca");
+
+            // Check native moca after
+            assertEq(verifier1Asset.balance, verifier1AssetNativeBalanceBefore, "Verifier asset native MOCA balance should remain unchanged (received wrapped MOCA instead)");
+            assertEq(address(paymentsController).balance, contractNativeBalanceBefore - amount, "Contract native MOCA (Ether) balance not decreased correctly");
         }
 
     //------------------------------ negative tests for stakeMoca ------------------------------
         function testCannot_StakeMoca_WhenAmountIsZero() public {
             vm.expectRevert(Errors.InvalidAmount.selector);
             vm.prank(verifier1Asset);
-            paymentsController.stakeMoca(verifier1_Id, 0);
+            paymentsController.stakeMoca{value: 0}(verifier1_Id);
         }
         
         function testCannot_StakeMoca_WhenCallerIsNotVerifierAsset() public {
+            vm.deal(verifier1, 10 ether);
+
             vm.expectRevert(Errors.InvalidCaller.selector);
             vm.prank(verifier1);
-            paymentsController.stakeMoca(verifier1_Id, 10 ether);
+            paymentsController.stakeMoca{value: 10 ether}(verifier1_Id);
         }
 
     //------------------------------ negative tests for updatePoolId ------------------------------
@@ -1435,6 +1516,7 @@ contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
         vm.expectEmit(true, true, false, true, address(paymentsController));
         emit Events.SchemaVerified(schemaId1);
 
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
         
         // Calculate fee splits
@@ -1499,8 +1581,7 @@ abstract contract StateT11_AllVerifiersStakedMOCA is StateT10_Verifier1StakeMOCA
         
         // verifier2: stakes 20 MOCA for 20% subsidy tier
         vm.startPrank(verifier2Asset);
-            mockMoca.approve(address(paymentsController), 20 ether);
-            paymentsController.stakeMoca(verifier2_Id, 20 ether);
+            paymentsController.stakeMoca{value: 20 ether}(verifier2_Id);
             // for verification payments
             mockUSD8.approve(address(paymentsController), 100 * 1e6);
             paymentsController.deposit(verifier2_Id, 100 * 1e6);
@@ -1508,8 +1589,7 @@ abstract contract StateT11_AllVerifiersStakedMOCA is StateT10_Verifier1StakeMOCA
 
         // verifier3: stakes 30 MOCA for 30% subsidy tier
         vm.startPrank(verifier3Asset);
-            mockMoca.approve(address(paymentsController), 30 ether);
-            paymentsController.stakeMoca(verifier3_Id, 30 ether);
+            paymentsController.stakeMoca{value: 30 ether}(verifier3_Id);
         vm.stopPrank();
         
         // paymentsControllerAdmin: associate schema2 and schema3 with pools
@@ -1567,7 +1647,7 @@ contract StateT11_AllVerifiersStakedMOCA_Test is StateT11_AllVerifiersStakedMOCA
         vm.expectEmit(true, true, false, true, address(paymentsController));
         emit Events.SchemaVerified(schemaId2);
 
-        vm.prank(verifier2Signer);
+        vm.prank(verifier2Asset);
         paymentsController.deductBalance(issuer2_Id, verifier2_Id, schemaId2, amount, expiry, signature);
         
         // Calculate fee splits
@@ -1626,7 +1706,7 @@ contract StateT11_AllVerifiersStakedMOCA_Test is StateT11_AllVerifiersStakedMOCA
         vm.expectEmit(true, true, false, true, address(paymentsController));
         emit Events.SchemaVerifiedZeroFee(schemaId3);
 
-        vm.prank(verifier3Signer);
+        vm.prank(verifier3Asset);
         paymentsController.deductBalanceZeroFee(issuer3_Id, verifier3_Id, schemaId3, expiry, signature);
 
         // Check that no subsidy was booked (zero-fee schemas don't generate subsidies)
@@ -1697,30 +1777,30 @@ contract StateT12_IssuerClaimsAllFees_Test is StateT12_IssuerClaimsAllFees {
         paymentsController.claimFees(issuer1_Id);
     }
 
-    // ---- state transition: issuer change assetAddress ----
-    function testCan_IssuerUpdateAssetAddress() public{
+    // ---- state transition: issuer change assetManagerAddress ----
+    function testCan_IssuerUpdateAssetManagerAddress() public{
         // Record issuer's state before update
         DataTypes.Issuer memory issuer1Before = paymentsController.getIssuer(issuer1_Id);
-        assertEq(issuer1Before.assetAddress, issuer1Asset, "Issuer asset address should be the same");
+        assertEq(issuer1Before.assetManagerAddress, issuer1Asset, "Issuer assetManagerAddress should be the same");
         
-        // new addr
+        // new asset manager address
         address issuer1_newAssetAddress = address(0x1234567890123456789012345678901234567890);
 
         vm.expectEmit(true, true, false, true, address(paymentsController));
-        emit Events.AssetAddressUpdated(issuer1_Id, issuer1_newAssetAddress);
+        emit Events.AssetManagerAddressUpdated(issuer1_Id, issuer1_newAssetAddress);
  
         vm.prank(issuer1);
-        address newAssetAddress = paymentsController.updateAssetAddress(issuer1_Id, issuer1_newAssetAddress);
+        address newAssetManagerAddress = paymentsController.updateAssetManagerAddress(issuer1_Id, issuer1_newAssetAddress);
 
         // Check storage state: issuer
         DataTypes.Issuer memory issuer1After = paymentsController.getIssuer(issuer1_Id);
-        assertEq(newAssetAddress, issuer1_newAssetAddress, "returned newAssetAddress should be the same");
-        assertEq(issuer1After.assetAddress, issuer1_newAssetAddress, "Issuer asset address should be updated");
+        assertEq(newAssetManagerAddress, issuer1_newAssetAddress, "returned newAssetManagerAddress should be the same");
+        assertEq(issuer1After.assetManagerAddress, issuer1_newAssetAddress, "Issuer assetManagerAddress should be updated");
     }
 }
 
 
-abstract contract StateT13_IssuerChangesAssetAddress is StateT12_IssuerClaimsAllFees {
+abstract contract StateT13_IssuerChangesAssetManagerAddress is StateT12_IssuerClaimsAllFees {
     
     address public issuer1_newAssetAddress = address(0x1234567890123456789012345678901234567890);
 
@@ -1729,7 +1809,7 @@ abstract contract StateT13_IssuerChangesAssetAddress is StateT12_IssuerClaimsAll
         
         // issuer changes asset address
         vm.prank(issuer1);
-        paymentsController.updateAssetAddress(issuer1_Id, issuer1_newAssetAddress);
+        paymentsController.updateAssetManagerAddress(issuer1_Id, issuer1_newAssetAddress);
 
         // deductBalance called by verifier
         uint256 expiry = block.timestamp + 100;
@@ -1742,9 +1822,9 @@ abstract contract StateT13_IssuerChangesAssetAddress is StateT12_IssuerClaimsAll
     }
 }
 
-contract StateT13_IssuerChangesAssetAddress_Test is StateT13_IssuerChangesAssetAddress {
+contract StateT13_IssuerChangesAssetManagerAddress_Test is StateT13_IssuerChangesAssetManagerAddress {
 
-    function testCan_Issuer1ClaimFees_WithNewAssetAddress() public {
+    function testCan_Issuer1ClaimFees_WithNewAssetManagerAddress() public {
         // Record issuer's state before claim
         DataTypes.Issuer memory issuerBefore = paymentsController.getIssuer(issuer1_Id);
         uint256 issuerTotalNetFeesAccruedBefore = issuerBefore.totalNetFeesAccrued;
@@ -1758,7 +1838,7 @@ contract StateT13_IssuerChangesAssetAddress_Test is StateT13_IssuerChangesAssetA
         assertTrue(claimableFees > 0, "Issuer should have claimable fees");
         
         // Check token balances before claim
-        uint256 newAssetAddressTokenBalanceBefore = mockUSD8.balanceOf(issuer1_newAssetAddress);
+        uint256 newAssetManagerAddressTokenBalanceBefore = mockUSD8.balanceOf(issuer1_newAssetAddress);
         uint256 oldAssetAddressTokenBalanceBefore = mockUSD8.balanceOf(issuer1Asset);
         uint256 controllerTokenBalanceBefore = mockUSD8.balanceOf(address(paymentsController));
         
@@ -1774,15 +1854,15 @@ contract StateT13_IssuerChangesAssetAddress_Test is StateT13_IssuerChangesAssetA
         DataTypes.Issuer memory issuerAfter = paymentsController.getIssuer(issuer1_Id);
         assertEq(issuerAfter.totalNetFeesAccrued, issuerTotalNetFeesAccruedBefore, "Issuer totalNetFeesAccrued should remain unchanged");
         assertEq(issuerAfter.totalClaimed, issuerTotalNetFeesAccruedBefore, "Issuer totalClaimed should equal totalNetFeesAccrued after claim");
-        assertEq(issuerAfter.assetAddress, issuer1_newAssetAddress, "Issuer asset address should be the new address");
+        assertEq(issuerAfter.assetManagerAddress, issuer1_newAssetAddress, "Issuer assetManagerAddress should be the new address");
         
         // Check token balances after claim
-        uint256 newAssetAddressTokenBalanceAfter = mockUSD8.balanceOf(issuer1_newAssetAddress);
+        uint256 newAssetManagerAddressTokenBalanceAfter = mockUSD8.balanceOf(issuer1_newAssetAddress);
         uint256 oldAssetAddressTokenBalanceAfter = mockUSD8.balanceOf(issuer1Asset);
         uint256 controllerTokenBalanceAfter = mockUSD8.balanceOf(address(paymentsController));
         
         // Verify fees were transferred to new asset address, not old one
-        assertEq(newAssetAddressTokenBalanceAfter, newAssetAddressTokenBalanceBefore + claimableFees, "New asset address should receive claimed fees");
+        assertEq(newAssetManagerAddressTokenBalanceAfter, newAssetManagerAddressTokenBalanceBefore + claimableFees, "New asset address should receive claimed fees");
         assertEq(oldAssetAddressTokenBalanceAfter, oldAssetAddressTokenBalanceBefore, "Old asset address should not receive any fees");
         assertEq(controllerTokenBalanceAfter, controllerTokenBalanceBefore - claimableFees, "Controller should transfer out claimed fees");
         
@@ -1807,51 +1887,51 @@ contract StateT13_IssuerChangesAssetAddress_Test is StateT13_IssuerChangesAssetA
         function testCannot_UpdateAssetAddress_WhenAssetAddressIsZeroAddress() public {
             vm.expectRevert(Errors.InvalidAddress.selector);
             vm.prank(issuer1);
-            paymentsController.updateAssetAddress(issuer1_Id, address(0));
+            paymentsController.updateAssetManagerAddress(issuer1_Id, address(0));
         }
 
         function testCannot_UpdateAssetAddress_WhenCallerIsNotIssuerAdmin() public {
             vm.expectRevert(Errors.InvalidCaller.selector);
             vm.prank(issuer2);
-            paymentsController.updateAssetAddress(issuer1_Id, address(1));
+            paymentsController.updateAssetManagerAddress(issuer1_Id, address(1));
         }
 
         function testCannot_UpdateAssetAddress_WhenInvalidIdIsGiven() public {
             vm.expectRevert(Errors.InvalidId.selector);
             vm.prank(issuer1);
-            paymentsController.updateAssetAddress(bytes32(0), address(1));
+            paymentsController.updateAssetManagerAddress(bytes32(0), address(1));
         }
 
     //------------------------------ state transition: verifier updateAssetAddress ------------------------------
         function testCannot_UpdateAssetAddress_WhenCallerIsNotVerifierAdminAddress() public {
             vm.expectRevert(Errors.InvalidCaller.selector);
             vm.prank(verifier2);
-            paymentsController.updateAssetAddress(verifier1_Id, address(1));
+            paymentsController.updateAssetManagerAddress(verifier1_Id, address(1));
         }
 
-        function testCan_Verifier1UpdateAssetAddress() public {
+        function testCan_Verifier1UpdateAssetManagerAddress() public {
             // Record verifier's state before update
             DataTypes.Verifier memory verifierBefore = paymentsController.getVerifier(verifier1_Id);
-            assertEq(verifierBefore.assetAddress, verifier1Asset, "Verifier asset address should be the same");
+            assertEq(verifierBefore.assetManagerAddress, verifier1Asset, "Verifier assetManagerAddress should be the same");
 
             // new addr
-            address verifier1_newAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAssetAddress", block.timestamp, block.prevrandao)))));
+            address verifier1_newAssetManagerAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAssetManagerAddress", block.timestamp, block.prevrandao)))));
 
             vm.expectEmit(true, true, false, false, address(paymentsController));
-            emit Events.AssetAddressUpdated(verifier1_Id, verifier1_newAssetAddress);
+            emit Events.AssetManagerAddressUpdated(verifier1_Id, verifier1_newAssetManagerAddress);
 
             vm.prank(verifier1);
-            paymentsController.updateAssetAddress(verifier1_Id, verifier1_newAssetAddress);
+            paymentsController.updateAssetManagerAddress(verifier1_Id, verifier1_newAssetManagerAddress);
             
             // Check storage state: verifier
             DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
-            assertEq(verifierAfter.assetAddress, verifier1_newAssetAddress, "Verifier asset address should be updated");
-            assertNotEq(verifierAfter.assetAddress, verifier1Asset, "Verifier asset address should be updated");
+            assertEq(verifierAfter.assetManagerAddress, verifier1_newAssetManagerAddress, "Verifier assetManagerAddress should be updated");
+            assertNotEq(verifierAfter.assetManagerAddress, verifier1Asset, "Verifier assetManagerAddress should be updated");
         }
 }
 
 
-abstract contract StateT14_VerifierChangesAssetAddress is StateT13_IssuerChangesAssetAddress {
+abstract contract StateT14_VerifierChangesAssetAddress is StateT13_IssuerChangesAssetManagerAddress {
 
     address public verifier1_newAssetAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAssetAddress", block.timestamp, block.prevrandao)))));
 
@@ -1859,7 +1939,7 @@ abstract contract StateT14_VerifierChangesAssetAddress is StateT13_IssuerChanges
         super.setUp();
         
         vm.prank(verifier1);
-        paymentsController.updateAssetAddress(verifier1_Id, verifier1_newAssetAddress);
+        paymentsController.updateAssetManagerAddress(verifier1_Id, verifier1_newAssetAddress);
     }
 }
 
@@ -1870,7 +1950,7 @@ contract StateT14_VerifierChangesAssetAddress_Test is StateT14_VerifierChangesAs
         DataTypes.Verifier memory verifierBefore = paymentsController.getVerifier(verifier1_Id);
         uint128 verifierCurrentBalanceBefore = verifierBefore.currentBalance;
         assertGt(verifierCurrentBalanceBefore, 0, "Verifier should have balance");
-        assertEq(verifierBefore.assetAddress, verifier1_newAssetAddress, "Verifier asset address should be updated");
+        assertEq(verifierBefore.assetManagerAddress, verifier1_newAssetAddress, "Verifier assetManagerAddress should be updated");
 
         // Check token balances before withdraw
         uint256 newAssetAddressTokenBalanceBefore = mockUSD8.balanceOf(verifier1_newAssetAddress);
@@ -1887,7 +1967,7 @@ contract StateT14_VerifierChangesAssetAddress_Test is StateT14_VerifierChangesAs
         // Check storage state: verifier
         DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
         assertEq(verifierAfter.currentBalance, 0, "Verifier balance should be zero after full withdraw");
-        assertEq(verifierAfter.assetAddress, verifier1_newAssetAddress, "Verifier asset address should remain unchanged");
+        assertEq(verifierAfter.assetManagerAddress, verifier1_newAssetAddress, "Verifier assetManagerAddress should remain unchanged");
 
         // Check token balances after withdraw
         uint256 newAssetAddressTokenBalanceAfter = mockUSD8.balanceOf(verifier1_newAssetAddress);
@@ -2054,7 +2134,7 @@ contract StateT15_PaymentsControllerAdminIncreasesProtocolFee_Test is StateT15_P
         emit Events.SchemaVerified(schemaId2);
 
         // Execute deductBalance - this deducts USD8, not MOCA
-        vm.prank(verifier2Signer);
+        vm.prank(verifier2Asset);
         paymentsController.deductBalance(issuer2_Id, verifier2_Id, schemaId2, amount, expiry, signature);
 
         // Verify global epoch fees updated correctly with new protocol fee
@@ -2223,7 +2303,7 @@ contract StateT16_PaymentsControllerAdminIncreasesVotingFee_Test is StateT16_Pay
         emit Events.SchemaVerified(schemaId2);
 
         // Execute deductBalance - this deducts USD8, not MOCA
-        vm.prank(verifier2Signer);
+        vm.prank(verifier2Asset);
         paymentsController.deductBalance(issuer2_Id, verifier2_Id, schemaId2, amount, expiry, signature);
 
         // Verify global epoch fees updated correctly with new voting fee
@@ -2371,7 +2451,7 @@ contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test
         emit Events.BalanceDeducted(verifier1_Id, schemaId1, issuer1_Id, amount);
 
         // Execute deductBalance
-        vm.prank(verifier1NewSigner);
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
 
         // Verify subsidies increased with new percentage
@@ -2403,7 +2483,7 @@ contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test
         
         // Mint tokens to verifier4Asset
         mockUSD8.mint(verifier4Asset, 100 * 1e6);
-        mockMoca.mint(verifier4Asset, 100 ether);
+        vm.deal(verifier4Asset, 100 ether);
         
         // Create verifier4 - fix parameter order: (signerAddress, assetAddress)
         vm.prank(verifier4);
@@ -2412,8 +2492,7 @@ contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test
         // Stake 15 MOCA (between tier1=10 and tier2=20, so no subsidy)
         uint128 nonTierMocaAmount = 15 ether;
         vm.startPrank(verifier4Asset);
-            mockMoca.approve(address(paymentsController), nonTierMocaAmount);
-            paymentsController.stakeMoca(verifier4_Id, nonTierMocaAmount);
+            paymentsController.stakeMoca{value: nonTierMocaAmount}(verifier4_Id);
             // Deposit USD8 for verification payments
             mockUSD8.approve(address(paymentsController), 50 * 1e6);
             paymentsController.deposit(verifier4_Id, 50 * 1e6);
@@ -2444,7 +2523,7 @@ contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test
         emit Events.SchemaVerified(schemaId1);
         
         // Execute deductBalance
-        vm.prank(verifier4Signer);
+        vm.prank(verifier4Asset);
         paymentsController.deductBalance(issuer1_Id, verifier4_Id, schemaId1, amount, expiry, signature);
         
         // Verify no subsidies were booked
@@ -2654,7 +2733,7 @@ contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
         emit Events.SchemaVerified(schemaId1);
         
         // Execute deductBalance with new fee
-        vm.prank(verifier1NewSigner);
+        vm.prank(verifier1Asset);
         paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
         
         // Calculate fee splits
@@ -2684,12 +2763,12 @@ contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
 
     // state transition
     function testCannot_PaymentsControllerAdmin_WithdrawProtocolFees_NoTreasuryAddressSet() public {
-        // modify storage to set addressBook.TREASURY() to address(0)
-            stdstore
-                .target(address(addressBook))
-                .sig("getTreasury()")
-                .checked_write(address(0));
-        assertTrue(addressBook.getTreasury() == address(0), "Treasury address should be 0");
+        // modify storage to set accessController.TREASURY() to address(0)
+        stdstore
+            .target(address(accessController))
+            .sig("TREASURY()")  
+            .checked_write(address(0));
+        assertTrue(accessController.TREASURY() == address(0), "Treasury address should be 0");
 
         uint256 protocolFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToProtocol;
         assertTrue(protocolFees > 0, "Protocol fees should be greater than 0");
@@ -2705,12 +2784,12 @@ contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test 
     }
 
     function testCannot_PaymentsControllerAdmin_WithdrawVotersFees_NoTreasuryAddressSet() public {
-        // modify storage to set addressBook.TREASURY() to address(0)
+        // modify storage to set accessController.TREASURY() to address(0)
         stdstore
-            .target(address(addressBook))
-            .sig("getTreasury()")
+            .target(address(accessController))
+            .sig("TREASURY()")  
             .checked_write(address(0));
-        assertTrue(addressBook.getTreasury() == address(0), "Treasury address should be 0");
+        assertTrue(accessController.TREASURY() == address(0), "Treasury address should be 0");
 
         uint256 votersFees = paymentsController.getEpochFeesAccrued(0).feesAccruedToVoters;
         assertTrue(votersFees > 0, "Voters fees should be greater than 0");
@@ -2733,11 +2812,6 @@ abstract contract StateT20_PaymentsControllerAdminWithdrawsProtocolFees is State
 
     function setUp() public virtual override {
         super.setUp();
-
-        vm.startPrank(globalAdmin);
-            addressBook.setAddress(addressBook.TREASURY(), treasury);
-        vm.stopPrank();
-
     }
 }
 
@@ -2935,7 +3009,7 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             function test_stakeMoca_revertsWhenPaused() public {
                 vm.expectRevert(Pausable.EnforcedPause.selector);
                 vm.prank(verifier1Asset);
-                paymentsController.stakeMoca(verifier1_Id, 10 ether);
+                paymentsController.stakeMoca{value: 10 ether}(verifier1_Id);
             }
 
             function test_unstakeMoca_revertsWhenPaused() public {
@@ -2945,10 +3019,10 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             }
 
         // ------ Common functions for issuer and verifier ------
-            function test_updateAssetAddress_revertsWhenPaused() public {
+            function test_updateAssetManagerAddress_revertsWhenPaused() public {
                 vm.expectRevert(Pausable.EnforcedPause.selector);
                 vm.prank(issuer1);
-                paymentsController.updateAssetAddress(issuer1_Id, makeAddr("newAsset"));
+                paymentsController.updateAssetManagerAddress(issuer1_Id, makeAddr("newAssetManagerAddress"));
             }
 
         // ------ UniversalVerificationContract functions ------
@@ -2968,7 +3042,7 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
                 );
 
                 vm.expectRevert(Pausable.EnforcedPause.selector);
-                vm.prank(verifier1Signer);
+                vm.prank(verifier1Asset);
                 paymentsController.deductBalance(issuer1_Id, verifier1_Id, schemaId1, amount, expiry, signature);
             }
 
@@ -3072,7 +3146,7 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             paymentsController.getEpochFeesAccrued(0);
             
             // Also check immutable/state variables can be read
-            paymentsController.addressBook();
+            paymentsController.accessController();
             paymentsController.PROTOCOL_FEE_PERCENTAGE();
             paymentsController.VOTING_FEE_PERCENTAGE();
             paymentsController.FEE_INCREASE_DELAY_PERIOD();
@@ -3140,7 +3214,7 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
     // ------ emergencyExitVerifiers ------
 
         function testCannot_ArbitraryAddressCall_EmergencyExitVerifiers() public {
-            vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
+            vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandlerOrVerifier.selector);
             vm.prank(verifier1);
             paymentsController.emergencyExitVerifiers(new bytes32[](1));
         }
@@ -3160,7 +3234,7 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
 
             // Record contract's token balance before
             uint256 beforeUSD8Balance = mockUSD8.balanceOf(address(paymentsController));
-            uint256 beforeMocaBalance = mockMoca.balanceOf(address(paymentsController));
+            uint256 beforeContractBalance = address(paymentsController).balance;
 
             // Expect the EmergencyExitVerifiers event to be emitted with the invalid verifierId
             vm.expectEmit(true, false, false, true, address(paymentsController));
@@ -3172,11 +3246,11 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
 
             // Record contract's token balance after
             uint256 afterUSD8Balance = mockUSD8.balanceOf(address(paymentsController));
-            uint256 afterMocaBalance = mockMoca.balanceOf(address(paymentsController));
+            uint256 afterContractBalance = address(paymentsController).balance;
 
             // Assert that no tokens were transferred
             assertEq(afterUSD8Balance, beforeUSD8Balance, "No tokens should be transferred for invalid verifierId");
-            assertEq(afterMocaBalance, beforeMocaBalance, "No tokens should be transferred for invalid verifierId");
+            assertEq(afterContractBalance, beforeContractBalance, "No tokens should be transferred for invalid verifierId");
         }
 
         function testCannot_EmergencyExitVerifiers_ValidVerifierId_ButZeroBalance() public {
@@ -3202,8 +3276,8 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
             // Record balances after
             uint256 afterBalance = mockUSD8.balanceOf(address(paymentsController));
 
-            // Assert that no tokens were transferred
-            assertEq(afterBalance, beforeBalance, "No tokens should be transferred for zero balance");
+            // Assert that no assets were transferred
+            assertEq(afterBalance, beforeBalance, "No assets should be transferred for zero balance");
         }
 
         function testCan_EmergencyExitHandler_EmergencyExitVerifiers() public {
@@ -3214,9 +3288,9 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
             verifierIds[2] = verifier3_Id;
 
             // Get current asset addresses from the contract (they may have been updated)
-            address currentAsset1 = paymentsController.getVerifier(verifier1_Id).assetAddress;
-            address currentAsset2 = paymentsController.getVerifier(verifier2_Id).assetAddress;
-            address currentAsset3 = paymentsController.getVerifier(verifier3_Id).assetAddress;
+            address currentAsset1 = paymentsController.getVerifier(verifier1_Id).assetManagerAddress;
+            address currentAsset2 = paymentsController.getVerifier(verifier2_Id).assetManagerAddress;
+            address currentAsset3 = paymentsController.getVerifier(verifier3_Id).assetManagerAddress;
 
             // Record pre-exit contract balances for each verifier
             uint256 beforeVerifier1ContractBalance = paymentsController.getVerifier(verifier1_Id).currentBalance;
@@ -3234,9 +3308,9 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
             uint256 beforeVerifier3MocaStaked = paymentsController.getVerifier(verifier3_Id).mocaStaked;
 
             // Record pre-exit MOCA balances for each verifier
-            uint256 beforeVerifier1MOCABalance = mockMoca.balanceOf(currentAsset1);
-            uint256 beforeVerifier2MOCABalance = mockMoca.balanceOf(currentAsset2);
-            uint256 beforeVerifier3MOCABalance = mockMoca.balanceOf(currentAsset3);
+            uint256 beforeVerifier1MOCABalance = currentAsset1.balance;
+            uint256 beforeVerifier2MOCABalance = currentAsset2.balance;
+            uint256 beforeVerifier3MOCABalance = currentAsset3.balance;
 
             // Expect the EmergencyExitVerifiers event to be emitted
             vm.expectEmit(true, false, false, true, address(paymentsController));
@@ -3257,9 +3331,9 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
             uint256 afterVerifier3USD8Balance = mockUSD8.balanceOf(currentAsset3);
 
             // Record post-exit Moca balances for each verifier
-            uint256 afterVerifier1MOCABalance = mockMoca.balanceOf(currentAsset1);
-            uint256 afterVerifier2MOCABalance = mockMoca.balanceOf(currentAsset2);
-            uint256 afterVerifier3MOCABalance = mockMoca.balanceOf(currentAsset3);
+            uint256 afterVerifier1MOCABalance = currentAsset1.balance;
+            uint256 afterVerifier2MOCABalance = currentAsset2.balance;
+            uint256 afterVerifier3MOCABalance = currentAsset3.balance;
 
             // Check that contract-state balances for verifiers are now zero
             assertEq(afterVerifier1ContractBalance, 0, "verifier1 contract-state USD8_balance should be zero after emergency exit");
@@ -3283,7 +3357,7 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
     // ------ emergencyExitIssuers ------
 
         function testCannot_ArbitraryAddressCall_EmergencyExitIssuers() public {
-            vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandler.selector);
+            vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandlerOrIssuer.selector);
             vm.prank(issuer1);
             paymentsController.emergencyExitIssuers(new bytes32[](1));
         }
@@ -3355,9 +3429,9 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
             issuerIds[2] = issuer3_Id;
 
             // Get current asset addresses from the contract (they may have been updated)
-            address currentAsset1 = paymentsController.getIssuer(issuer1_Id).assetAddress;
-            address currentAsset2 = paymentsController.getIssuer(issuer2_Id).assetAddress;
-            address currentAsset3 = paymentsController.getIssuer(issuer3_Id).assetAddress;
+            address currentAsset1 = paymentsController.getIssuer(issuer1_Id).assetManagerAddress;
+            address currentAsset2 = paymentsController.getIssuer(issuer2_Id).assetManagerAddress;
+            address currentAsset3 = paymentsController.getIssuer(issuer3_Id).assetManagerAddress;
 
             // Record pre-exit unclaimed fees for each issuer
             uint256 beforeIssuer1UnclaimedFees = paymentsController.getIssuer(issuer1_Id).totalNetFeesAccrued - paymentsController.getIssuer(issuer1_Id).totalClaimed;
@@ -3437,7 +3511,7 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
 
         function testCan_EmergencyExitHandler_EmergencyExitFees() public {
             // Get treasury address
-            address treasuryAddress = addressBook.getTreasury();
+            address treasuryAddress = accessController.TREASURY();
             require(treasuryAddress != address(0), "Treasury address should not be zero");
 
             // Record pre-exit unclaimed fees

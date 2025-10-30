@@ -12,6 +12,7 @@ library Events {
     
 // --------- Generic: Risk ---------
     event ContractFrozen();
+    event MocaTransferGasLimitUpdated(uint256 oldMocaTransferGasLimit, uint256 newMocaTransferGasLimit);
 
 // --------- EscrowedMoca.sol ---------
     // escrow()
@@ -37,6 +38,9 @@ library Events {
     event EscrowedMocaReleased(address indexed caller, uint256 amount);
     // claimPenalty()
     event PenaltyClaimed(uint256 totalClaimable);
+    // emergencyExit
+    event EmergencyExitEscrowedMoca(address[] users, uint256 totalMoca);
+
 
 // --------- VotingEscrowMoca.sol ---------
     event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);
@@ -124,8 +128,8 @@ library Events {
     event VerifierMocaUnstaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
     event VerifierSignerAddressUpdated(bytes32 indexed verifierId, address signerAddress);
 
-    // updateAssetAddress
-    event AssetAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
+    // updateAssetManagerAddress
+    event AssetManagerAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
 
     // deductBalance()
     event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
@@ -139,7 +143,9 @@ library Events {
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VotingFeePercentageUpdated(uint256 voterFeePercentage);
     event VerifierStakingTierUpdated(uint256 stakingAmount, uint256 subsidyPercentage);
-    
+    // updateVerifierContract
+    event VerifierContractUpdated(address oldVerifierContract, address newVerifierContract);
+        
     // withdrawProtocolFees, withdrawVotersFees
     event ProtocolFeesWithdrawn(uint256 epoch, uint256 protocolFees);
     event VotersFeesWithdrawn(uint256 epoch, uint256 votersFees);
@@ -149,11 +155,9 @@ library Events {
     event EmergencyExitVerifiers(bytes32[] verifierIds);
     event EmergencyExitFees(address indexed treasury, uint256 totalUnclaimedFees);
 
-// --------- AddressBook.sol ---------
-    event AddressSet(bytes32 indexed identifier, address registeredAddress);
-    event GlobalAdminUpdated(address indexed oldGlobalAdmin, address indexed newGlobalAdmin);
-
 // --------- AccessController.sol ---------
+    // Treasury
+    event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     // Monitor admin functions
     event MonitorAdminRemoved(address indexed admin, address indexed removedBy);
     event MonitorAdminAdded(address indexed admin, address indexed addedBy);
@@ -166,6 +170,9 @@ library Events {
     // CronJob admin functions
     event CronJobAdminAdded(address indexed admin, address indexed addedBy);
     event CronJobAdminRemoved(address indexed admin, address indexed removedBy);
+    // IssuerStakingController admin functions
+    event IssuerStakingControllerAdminAdded(address indexed admin, address indexed addedBy);
+    event IssuerStakingControllerAdminRemoved(address indexed admin, address indexed removedBy);
     // PaymentsController admin functions
     event PaymentsControllerAdminAdded(address indexed admin, address indexed addedBy);
     event PaymentsControllerAdminRemoved(address indexed admin, address indexed removedBy);
@@ -191,12 +198,13 @@ library Events {
     event GlobalAdminTransferred(address indexed oldAdmin, address indexed newAdmin);
 
 // --------- IssuerStakingController.sol ---------
+    // users
     event Staked(address indexed caller, uint256 amount);
     event UnstakeInitiated(address indexed caller, uint256 amount, uint256 claimableTimestamp);
     event UnstakeClaimed(address indexed caller, uint256 amount);
+    // restricted functions
     event UnstakeDelayUpdated(uint256 oldDelay, uint256 newDelay);
     event MaxSingleStakeAmountUpdated(uint256 oldMaxSingleStakeAmount, uint256 newMaxSingleStakeAmount);
-    event IssuerStakingControllerAdminAdded(address indexed admin, address indexed addedBy);
-    event IssuerStakingControllerAdminRemoved(address indexed admin, address indexed removedBy);
+    // emergencyExit
     event EmergencyExit(address[] issuerAddresses, uint256 totalMoca);
 }

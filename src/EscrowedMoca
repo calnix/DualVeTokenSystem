@@ -13,9 +13,10 @@ import {Errors} from "./libraries/Errors.sol";
 import {Events} from "./libraries/Events.sol";
 
 // interfaces
-import {IAddressBook} from "./interfaces/IAddressBook.sol";
 import {IAccessController} from "./interfaces/IAccessController.sol";
 
+// contracts
+import {LowLevelWMoca} from "./LowLevelWMoca.sol";
 
 /**
  * @title EscrowedMoca
@@ -25,10 +26,12 @@ import {IAccessController} from "./interfaces/IAccessController.sol";
  *      which can be redeemed under various options—similar to early bond redemption—with penalties applied based on the chosen redemption method.
 */
 
-contract EscrowedMoca is ERC20, Pausable {
+contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     using SafeERC20 for IERC20;
 
-    IAddressBook public immutable addressBook;
+    // Contracts
+    IAccessController public immutable accessController;
+    address public immutable wMoca;
 
     uint256 public TOTAL_MOCA_ESCROWED;          // tracks the actual MOCA balance in the contract
 
@@ -41,6 +44,9 @@ contract EscrowedMoca is ERC20, Pausable {
 
     uint256 public ACCRUED_PENALTY_TO_TREASURY; 
     uint256 public CLAIMED_PENALTY_FROM_TREASURY;
+
+    // gas limit for moca transfer
+    uint256 public MOCA_TRANSFER_GAS_LIMIT;
 
     //risk
     uint256 public isFrozen;
@@ -59,30 +65,36 @@ contract EscrowedMoca is ERC20, Pausable {
 
 //-------------------------------Constructor------------------------------------------
 
-    constructor(address addressBook_, uint256 votersPenaltySplit) ERC20("esMoca", "esMoca") {    
+    constructor(address accessController_, uint256 votersPenaltySplit, address wMoca_, uint256 mocaTransferGasLimit) ERC20("esMoca", "esMOCA") {    
         
-        require(addressBook_ != address(0), Errors.InvalidAddress());
-        addressBook = IAddressBook(addressBook_);
+        // check: access controller is set [Treasury should be non-zero]
+        accessController = IAccessController(accessController_);
+        require(accessController.TREASURY() != address(0), Errors.InvalidAddress());
         
         require(votersPenaltySplit > 0, Errors.InvalidPercentage());
         require(votersPenaltySplit <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
         VOTERS_PENALTY_SPLIT = votersPenaltySplit;
+
+        // wrapped moca 
+        require(wMoca_ != address(0), Errors.InvalidAddress());
+        wMoca = wMoca_;
+
+        // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
+        require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
+        MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
     }
 
 //-------------------------------User functions------------------------------------------
 
     /**
-     * @notice Converts Moca tokens to esMoca by transferring Moca from the user and minting an equivalent amount of esMoca.
-     * @dev Moca tokens are transferred from the caller to this contract and esMoca is minted 1:1 to the caller.
-     * @custom:security Non-reentrant, only callable when not paused.
-     * @custom:assumptions Assumes Moca token address is valid and user has approved sufficient Moca.
-     * @param amount The amount of Moca to convert to esMoca.
+     * @notice Converts native Moca to esMoca, by transferring native Moca from the user and minting an equivalent amount of esMoca.
+     * @dev Accepts native Moca via msg.value.
      */
-    function escrowMoca(uint256 amount) external whenNotPaused {
+    function escrowMoca() external payable whenNotPaused {
+        uint256 amount = msg.value;
         require(amount > 0, Errors.InvalidAmount());
 
-        // transfer moca
-        _moca().safeTransferFrom(msg.sender, address(this), amount);
+        // update total moca escrowed
         TOTAL_MOCA_ESCROWED += amount;
 
         // mint esMoca to user
@@ -93,14 +105,14 @@ contract EscrowedMoca is ERC20, Pausable {
 
 
     /**
-     * @notice Redeems esMoca for Moca using a specified redemption option.
+     * @notice Redeems esMoca for Moca using a specified redemption option. Transfers native Moca; if transfer fails within gas limit, wraps to wMoca and transfers the wMoca to user.
      * @dev Redemption is irreversible once initiated. Users select from available redemption options, each with distinct lock durations and penalty structures.
      * @param redemptionAmount Amount of esMoca to redeem.
      * @param redemptionOption Redemption option index. (0: Standard, 1: Early, 2: Instant)
      * @custom:requirements `redemptionOption` must be enabled and configured.
      * Emits {RedemptionScheduled} or {Redeemed} depending on lock duration.
      */
-    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount) external whenNotPaused {
+    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount) external payable whenNotPaused {
         // sanity checks: amount & balance
         require(redemptionAmount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
@@ -138,12 +150,15 @@ contract EscrowedMoca is ERC20, Pausable {
 
         if(option.lockDuration == 0) { // Instant redemption, transfer immediately
             
-            // book claimed amount + transfer moca
+            // book claimed amount 
             schedulePtr.claimed += mocaReceivable;
-            _moca().safeTransfer(msg.sender, mocaReceivable);
-
+            
+            // TODO: why do we not deduct the penalty amount as it was not transferred?
             // update total moca escrowed | do not deduct the penalty amount as it was not transferred
             TOTAL_MOCA_ESCROWED -= mocaReceivable;
+
+            // transfer moca to user [wraps if transfer fails within gas limit]
+            _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, mocaReceivable, MOCA_TRANSFER_GAS_LIMIT);
 
             emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp);
 
@@ -172,13 +187,10 @@ contract EscrowedMoca is ERC20, Pausable {
     // Note: does not burn esMoca - which is done during selectRedemptionOption()
     /**
      * @notice Claims the redeemed MOCA tokens after the lock period has elapsed.
-     * @dev Transfers the receivable MOCA to the caller and marks the redemption as claimed.
-     *      Emits a {Redeemed} event upon successful claim.
+     * @dev Transfers native Moca; if transfer fails within gas limit, wraps to wMoca and transfers the wMoca to user.
      * @param redemptionTimestamp The timestamp at which the redemption becomes available for claim.
-     * @custom:revert RedemptionNotAvailableYet if the redemption is not yet available.
-     * @custom:revert AlreadyClaimed if the redemption has already been claimed.
      */
-    function claimRedemption(uint256 redemptionTimestamp) external whenNotPaused {
+    function claimRedemption(uint256 redemptionTimestamp) external payable whenNotPaused {
         // check redemption eligibility
         require(block.timestamp >= redemptionTimestamp, Errors.RedemptionNotAvailableYet());
 
@@ -191,9 +203,11 @@ contract EscrowedMoca is ERC20, Pausable {
         // update claimed 
         redemptionPtr.claimed += claimableAmount;
 
-        // transfer moca
-        _moca().safeTransfer(msg.sender, claimableAmount);
+        // update total moca escrowed
         TOTAL_MOCA_ESCROWED -= claimableAmount;
+
+        // transfer moca [wraps if transfer fails within gas limit]
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, claimableAmount, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.Redeemed(msg.sender, claimableAmount, redemptionTimestamp);
     }
@@ -203,12 +217,12 @@ contract EscrowedMoca is ERC20, Pausable {
 
     //Note: Executor's responsibility to ensure there are no duplicate users in the array
     /**
-     * @notice Escrows Moca on behalf of multiple users.
-     * @dev Transfers Moca from the caller to the contract and mints esMoca to each user.
+     * @notice Escrows native Moca on behalf of multiple users.
+     * @dev Transfers native Moca from the caller to the contract and mints esMoca to each user.
      * @param users Array of user addresses to escrow for.
      * @param amounts Array of amounts to escrow for each user.
      */
-    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external whenNotPaused onlyAssetManager {
+    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external payable whenNotPaused onlyAssetManager {
         uint256 length = users.length;
         require(length == amounts.length, Errors.MismatchedArrayLengths());
         
@@ -229,9 +243,14 @@ contract EscrowedMoca is ERC20, Pausable {
             totalMocaAmount += amount;
         }
 
-        // transfer total moca 
-        _moca().safeTransferFrom(msg.sender, address(this), totalMocaAmount);
+        // check: msg.value matches totalMocaAmount
+        require(msg.value == totalMocaAmount, Errors.InvalidAmount());
+
+        // increment total moca escrowed
         TOTAL_MOCA_ESCROWED += totalMocaAmount;
+
+        // transfer moca [wraps if transfer fails within gas limit]
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, address(this), totalMocaAmount, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.StakedOnBehalf(users, amounts);
     }
@@ -242,7 +261,7 @@ contract EscrowedMoca is ERC20, Pausable {
      * @dev Transfers the total claimable penalty (sum of voters and treasury) to the caller [Asset Manager]
      *      Updates claimed penalty tracking variables accordingly.
      */
-    function claimPenalties() external whenNotPaused onlyAssetManager {
+    function claimPenalties() external payable whenNotPaused onlyAssetManager {
         // is there anything to claim?
         uint256 totalPenaltyAccrued = ACCRUED_PENALTY_TO_VOTERS + ACCRUED_PENALTY_TO_TREASURY;
         uint256 totalClaimable = totalPenaltyAccrued - CLAIMED_PENALTY_FROM_VOTERS - CLAIMED_PENALTY_FROM_TREASURY;
@@ -252,9 +271,11 @@ contract EscrowedMoca is ERC20, Pausable {
         CLAIMED_PENALTY_FROM_VOTERS = ACCRUED_PENALTY_TO_VOTERS;
         CLAIMED_PENALTY_FROM_TREASURY = ACCRUED_PENALTY_TO_TREASURY;
 
-        // transfer moca
-        _moca().safeTransfer(msg.sender, totalClaimable);
+        // decrement total moca escrowed
         TOTAL_MOCA_ESCROWED -= totalClaimable;
+
+        // transfer moca [wraps if transfer fails within gas limit]
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.PenaltyClaimed(totalClaimable);
     }
@@ -265,7 +286,7 @@ contract EscrowedMoca is ERC20, Pausable {
      * @dev Only callable by EscrowedMocaAdmin.
      * @param amount The amount of esMoca to release to the admin caller.
      */
-    function releaseEscrowedMoca(uint256 amount) external whenNotPaused onlyAssetManager {
+    function releaseEscrowedMoca(uint256 amount) external payable whenNotPaused onlyAssetManager {
         require(amount > 0, Errors.InvalidAmount());
         
         require(balanceOf(msg.sender) >= amount, Errors.InsufficientBalance());
@@ -273,9 +294,11 @@ contract EscrowedMoca is ERC20, Pausable {
         // burn esMoca
         _burn(msg.sender, amount);
 
-        // transfer moca
-        _moca().safeTransfer(msg.sender, amount);
+        // decrement total moca escrowed
         TOTAL_MOCA_ESCROWED -= amount;
+
+        // transfer moca [wraps if transfer fails within gas limit]
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, amount, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.EscrowedMocaReleased(msg.sender, amount);
     }
@@ -365,46 +388,50 @@ contract EscrowedMoca is ERC20, Pausable {
         emit Events.AddressWhitelisted(addr, isWhitelisted);
     }
 
-//-------------------------------Internal functions---------------------------------------------------------------
+    /**
+     * @notice Sets the gas limit for moca transfer.
+     * @dev Only callable by the IssuerStakingController admin.
+     * @param newMocaTransferGasLimit The new gas limit for moca transfer.
+     */
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external whenNotPaused onlyEscrowedMocaAdmin {
+        require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
 
-    // get moca token address | if zero address, reverts
-    function _moca() internal view returns (IERC20){
-        return IERC20(addressBook.getMoca());
+        // cache old + update to new gas limit
+        uint256 oldMocaTransferGasLimit = MOCA_TRANSFER_GAS_LIMIT;
+        MOCA_TRANSFER_GAS_LIMIT = newMocaTransferGasLimit;
+
+        emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
     }
+
 
 //-------------------------------Modifiers---------------------------------------------------------------
     
     // for setting contract params
     modifier onlyEscrowedMocaAdmin() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isEscrowedMocaAdmin(msg.sender), Errors.OnlyCallableByEscrowedMocaAdmin());
         _;
     }
 
     // for depositing/withdrawing assets [stakeOnBehalf(), ]
     modifier onlyAssetManager() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
         _;
     }
 
     // pause
     modifier onlyMonitor() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
         _;
     }
 
     // for unpause + freeze 
     modifier onlyGlobalAdmin() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
         _;
     }   
     
     // to exfil assets, when frozen
     modifier onlyEmergencyExitHandler() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
         _;
     }
@@ -452,7 +479,7 @@ contract EscrowedMoca is ERC20, Pausable {
      * @dev Only callable by the Global Admin [multi-sig].
      */
     function unpause() external whenPaused onlyGlobalAdmin {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
+        require(isFrozen == 0, Errors.IsFrozen()); 
         _unpause();
     }
 
@@ -462,31 +489,49 @@ contract EscrowedMoca is ERC20, Pausable {
      *      This is a kill switch function
      */
     function freeze() external whenPaused onlyGlobalAdmin {
-        if(isFrozen == 1) revert Errors.IsFrozen();
+        require(isFrozen == 0, Errors.IsFrozen());
         isFrozen = 1;
         emit Events.ContractFrozen();
     }
 
     /**
-     * @notice Exfiltrate all Moca held in the contract to the treasury.
+     * @notice Exfiltrate all esMoca held in the contract to the users.
      * @dev Intended for emergency use only when the contract is frozen.
-     *      Only contract updates: TOTAL_MOCA_ESCROWED to 0.
+     *      If called by a user, they should pass an array of length 1 with their own address.
+     *      If called by the emergency exit handler, they should pass an array of length > 1 with the addresses of the users to exit.
+     * @param users Array of user addresses to exfiltrate esMoca for.
      */
-    function emergencyExit() external onlyEmergencyExitHandler {
-        if(isFrozen == 0) revert Errors.NotFrozen();
-        
-        // get treasury address
-        address treasury = addressBook.getTreasury();
-        require(treasury != address(0), Errors.InvalidAddress());
+    function emergencyExit(address[] calldata users) external payable onlyEmergencyExitHandler {
+        require(isFrozen == 1, Errors.NotFrozen());
+        require(users.length > 0, Errors.InvalidArray());
 
-        // exfil moca escrowed into contract
-        _moca().safeTransfer(treasury, _moca().balanceOf(address(this)));
-        delete TOTAL_MOCA_ESCROWED;
+        uint256 totalMocaAmount;
+        for(uint256 i; i < users.length; ++i) {
+            address user = users[i];
 
-        emit Events.EmergencyExit(treasury);
+            // check: if NOT emergency exit handler, AND NOT, the user themselves: revert
+            if (!accessController.isEmergencyExitHandler(msg.sender)) {
+                if (msg.sender != user) {
+                    revert Errors.OnlyCallableByEmergencyExitHandlerOrUser();
+                }
+            }
+
+            // get user's esMoca balance
+            uint256 esMocaBalance = balanceOf(user);
+
+            // burn esMoca
+            _burn(user, esMocaBalance);
+
+            // decrement total moca escrowed
+            TOTAL_MOCA_ESCROWED -= esMocaBalance;
+
+            // add to total moca amount
+            totalMocaAmount += esMocaBalance;
+
+            // transfer moca [wraps if transfer fails within gas limit]
+            _transferMocaAndWrapIfFailWithGasLimit(wMoca, user, esMocaBalance, MOCA_TRANSFER_GAS_LIMIT);
+        }
+
+        emit Events.EmergencyExitEscrowedMoca(users, totalMocaAmount);
     }
-
-//-------------------------------View functions----------------------------------------------------------
-
-
 }
