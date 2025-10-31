@@ -44,8 +44,10 @@ contract AccessController is AccessControl {
     bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE");                   // withdraw fns on PaymentsController, VotingController
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
 
-    // Treasury address for withdrawals
-    address public TREASURY;
+    // Treasury address for respective contracts
+    address public PAYMENTS_CONTROLLER_TREASURY;
+    address public VOTING_CONTROLLER_TREASURY;
+    address public ESCROWED_MOCA_TREASURY;
 
     // Risk
     uint256 public isFrozen;
@@ -55,14 +57,20 @@ contract AccessController is AccessControl {
     /**
      * @dev Constructor
      * @param globalAdmin The address of the global admin
-     * @param treasury The address of the treasury
+     * @param paymentsTreasury The address of the payments controller treasury
+     * @param votingTreasury The address of the voting controller treasury
+     * @param esMocaTreasury The address of the es moca treasury
     */
-    constructor(address globalAdmin, address treasury) {
+    constructor(address globalAdmin, address paymentsTreasury, address votingTreasury, address esMocaTreasury) {
         require(globalAdmin != address(0), Errors.InvalidAddress());
-        require(treasury != address(0), Errors.InvalidAddress());
+        require(paymentsTreasury != address(0), Errors.InvalidAddress());
+        require(votingTreasury != address(0), Errors.InvalidAddress());
+        require(esMocaTreasury != address(0), Errors.InvalidAddress());
 
-        // treasury address
-        TREASURY = treasury;
+        // set treasury addresses
+        PAYMENTS_CONTROLLER_TREASURY = paymentsTreasury;
+        VOTING_CONTROLLER_TREASURY = votingTreasury;
+        ESCROWED_MOCA_TREASURY = esMocaTreasury;
 
         // Grant supreme admin role
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
@@ -99,19 +107,39 @@ contract AccessController is AccessControl {
     }
 
     /**
-     * @notice Sets the treasury address
+     * @notice Sets the payments controller treasury address
      * @dev Only callable by the DEFAULT_ADMIN_ROLE
-     * @param newTreasury The new treasury address
-     * Emits a {TreasuryUpdated} event
+     * @param newPaymentsControllerTreasury The new payments controller treasury address
     */
-    function setTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) noZeroAddress(newTreasury) {
-        require(newTreasury != TREASURY, Errors.InvalidAddress());
-
-        address oldTreasury = TREASURY;
-        TREASURY = newTreasury;
-
-        emit Events.TreasuryUpdated(oldTreasury, newTreasury);
+    function setPaymentsControllerTreasury(address newPaymentsControllerTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) noZeroAddress(newPaymentsControllerTreasury) {
+        require(newPaymentsControllerTreasury != PAYMENTS_CONTROLLER_TREASURY, Errors.InvalidAddress());
+        PAYMENTS_CONTROLLER_TREASURY = newPaymentsControllerTreasury;
+        emit Events.PaymentsControllerTreasuryUpdated(PAYMENTS_CONTROLLER_TREASURY, newPaymentsControllerTreasury);
     }
+
+    /**
+     * @notice Sets the voting controller treasury address
+     * @dev Only callable by the DEFAULT_ADMIN_ROLE
+     * @param newVotingControllerTreasury The new voting controller treasury address
+    */
+    function setVotingControllerTreasury(address newVotingControllerTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) noZeroAddress(newVotingControllerTreasury) {
+        require(newVotingControllerTreasury != VOTING_CONTROLLER_TREASURY, Errors.InvalidAddress());
+        VOTING_CONTROLLER_TREASURY = newVotingControllerTreasury;
+        emit Events.VotingControllerTreasuryUpdated(VOTING_CONTROLLER_TREASURY, newVotingControllerTreasury);
+    }
+
+    /**
+     * @notice Sets the es moca treasury address
+     * @dev Only callable by the DEFAULT_ADMIN_ROLE
+     * @param newEsMocaTreasury The new es moca treasury address
+    */
+    function setEsMocaTreasury(address newEsMocaTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) noZeroAddress(newEsMocaTreasury) {
+        require(newEsMocaTreasury != ESCROWED_MOCA_TREASURY, Errors.InvalidAddress());
+        ESCROWED_MOCA_TREASURY = newEsMocaTreasury; 
+
+        emit Events.EsMocaTreasuryUpdated(ESCROWED_MOCA_TREASURY, newEsMocaTreasury);
+    }
+
 
 
 // -------------------- HIGH-FREQUENCY ROLE MANAGEMENT ----------------------------------------

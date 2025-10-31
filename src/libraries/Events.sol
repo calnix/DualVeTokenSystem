@@ -22,11 +22,11 @@ library Events {
     event PenaltyAccrued(uint256 penaltyToVoters, uint256 penaltyToTreasury);
     event Redeemed(address indexed caller, uint256 mocaReceivable, uint256 redemptionTimestamp);
     // claimRedemption()
-    event RedemptionClaimed(address indexed caller, uint256 mocaReceivable, uint256 redemptionTimestamp, uint256 penaltyAmount);
+    event RedemptionsClaimed(address indexed caller, uint256[] redemptionTimestamps, uint256 mocaReceivable);
     // stakeOnBehalf()
     event StakedOnBehalf(address[] callers, uint256[] amounts);
     // setPenaltyToVoters()
-    event PenaltyToVotersUpdated(uint256 oldPenaltyToVoters, uint256 newPenaltyToVoters);
+    event VotersPenaltyPctUpdated(uint256 oldVotersPenaltyPct, uint256 newVotersPenaltyPct);
     // setRedemptionOption()
     event RedemptionOptionUpdated(uint256 redemptionOption, uint256 lockDuration, uint256 receivablePct);
     // setRedemptionOptionStatus()
@@ -40,6 +40,8 @@ library Events {
     event PenaltyClaimed(uint256 totalClaimable);
     // emergencyExit
     event EmergencyExitEscrowedMoca(address[] users, uint256 totalMoca);
+    event EmergencyExitPenalties(address indexed treasury, uint256 totalClaimable);
+
 
 
 // --------- VotingEscrowMoca.sol ---------

@@ -33,10 +33,10 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     IAccessController public immutable accessController;
     address public immutable wMoca;
 
-    uint256 public TOTAL_MOCA_ESCROWED;          // tracks the actual MOCA balance in the contract
+    uint256 public TOTAL_MOCA_PENDING_REDEMPTION;         // tracks the total MOCA balance pending redemption 
 
     // penalty split between voters and treasury
-    uint256 public VOTERS_PENALTY_SPLIT;         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
+    uint256 public VOTERS_PENALTY_PCT;         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
     
     // penalty accrued to voters and treasury
     uint256 public ACCRUED_PENALTY_TO_VOTERS; 
@@ -48,7 +48,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     // gas limit for moca transfer
     uint256 public MOCA_TRANSFER_GAS_LIMIT;
 
-    //risk
+    // risk
     uint256 public isFrozen;
 
 //-------------------------------Mappings----------------------------------------------
@@ -59,21 +59,23 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     // redemption history
     mapping(address user => mapping(uint256 redemptionTimestamp => DataTypes.Redemption redemption)) public redemptionSchedule;
 
+    mapping(address user => uint256 totalMocaPendingRedemption) public userTotalMocaPendingRedemption;
+
     // addresses that can transfer esMoca to other addresses: Asset Manager to deposit to VotingController
     mapping(address addr => bool isWhitelisted) public whitelist;
 
 
 //-------------------------------Constructor------------------------------------------
 
-    constructor(address accessController_, uint256 votersPenaltySplit, address wMoca_, uint256 mocaTransferGasLimit) ERC20("esMoca", "esMOCA") {    
+    constructor(address accessController_, uint256 votersPenaltyPct, address wMoca_, uint256 mocaTransferGasLimit) ERC20("esMoca", "esMOCA") {    
         
         // check: access controller is set [Treasury should be non-zero]
         accessController = IAccessController(accessController_);
         require(accessController.TREASURY() != address(0), Errors.InvalidAddress());
-        
-        require(votersPenaltySplit > 0, Errors.InvalidPercentage());
-        require(votersPenaltySplit <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
-        VOTERS_PENALTY_SPLIT = votersPenaltySplit;
+
+        // sanity check: <= 100%; can be 0 [all penalties to treasury]       
+        require(votersPenaltyPct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        VOTERS_PENALTY_PCT = votersPenaltyPct;
 
         // wrapped moca 
         require(wMoca_ != address(0), Errors.InvalidAddress());
@@ -94,9 +96,6 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         uint256 amount = msg.value;
         require(amount > 0, Errors.InvalidAmount());
 
-        // update total moca escrowed
-        TOTAL_MOCA_ESCROWED += amount;
-
         // mint esMoca to user
         _mint(msg.sender, amount);
 
@@ -116,113 +115,150 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         // sanity checks: amount & balance
         require(redemptionAmount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
-        require(TOTAL_MOCA_ESCROWED >= redemptionAmount, Errors.TotalMocaEscrowedExceeded());     //invariant: should never be triggered
         
-        // get redemption option + sanity check: redemption option is enabled
+        // invariant: should never be triggered
+        require(totalSupply() >= redemptionAmount, Errors.TotalMocaEscrowedExceeded());     
+        
+        // get redemption option + ensure that redemption option is enabled
         DataTypes.RedemptionOption memory option = redemptionOptions[redemptionOption];
         require(option.isEnabled, Errors.RedemptionOptionAlreadyDisabled());
 
-        // calculate moca receivable + penalty
+        // 1. Calculate moca receivable + penalty
         uint256 mocaReceivable;
         uint256 penaltyAmount;
-        if(option.receivablePct == Constants.PRECISION_BASE) {
-            // redemption with no penalty
+        if(option.receivablePct == Constants.PRECISION_BASE) { 
+            // redemption with no penalty [user receives 100% of the redemption amount]
             mocaReceivable = redemptionAmount;
         } else {
-            // redemption with penalty
+            // redemption with penalty [user receives a percentage of the redemption amount & pays a penalty]
             mocaReceivable = redemptionAmount * option.receivablePct / Constants.PRECISION_BASE;
             penaltyAmount = redemptionAmount - mocaReceivable;
-            require(penaltyAmount > 0, Errors.InvalidAmount()); // ensures penaltyAmount & mocaReceivable are > 0
 
-            // we block the case where penaltyAmount is floored to 0, but mocaReceivable is > 0
-            // when selecting a redemption option, the user must honour its penalty. 
-            // to prevent users from abusing the system, we block the case where penaltyAmount is floored to 0, but mocaReceivable is > 0
+            // sanity checks: ensure penaltyAmount & mocaReceivable are > 0 [flooring]
+            require(mocaReceivable > 0, Errors.InvalidAmount()); 
+            require(penaltyAmount > 0, Errors.InvalidAmount()); 
+
+            // we block cases where either penaltyAmount or mocaReceivable is floored to 0
+            // when selecting a redemption option, the user must honour its penalty, and receive a non-zero amount of moca. 
+            // this prevents users from abusing the system(or getting griefed), and protects protocol from rounding/misconfiguration errors.
         }
 
-        // calculate redemptionTimestamp
+        // 2. Burn esMoca tokens from the caller
+        _burn(msg.sender, redemptionAmount);
+
+        // 3. Book penalty amounts to globals [if >0, in case of flooring]
+        if(penaltyAmount > 0) {
+            
+            uint256 votersPenaltyPct = VOTERS_PENALTY_PCT;
+            
+            // if voters penalty split is > 0, calculate penalty splits to voters and treasury
+            if(votersPenaltyPct > 0) {
+                
+                uint256 penaltyToVoters = penaltyAmount * votersPenaltyPct / Constants.PRECISION_BASE;
+                uint256 penaltyToTreasury = penaltyAmount - penaltyToVoters;
+            
+                // book penalty amounts to globals [if >0, in case of flooring]
+                if(penaltyToTreasury > 0) ACCRUED_PENALTY_TO_TREASURY += penaltyToTreasury;
+                if(penaltyToVoters > 0) ACCRUED_PENALTY_TO_VOTERS += penaltyToVoters;
+
+                emit Events.PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
+
+            } else {
+                // all penalties to treasury [0 voters penalty split]
+                ACCRUED_PENALTY_TO_TREASURY += penaltyAmount;
+                emit Events.PenaltyAccrued(0, penaltyAmount);
+            }
+        }
+
+        // 4. Calculate redemption timestamp 
         uint256 redemptionTimestamp = block.timestamp + option.lockDuration;
 
-        DataTypes.Redemption storage schedulePtr = redemptionSchedule[msg.sender][redemptionTimestamp];
+        // 5. Book redemption details to storage [even instant redemptions are booked for consistent record-keeping]
+        DataTypes.Redemption storage redemptionPtr = redemptionSchedule[msg.sender][redemptionTimestamp];
+        redemptionPtr.mocaReceivable += mocaReceivable;
+        redemptionPtr.penalty += penaltyAmount;
 
-        // book redemption receivable + penalty
-        schedulePtr.mocaReceivable += mocaReceivable;
-        schedulePtr.penalty += penaltyAmount;
 
-        if(option.lockDuration == 0) { // Instant redemption, transfer immediately
+        // 6. Handle instant redemptions
+        if(option.lockDuration == 0) { 
             
-            // book claimed amount 
-            schedulePtr.claimed += mocaReceivable;
+            // Book claimed amount 
+            redemptionPtr.claimed += mocaReceivable;
             
-            // TODO: why do we not deduct the penalty amount as it was not transferred?
-            // update total moca escrowed | do not deduct the penalty amount as it was not transferred
-            TOTAL_MOCA_ESCROWED -= mocaReceivable;
-
-            // transfer moca to user [wraps if transfer fails within gas limit]
-            _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, mocaReceivable, MOCA_TRANSFER_GAS_LIMIT);
+            //TOTAL_MOCA_PENDING_REDEMPTION -> no need to increment since no pending redemption
 
             emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp);
 
-        } else {    
-            // Scheduled redemption
+            // Transfer Moca to user [wraps if transfer fails within gas limit]
+            _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, mocaReceivable, MOCA_TRANSFER_GAS_LIMIT);
+
+        } else {    // 6.1 Schedule redemption [user must claim later]
+
+            // Increment pending counters by the mocaReceivable [global + user]
+            TOTAL_MOCA_PENDING_REDEMPTION += mocaReceivable;
+            userTotalMocaPendingRedemption[msg.sender] += mocaReceivable;
+
             emit Events.RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp);
-        }
-
-        // burn corresponding esMoca tokens from the caller
-        _burn(msg.sender, redemptionAmount);
-
-        // ------ if penalty, calculate and book splits ------
-        if(penaltyAmount > 0) {
-            // calculate penalty amount
-            uint256 penaltyToVoters = penaltyAmount * VOTERS_PENALTY_SPLIT / Constants.PRECISION_BASE;
-            uint256 penaltyToTreasury = penaltyAmount - penaltyToVoters;
-        
-             // book penalty amounts to globals
-            if(penaltyToTreasury > 0) ACCRUED_PENALTY_TO_TREASURY += penaltyToTreasury;
-            if(penaltyToVoters > 0) ACCRUED_PENALTY_TO_VOTERS += penaltyToVoters;
-
-            emit Events.PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
         }
     }
 
-    // Note: does not burn esMoca - which is done during selectRedemptionOption()
+    
     /**
      * @notice Claims the redeemed MOCA tokens after the lock period has elapsed.
      * @dev Transfers native Moca; if transfer fails within gas limit, wraps to wMoca and transfers the wMoca to user.
-     * @param redemptionTimestamp The timestamp at which the redemption becomes available for claim.
+     *      Note: does not burn esMoca tokens - that is done during selectRedemptionOption() call.
+     * @param redemptionTimestamps The timestamps at which the redemptions become available for claim.
      */
-    function claimRedemption(uint256 redemptionTimestamp) external payable whenNotPaused {
-        // check redemption eligibility
-        require(block.timestamp >= redemptionTimestamp, Errors.RedemptionNotAvailableYet());
+    function claimRedemptions(uint256[] calldata redemptionTimestamps) external payable whenNotPaused {
+        uint256 length = redemptionTimestamps.length;
+        require(length > 0, Errors.InvalidArrayLength());
 
-        DataTypes.Redemption storage redemptionPtr = redemptionSchedule[msg.sender][redemptionTimestamp];
+        uint256 totalClaimable;
+        for (uint256 i; i < length; ++i) {
+            uint256 redemptionTimestamp = redemptionTimestamps[i];
 
-        // get claimable amount
-        uint256 claimableAmount = redemptionPtr.mocaReceivable - redemptionPtr.claimed;
-        require(claimableAmount > 0, Errors.NothingToClaim());
+            // sanity check: redemption is available
+            require(block.timestamp >= redemptionTimestamp, Errors.InvalidTimestamp());
 
-        // update claimed 
-        redemptionPtr.claimed += claimableAmount;
+            // get redemption pointer
+            DataTypes.Redemption storage redemptionPtr = redemptionSchedule[msg.sender][redemptionTimestamp];
 
-        // update total moca escrowed
-        TOTAL_MOCA_ESCROWED -= claimableAmount;
+            // check redemption eligibility: there is something to claim
+            uint256 claimableAmount = redemptionPtr.mocaReceivable - redemptionPtr.claimed;
+            require(claimableAmount > 0, Errors.NothingToClaim());
 
-        // transfer moca [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, claimableAmount, MOCA_TRANSFER_GAS_LIMIT);
+            // book claimed amount
+            redemptionPtr.claimed += claimableAmount;
 
-        emit Events.Redeemed(msg.sender, claimableAmount, redemptionTimestamp);
+            // increment total claimable
+            totalClaimable += claimableAmount;
+        }
+        
+        // invariant: should never be triggered
+        require(totalClaimable > 0, Errors.NothingToClaim());
+        
+        // decrement total moca pending redemption by the totalClaimable [penalties were already accounted for]
+        TOTAL_MOCA_PENDING_REDEMPTION -= totalClaimable;
+
+        emit Events.RedemptionsClaimed(msg.sender, redemptionTimestamps, totalClaimable);
+
+        // Transfer Moca to user [wraps if transfer fails within gas limit]
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
     }
 
 
-//-------------------------------Asset manager functions-----------------------------------------
+//-------------------------------CronJob functions-----------------------------------------
 
-    //Note: Executor's responsibility to ensure there are no duplicate users in the array
     /**
      * @notice Escrows native Moca on behalf of multiple users.
-     * @dev Transfers native Moca from the caller to the contract and mints esMoca to each user.
+     * @dev Transfers native Moca from the caller to the contract and mints esMoca to each user. 
+     *      Note: CronJob's responsibility to ensure there are no duplicate users in the array.
+     *      Expectation: this function will be called on a bi-weekly basis to distribute rewards to voters.
+     *      So we use CronJob, instead of AssetManager.
      * @param users Array of user addresses to escrow for.
      * @param amounts Array of amounts to escrow for each user.
      */
-    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external payable whenNotPaused onlyAssetManager {
+    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external payable onlyCronJob whenNotPaused {
         uint256 length = users.length;
         require(length == amounts.length, Errors.MismatchedArrayLengths());
         
@@ -246,56 +282,50 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         // check: msg.value matches totalMocaAmount
         require(msg.value == totalMocaAmount, Errors.InvalidAmount());
 
-        // increment total moca escrowed
-        TOTAL_MOCA_ESCROWED += totalMocaAmount;
-
-        // transfer moca [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, address(this), totalMocaAmount, MOCA_TRANSFER_GAS_LIMIT);
-
         emit Events.StakedOnBehalf(users, amounts);
     }
 
+//-------------------------------Asset manager functions-----------------------------------------
     
     /**
      * @notice Claims accrued penalty amounts for voters and treasury. [Penalties are accrued in Moca]
-     * @dev Transfers the total claimable penalty (sum of voters and treasury) to the caller [Asset Manager]
-     *      Updates claimed penalty tracking variables accordingly.
+     * @dev Transfers the total claimable penalty (sum of voters and treasury) to esMoca treasury address
+     *      Updates claimed penalty tracking variables to match total accrued.
+     *      Note: potential tiny dust from rounding.
      */
-    function claimPenalties() external payable whenNotPaused onlyAssetManager {
-        // is there anything to claim?
+    function claimPenalties() external payable onlyAssetManager whenNotPaused {
+        // get treasury address
+        address esMocaTreasury = accessController.ESCROWED_MOCA_TREASURY();
+        require(esMocaTreasury != address(0), Errors.InvalidAddress());
+
+        // check: is there anything to claim?
         uint256 totalPenaltyAccrued = ACCRUED_PENALTY_TO_VOTERS + ACCRUED_PENALTY_TO_TREASURY;
         uint256 totalClaimable = totalPenaltyAccrued - CLAIMED_PENALTY_FROM_VOTERS - CLAIMED_PENALTY_FROM_TREASURY;
-        require(totalClaimable > 0, Errors.InvalidAmount());
+        require(totalClaimable > 0, Errors.NothingToClaim());
 
         // book claimed penalties
         CLAIMED_PENALTY_FROM_VOTERS = ACCRUED_PENALTY_TO_VOTERS;
         CLAIMED_PENALTY_FROM_TREASURY = ACCRUED_PENALTY_TO_TREASURY;
 
-        // decrement total moca escrowed
-        TOTAL_MOCA_ESCROWED -= totalClaimable;
-
         // transfer moca [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, esMocaTreasury, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.PenaltyClaimed(totalClaimable);
     }
 
 
     /**
-     * @notice ALlows caller to release their esMoca to moca instantly.
+     * @notice Allows caller to release their esMoca to moca instantly.
      * @dev Only callable by EscrowedMocaAdmin.
      * @param amount The amount of esMoca to release to the admin caller.
      */
-    function releaseEscrowedMoca(uint256 amount) external payable whenNotPaused onlyAssetManager {
+    function releaseEscrowedMoca(uint256 amount) external payable onlyAssetManager whenNotPaused {
+        // sanity check: amount + balance
         require(amount > 0, Errors.InvalidAmount());
-        
         require(balanceOf(msg.sender) >= amount, Errors.InsufficientBalance());
-
+       
         // burn esMoca
         _burn(msg.sender, amount);
-
-        // decrement total moca escrowed
-        TOTAL_MOCA_ESCROWED -= amount;
 
         // transfer moca [wraps if transfer fails within gas limit]
         _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, amount, MOCA_TRANSFER_GAS_LIMIT);
@@ -304,24 +334,23 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     }
 
 
-//-------------------------------Admin: update functions-----------------------------------------
+//-------------------------------Admin: update functions-------------------------------------------------
 
 
     /**
-     * @notice Updates the percentage of penalty allocated to voters.
+     * @notice Updates the percentage of penalty allocated to voters. [0 allowed; all penalties to treasury]
      * @dev The value must be within (0, 10_000), representing up to 100% with 2 decimal precision.
      *      Only callable by EscrowedMocaAdmin.
      * @param penaltyToVoters The new penalty percentage for voters (2dp precision, e.g., 100 = 1%).
      */
-    function setPenaltyToVoters(uint256 penaltyToVoters) external whenNotPaused onlyEscrowedMocaAdmin {
+    function setVotersPenaltyPct(uint256 votersPenaltyPct) external whenNotPaused onlyEscrowedMocaAdmin {
         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
-        require(penaltyToVoters < 10_000, Errors.InvalidPercentage());
-        require(penaltyToVoters > 0, Errors.InvalidPercentage());
+        require(votersPenaltyPct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
 
-        uint256 oldPenaltyToVoters = VOTERS_PENALTY_SPLIT;
-        VOTERS_PENALTY_SPLIT = penaltyToVoters;
+        uint256 oldVotersPenaltyPct = VOTERS_PENALTY_PCT;
+        VOTERS_PENALTY_PCT = votersPenaltyPct;
 
-        emit Events.PenaltyToVotersUpdated(oldPenaltyToVoters, penaltyToVoters);
+        emit Events.VotersPenaltyPctUpdated(oldVotersPenaltyPct, votersPenaltyPct);
     }
 
 
@@ -331,15 +360,17 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      *      Only callable by EscrowedMocaAdmin.
      * @param redemptionOption The redemption option index.
      * @param lockDuration The lock duration for the redemption option. [0 for instant redemption]
-     * @param receivablePct The conversion rate for the redemption option. [0 for redemption w/o penalty]
+     * @param receivablePct The conversion rate for the redemption option. [> 0 for redemption w/ penalty]
      */
     function setRedemptionOption(uint256 redemptionOption, uint128 lockDuration, uint128 receivablePct) external whenNotPaused onlyEscrowedMocaAdmin {
         // range:[0,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
-        require(receivablePct <= 10_000, Errors.InvalidPercentage());
+        require(receivablePct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        require(receivablePct > 0, Errors.InvalidPercentage());
 
-        // sanity check: lock duration: ~2.46 years
+        // sanity check: lock duration: ~2.46 years 
         require(lockDuration <= 888 days, Errors.InvalidLockDuration());
 
+        // storage: update redemption option
         redemptionOptions[redemptionOption] = DataTypes.RedemptionOption({
             lockDuration: lockDuration,
             receivablePct: receivablePct,
@@ -370,19 +401,22 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         }
     }
 
-    // Note: for Asset Manager to deposit esMoca to VotingController
+    
     /**
      * @notice Updates the whitelist status for an address, allowing or revoking permission to transfer esMoca.
      * @dev   Whitelisted addresses can transfer esMoca to other addresses (e.g., Asset Manager to VotingController).
+     *        Note: for Asset Manager to deposit esMoca to VotingController.
      * @param addr The address to update whitelist status for.
      * @param isWhitelisted True to whitelist, false to remove from whitelist.
      */
     function setWhitelistStatus(address addr, bool isWhitelisted) external whenNotPaused onlyEscrowedMocaAdmin {
         require(addr != address(0), Errors.InvalidAddress());
 
+        // check: current status
         bool currentStatus = whitelist[addr];
         require(currentStatus != isWhitelisted, Errors.WhitelistStatusUnchanged());
 
+        // storage: update whitelist status
         whitelist[addr] = isWhitelisted;
 
         emit Events.AddressWhitelisted(addr, isWhitelisted);
@@ -418,6 +452,11 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         _;
     }
 
+    modifier onlyCronJob() {
+        require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
+        _;
+    }
+
     // pause
     modifier onlyMonitor() {
         require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
@@ -437,7 +476,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     }
 
 
-//-------------------------------Transfer ERC20 Overrides-----------------------------------------
+//-------------------------------Transfer ERC20 Overrides------------------------------------------------
     
     /**
      * @notice Transfers esMoca tokens to a specified address, restricted to whitelisted senders.
@@ -499,9 +538,10 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @dev Intended for emergency use only when the contract is frozen.
      *      If called by a user, they should pass an array of length 1 with their own address.
      *      If called by the emergency exit handler, they should pass an array of length > 1 with the addresses of the users to exit.
+     *      Note: does not clear mapping redemptionSchedule; this is a non-issue since the contract is frozen.
      * @param users Array of user addresses to exfiltrate esMoca for.
      */
-    function emergencyExit(address[] calldata users) external payable onlyEmergencyExitHandler {
+    function emergencyExit(address[] calldata users) external payable {
         require(isFrozen == 1, Errors.NotFrozen());
         require(users.length > 0, Errors.InvalidArray());
 
@@ -518,20 +558,55 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
 
             // get user's esMoca balance
             uint256 esMocaBalance = balanceOf(user);
+            uint256 userTotalPendingRedemptions = userTotalMocaPendingRedemption[user];
 
-            // burn esMoca
-            _burn(user, esMocaBalance);
+            // get user's total moca: balance + pending redemptions
+            uint256 userTotalMoca = esMocaBalance + userTotalPendingRedemptions;
+            if(userTotalMoca == 0) continue;
 
-            // decrement total moca escrowed
-            TOTAL_MOCA_ESCROWED -= esMocaBalance;
+            // decrement esMoca balance 
+            if(esMocaBalance > 0) _burn(user, esMocaBalance);
 
-            // add to total moca amount
-            totalMocaAmount += esMocaBalance;
+            // decrement pending redemptions [global + user]
+            if(userTotalPendingRedemptions > 0) {
+                delete userTotalMocaPendingRedemption[user];
+                TOTAL_MOCA_PENDING_REDEMPTION -= userTotalPendingRedemptions;
+            }
+
+            // increment counter
+            totalMocaAmount += userTotalMoca;
 
             // transfer moca [wraps if transfer fails within gas limit]
-            _transferMocaAndWrapIfFailWithGasLimit(wMoca, user, esMocaBalance, MOCA_TRANSFER_GAS_LIMIT);
+            _transferMocaAndWrapIfFailWithGasLimit(wMoca, user, userTotalMoca, MOCA_TRANSFER_GAS_LIMIT);
         }
 
         emit Events.EmergencyExitEscrowedMoca(users, totalMocaAmount);
+    }
+
+    /**
+     * @notice Exfiltrate all accrued penalties from the contract to the esMoca treasury.
+     * @dev Only callable by the Emergency Exit Handler role, when the contract is frozen.
+     *      EsMoca treasury address is queried from AccessController.
+     */
+    function emergencyExitPenalties() external payable onlyEmergencyExitHandler {
+        require(isFrozen == 1, Errors.NotFrozen());
+        
+        // get esMoca treasury address
+        address esMocaTreasury = accessController.ESCROWED_MOCA_TREASURY();
+        require(esMocaTreasury != address(0), Errors.InvalidAddress());
+
+        // check: is there anything to claim?
+        uint256 totalPenaltyAccrued = ACCRUED_PENALTY_TO_VOTERS + ACCRUED_PENALTY_TO_TREASURY;
+        uint256 totalClaimable = totalPenaltyAccrued - CLAIMED_PENALTY_FROM_VOTERS - CLAIMED_PENALTY_FROM_TREASURY;
+        require(totalClaimable > 0, Errors.NothingToClaim());
+
+        // book claimed penalties
+        CLAIMED_PENALTY_FROM_VOTERS = ACCRUED_PENALTY_TO_VOTERS;
+        CLAIMED_PENALTY_FROM_TREASURY = ACCRUED_PENALTY_TO_TREASURY;
+        
+        // transfer moca [wraps if transfer fails within gas limit]
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, esMocaTreasury, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
+
+        emit Events.EmergencyExitPenalties(esMocaTreasury, totalClaimable);
     }
 }

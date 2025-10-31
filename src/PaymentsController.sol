@@ -740,15 +740,24 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
     }
 
-//------------------------------- AssetManager: withdraw functions------------------------------------------------
+//------------------------------- CronJob: withdraw functions-----------------------------------------------------
+
+    //note: every 2 weeks/epoch
+    //note: use cronjob instead of asset manager, due to frequency of calls; so that can be scripted.
 
     /**
      * @notice Allows withdrawal of protocol fees only after the specified epoch has ended.
      * @dev Protocol fees for a given epoch can be withdrawn once per epoch, after the epoch is finalized.
+     *      Use cronjob instead of asset manager, due to frequency of calls; so that can be scripted; i.e. bi-weekly.
+     *      Assets are sent to payments controller treasury.
      * @param epoch The epoch number for which to withdraw protocol fees.
      */
-    function withdrawProtocolFees(uint256 epoch) external onlyAssetManager whenNotPaused {
+    function withdrawProtocolFees(uint256 epoch) external onlyCronJob whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
+
+        // get payments controller treasury address
+        address paymentsControllerTreasury = accessController.PAYMENTS_CONTROLLER_TREASURY();
+        require(paymentsControllerTreasury != address(0), Errors.InvalidAddress());
 
         // cache pointer
         DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[epoch];
@@ -759,25 +768,28 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         uint256 protocolFees = epochFees.feesAccruedToProtocol;
         require(protocolFees > 0, Errors.ZeroProtocolFee());
 
-        // get treasury address
-        address treasury = accessController.TREASURY();
-        require(treasury != address(0), Errors.InvalidAddress());
-
         // update flag
         epochFees.isProtocolFeeWithdrawn = true;
         TOTAL_PROTOCOL_FEES_UNCLAIMED -= protocolFees;
+
         emit Events.ProtocolFeesWithdrawn(epoch, protocolFees);
 
-        USD8.safeTransfer(treasury, protocolFees);
+        USD8.safeTransfer(paymentsControllerTreasury, protocolFees);
     }
 
     /**
      * @notice Allows withdrawal of voters fees only after the specified epoch has ended.
      * @dev Voters fees for a given epoch can be withdrawn once per epoch, after the epoch is finalized.
+     *      Use cronjob instead of asset manager, due to frequency of calls; so that can be scripted; i.e. bi-weekly.
+     *      Assets are sent to payments controller treasury.
      * @param epoch The epoch number for which to withdraw voters fees.
      */
-    function withdrawVotersFees(uint256 epoch) external onlyAssetManager whenNotPaused {
+    function withdrawVotersFees(uint256 epoch) external onlyCronJob whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
+
+        // get payments controller treasury address
+        address paymentsControllerTreasury = accessController.PAYMENTS_CONTROLLER_TREASURY();
+        require(paymentsControllerTreasury != address(0), Errors.InvalidAddress());
 
         // cache pointer
         DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[epoch];
@@ -788,16 +800,12 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         uint256 votersFees = epochFees.feesAccruedToVoters;
         require(votersFees > 0, Errors.ZeroVotersFee());
 
-        // get treasury address
-        address treasury = accessController.TREASURY();
-        require(treasury != address(0), Errors.InvalidAddress());
-
         // update flag
         epochFees.isVotersFeeWithdrawn = true;
         TOTAL_VOTING_FEES_UNCLAIMED -= votersFees;
         emit Events.VotersFeesWithdrawn(epoch, votersFees);
 
-        USD8.safeTransfer(treasury, votersFees);
+        USD8.safeTransfer(paymentsControllerTreasury, votersFees);
     }
 
 //------------------------------- Risk-related functions ---------------------------------------------------------
@@ -918,28 +926,28 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     /**
      * @notice Transfers all unclaimed protocol and voting fees to the treasury during emergency exit.
      * @dev Callable only by the emergency exit handler when the contract is frozen.
-     *      Transfers the sum of TOTAL_PROTOCOL_FEES_UNCLAIMED and TOTAL_VOTING_FEES_UNCLAIMED to the treasury address.
+     *      Transfers the sum of unclaimed fees to payments controller treasury address.
      *      Resets the unclaimed fee counters to zero after transfer.
-     *      Emits EmergencyExitFees event with the treasury address and the total unclaimed fees.
      */
     function emergencyExitFees() external onlyEmergencyExitHandler {
         if(isFrozen == 0) revert Errors.NotFrozen();
 
+        // get treasury address
+        address paymentsControllerTreasury = accessController.PAYMENTS_CONTROLLER_TREASURY();
+        require(paymentsControllerTreasury != address(0), Errors.InvalidAddress());
+
+        // sanity check: there must be unclaimed fees to claim
         uint256 totalUnclaimedFees = TOTAL_PROTOCOL_FEES_UNCLAIMED + TOTAL_VOTING_FEES_UNCLAIMED;
         if(totalUnclaimedFees == 0) revert Errors.NoFeesToClaim();
-        
-        // get treasury address
-        address treasury = accessController.TREASURY();
-        require(treasury != address(0), Errors.InvalidAddress());
 
         // reset counters
         delete TOTAL_PROTOCOL_FEES_UNCLAIMED;
         delete TOTAL_VOTING_FEES_UNCLAIMED;
         
         // transfer fees to treasury
-        USD8.safeTransfer(treasury, totalUnclaimedFees);
+        USD8.safeTransfer(paymentsControllerTreasury, totalUnclaimedFees);
 
-        emit Events.EmergencyExitFees(treasury, totalUnclaimedFees);
+        emit Events.EmergencyExitFees(paymentsControllerTreasury, totalUnclaimedFees);
     }
     
 
@@ -960,8 +968,8 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         _;
     }   
 
-    modifier onlyAssetManager() {
-        require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
+    modifier onlyCronJob() {
+        require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
         _;
     }
 
@@ -971,7 +979,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     }
 
 
-//------------------------------ View functions ------------------------------------------------------------------
+//------------------------------- View functions ------------------------------------------------------------------
    
     // note: called by VotingController.claimSubsidies | no need for zero address check on the caller
     /**

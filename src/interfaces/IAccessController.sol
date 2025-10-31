@@ -7,24 +7,21 @@ pragma solidity 0.8.27;
  * @notice Interface for AccessController, managing all system roles and permissions.
  */
 interface IAccessController {
+    // ---- TREASURY ADDRESSES ----
 
-    /// @notice Returns the current treasury address.
-    function TREASURY() external view returns (address);
+    function PAYMENTS_CONTROLLER_TREASURY() external view returns (address);
+    function VOTING_CONTROLLER_TREASURY() external view returns (address);
+    function ESCROWED_MOCA_TREASURY() external view returns (address);
 
-    // -------------------- GENERIC ROLE ADMIN MANAGEMENT --------------------
+    function setPaymentsControllerTreasury(address newPaymentsControllerTreasury) external;
+    function setVotingControllerTreasury(address newVotingControllerTreasury) external;
+    function setEsMocaTreasury(address newEsMocaTreasury) external;
 
-    /**
-     * @notice Sets the admin role for a specific role.
-     * @param role The role whose administrator is being updated.
-     * @param adminRole The new administrator role for the specified role.
-     */
+    // ---- GENERIC ROLE ADMIN MANAGEMENT ----
+
     function setRoleAdmin(bytes32 role, bytes32 adminRole) external;
 
-    /**
-     * @notice Sets the treasury address.
-     * @param newTreasury The new treasury address.
-     */
-    function setTreasury(address newTreasury) external;
+    // ---- HIGH-FREQUENCY ROLES ----
 
 // -------------------- HIGH-FREQUENCY ROLES --------------------
 

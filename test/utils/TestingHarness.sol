@@ -35,11 +35,11 @@ abstract contract TestingHarness is Test {
     // actual contracts
     AccessController public accessController;
     PaymentsController public paymentsController;
+    IssuerStakingController public issuerStakingController;
+    EscrowedMoca public esMoca;
     //VotingEscrowMoca public veMoca;
     //VotingController public votingController;
-    //EscrowedMoca public esMoca;
-    IssuerStakingController public issuerStakingController;
-
+    
     // mocks
     MockWMoca public mockWMoca;
     MockUSD8 public mockUSD8;
@@ -159,7 +159,7 @@ abstract contract TestingHarness is Test {
     
 
         // 6. Deploy EscrowedMoca
-        //esMoca = new EscrowedMoca(address(accessController), 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); // 10% penalty split
+        esMoca = new EscrowedMoca(address(accessController), 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); // 10% penalty split
 
 
         // 7. Deploy VotingEscrowMoca

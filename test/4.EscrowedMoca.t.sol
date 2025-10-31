@@ -19,7 +19,7 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
         assertEq(address(esMoca.accessController()), address(accessController), "accessController not set correctly");
         assertEq(address(esMoca.wMoca()), address(wMoca), "wMoca not set correctly");
         assertEq(esMoca.MOCA_TRANSFER_GAS_LIMIT(), 2300, "MOCA_TRANSFER_GAS_LIMIT not set correctly");
-        assertEq(esMoca.VOTERS_PENALTY_SPLIT(), 1000, "VOTERS_PENALTY_SPLIT not set correctly");
+        assertEq(esMoca.VOTERS_PENALTY_PCT(), 1000, "VOTERS_PENALTY_PCT not set correctly");
         
         // erc20
         assertEq(esMoca.name(), "esMoca", "name not set correctly");
@@ -31,28 +31,28 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
 
     function testRevert_ConstructorChecks() public {
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new EscrowedMoca(address(0), 1000);
+        new EscrowedMoca(address(0), 1000, address(wMoca), 2300);
 
         vm.expectRevert(Errors.InvalidPercentage.selector);
-        new EscrowedMoca(address(addressBook), 0);
+        new EscrowedMoca(address(addressBook), 0, address(wMoca), 2300);
 
         vm.expectRevert(Errors.InvalidPercentage.selector);
-        new EscrowedMoca(address(addressBook), Constants.PRECISION_BASE + 1);
+        new EscrowedMoca(address(addressBook), Constants.PRECISION_BASE + 1, address(wMoca), 2300);
     }
 
 
     function testReverts_Batched_Constructor() public {
         // invalid address
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new EscrowedMoca(address(0), 1000);
+        new EscrowedMoca(address(0), 1000, address(wMoca), 2300);
 
         // invalid percentage
         vm.expectRevert(Errors.InvalidPercentage.selector);
-        new EscrowedMoca(address(addressBook), 0);
+        new EscrowedMoca(address(addressBook), 0, address(wMoca), 2300);
 
         // invalid percentage
         vm.expectRevert(Errors.InvalidPercentage.selector);
-        new EscrowedMoca(address(addressBook), Constants.PRECISION_BASE + 1);
+        new EscrowedMoca(address(addressBook), Constants.PRECISION_BASE + 1, address(wMoca), 2300);
     }
 
     // state transition: escrow moca
@@ -221,7 +221,7 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
                 uint256 expectedPenalty = redemptionAmount - expectedMocaReceivable;
                 
                 // calculate penalty amount
-                uint256 penaltyToVoters = expectedPenalty * esMoca.VOTERS_PENALTY_SPLIT() / Constants.PRECISION_BASE;
+                uint256 penaltyToVoters = expectedPenalty * esMoca.VOTERS_PENALTY_PCT() / Constants.PRECISION_BASE;
                 uint256 penaltyToTreasury = expectedPenalty - penaltyToVoters;
                 
                 // --- redeem ---
@@ -796,27 +796,26 @@ contract StateT60Days_UserTwoHasRedemptionScheduled_Test is StateT60Days_UserTwo
         function test_UserCannot_SetPenaltyToVoters() public {
             vm.startPrank(user2);
             vm.expectRevert(Errors.OnlyCallableByEscrowedMocaAdmin.selector);
-            esMoca.setPenaltyToVoters(5000); 
+            esMoca.setVotersPenaltyPct(5000); 
             vm.stopPrank();
         }
 
         function test_EscrowedMocaAdminCan_SetPenaltyToVoters() public {
             // record old value
-            uint256 oldPenaltyToVoters = esMoca.VOTERS_PENALTY_SPLIT();
-            assertEq(esMoca.VOTERS_PENALTY_SPLIT(), 1000);
+            uint256 oldVotersPenaltyPct = esMoca.VOTERS_PENALTY_PCT();
+            assertEq(esMoca.VOTERS_PENALTY_PCT(), 1000);
 
             // expect event emission
             vm.expectEmit(true, true, false, true, address(esMoca));
-            emit Events.PenaltyToVotersUpdated(oldPenaltyToVoters, 5000);
+            emit Events.VotersPenaltyPctUpdated(oldVotersPenaltyPct, 5000);
 
             vm.startPrank(escrowedMocaAdmin);
-                esMoca.setPenaltyToVoters(5000); // 50% penalty
+                esMoca.setVotersPenaltyPct(5000); // 50% penalty
             vm.stopPrank();
 
             // check state update
-            assertEq(esMoca.VOTERS_PENALTY_SPLIT(), 5000, "VOTERS_PENALTY_SPLIT not updated");
+            assertEq(esMoca.VOTERS_PENALTY_PCT(), 5000, "VOTERS_PENALTY_PCT not updated");
         }
-
 }
 
 // note: change penalty split to 50%
@@ -827,32 +826,32 @@ abstract contract StateT60Days_ChangePenaltySplit is StateT60Days_UserTwoHasRede
 
         // change penalty split: 50% split between voters and treasury
         vm.startPrank(escrowedMocaAdmin);
-            esMoca.setPenaltyToVoters(5000);
+            esMoca.setVotersPenaltyPct(5000);
         vm.stopPrank();
     }
 }
 
 contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit {
 
-    // --------- negative tests: setPenaltyToVoters() ---------
+    // --------- negative tests: setVotersPenaltyPct() ---------
 
         // invalid percentage: 0    
-        function test_EscrowedMocaAdminCannot_SetInvalidPenaltyToVoters_Zero() public {
+        function test_EscrowedMocaAdminCannot_SetInvalidVotersPenaltyPct_Zero() public {
             vm.startPrank(escrowedMocaAdmin);
             vm.expectRevert(Errors.InvalidPercentage.selector);
-            esMoca.setPenaltyToVoters(0);
+            esMoca.setVotersPenaltyPct(0);
             vm.stopPrank();
         }
 
         // invalid percentage: > 100%
-        function test_EscrowedMocaAdminCannot_SetInvalidPenaltyToVoters_GreaterThan100() public {
+        function test_EscrowedMocaAdminCannot_SetInvalidVotersPenaltyPct_GreaterThan100() public {
             vm.startPrank(escrowedMocaAdmin);
             vm.expectRevert(Errors.InvalidPercentage.selector);
-            esMoca.setPenaltyToVoters(Constants.PRECISION_BASE + 1);
+            esMoca.setVotersPenaltyPct(Constants.PRECISION_BASE + 1);
             vm.stopPrank();
         }
 
-    // --------- positive tests: setPenaltyToVoters() ---------
+    // --------- positive tests: setVotersPenaltyPct() ---------
 
         // total penalty is split 50% between voters and treasury
         function test_User1_CanRedeem_Quarter_WithOption1() public {
@@ -872,7 +871,7 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
                 uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
                 uint256 expectedPenalty = redemptionAmount - expectedMocaReceivable;
                 
-                // With VOTERS_PENALTY_SPLIT set to 5000, the split should be 50/50 between voters and treasury
+                // With VOTERS_PENALTY_PCT set to 5000, the split should be 50/50 between voters and treasury
                 uint256 expectedPenaltyToVoters = expectedPenalty * 5000 / Constants.PRECISION_BASE;
                 uint256 expectedPenaltyToTreasury = expectedPenalty - expectedPenaltyToVoters;
                 
@@ -1292,10 +1291,10 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
             vm.stopPrank();
         }
 
-        function testRevert_EscrowedMocaAdminCannot_SetPenaltyToVoters_WhenPaused() public {
+        function testRevert_EscrowedMocaAdminCannot_SetVotersPenaltyPct_WhenPaused() public {
             vm.startPrank(escrowedMocaAdmin);
             vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.setPenaltyToVoters(2000);
+            esMoca.setVotersPenaltyPct(2000);
             vm.stopPrank();
         }
 

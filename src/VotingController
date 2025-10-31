@@ -304,7 +304,8 @@ contract VotingController is Pausable, LowLevelWMoca {
     }
 
 //-------------------------------delegate functions------------------------------------------
-
+    
+    //TODO: make payable
     /**
      * @notice Registers the caller as a delegate and activates their status.
      * @dev Requires payment of the registration fee. Marks the delegate as active upon registration.
@@ -665,7 +666,11 @@ contract VotingController is Pausable, LowLevelWMoca {
     }
 
 
-//-------------------------------onlyAssetManager: depositEpochSubsidies, finalizeEpochRewardsSubsidies -----------------------------------------
+//-------------------------------onlyCronJob: depositEpochSubsidies, finalizeEpochRewardsSubsidies -----------------------------------------
+    // TODO
+    //note: use cronjob instead of asset manager, due to frequency of calls
+    //note: what if i have deposit/finazlie pull assets from treasury directly?
+    //      this would require treasury address setting approvals to VotingController contract.
 
     /**
      * @notice Deposits esMOCA subsidies for a completed epoch to be distributed among pools based on votes.
@@ -807,41 +812,44 @@ contract VotingController is Pausable, LowLevelWMoca {
     /**
      * @notice Sweep all unclaimed and residual voting rewards for a given epoch to the treasury.
      * @dev Can only be called by a VotingController admin after a delay defined by UNCLAIMED_DELAY_EPOCHS epochs.
-     *      Transfers both unclaimed and residual (unclaimable flooring losses) esMoca rewards to the treasury.
-     *      Emits an {UnclaimedRewardsWithdrawn} event on success.
-     *      Reverts if the epoch is not finalized, the treasury address is unset, or there are no unclaimed rewards to sweep.
+     *      Transfers both unclaimed and residual (unclaimable flooring losses) esMoca rewards to voting controller treasury.
+     *      Reverts if the epoch is not finalized, the voting controller treasury address is unset, or there are no unclaimed rewards to sweep.
      * @param epoch The epoch number for which to sweep unclaimed and residual rewards.
      */
     function withdrawUnclaimedRewards(uint256 epoch) external onlyAssetManager whenNotPaused {
         // sanity check: withdraw delay must have passed
         require(epoch > EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
-        
+
+        // get treasury address
+        address votingControllerTreasury = accessController.VOTING_CONTROLLER_TREASURY();
+        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
+
         // sanity check: epoch must be finalized [pool exists implicitly]
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
 
         // sanity check: there must be unclaimed rewards
         uint256 unclaimed = epochs[epoch].totalRewardsAllocated - epochs[epoch].totalRewardsClaimed;
         require(unclaimed > 0, Errors.NoUnclaimedRewardsToWithdraw());
-
-        address treasury = addressBook.getTreasury();
-        require(treasury != address(0), Errors.InvalidAddress());
         
-        _esMoca().safeTransfer(treasury, unclaimed);
+        _esMoca().safeTransfer(votingControllerTreasury, unclaimed);
 
-        emit Events.UnclaimedRewardsWithdrawn(treasury, epoch, unclaimed);
+        emit Events.UnclaimedRewardsWithdrawn(votingControllerTreasury, epoch, unclaimed);
     }
 
     /**
      * @notice Sweep all unclaimed and residual subsidies for a specified epoch to the treasury.
      * @dev Can only be called by a VotingController admin after a delay defined by UNCLAIMED_DELAY_EPOCHS epochs.
-     *      Transfers both unclaimed and residual (unclaimable flooring losses) esMoca subsidies to the treasury.
-     *      Emits an {UnclaimedSubsidiesWithdrawn} event on success.
-     *      Reverts if the epoch is not finalized, the delay has not passed, the treasury address is unset, or there are no unclaimed subsidies to sweep.
+     *      Transfers both unclaimed and residual (unclaimable flooring losses) esMoca subsidies to voting controller treasury.
+     *      Reverts if the epoch is not finalized, the delay has not passed, the voting controller treasury address is unset, or there are no unclaimed subsidies to sweep.
      * @param epoch The epoch number for which to sweep unclaimed and residual subsidies.
      */
     function withdrawUnclaimedSubsidies(uint256 epoch) external onlyAssetManager whenNotPaused {
         // sanity check: withdraw delay must have passed
         require(epoch > EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
+
+        // get treasury address
+        address votingControllerTreasury = accessController.VOTING_CONTROLLER_TREASURY();
+        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
 
         // sanity check: epoch must be finalized
         require(epochs[epoch].isFullyFinalized, Errors.EpochNotFinalized());
@@ -850,28 +858,36 @@ contract VotingController is Pausable, LowLevelWMoca {
         uint256 unclaimedSubsidies = epochs[epoch].totalSubsidiesDeposited - epochs[epoch].totalSubsidiesClaimed;
         require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
 
-        address treasury = addressBook.getTreasury();
-        require(treasury != address(0), Errors.InvalidAddress());
-
-        // transfer esMoca to admin/deposit(?)
-        _esMoca().transfer(treasury, unclaimedSubsidies);
+        // transfer esMoca to voting controller treasury
+        _esMoca().transfer(votingControllerTreasury, unclaimedSubsidies);
 
         // event
-        emit Events.UnclaimedSubsidiesWithdrawn(treasury, epoch, unclaimedSubsidies);
+        emit Events.UnclaimedSubsidiesWithdrawn(votingControllerTreasury, epoch, unclaimedSubsidies);
     }
 
-    function withdrawRegistrationFees() external onlyAssetManager whenNotPaused {
+    /**
+     * @notice Withdraws all unclaimed registration fees to the voting controller treasury.
+     * @dev Can only be called by a VotingController admin
+     *      Reverts if the voting controller treasury address is unset, or there are no unclaimed registration fees to withdraw.
+     */
+    function withdrawRegistrationFees() external payable onlyCronJob whenNotPaused {
         require(TOTAL_REGISTRATION_FEES > 0, Errors.NoRegistrationFeesToWithdraw());
 
+        // get treasury address
+        address votingControllerTreasury = accessController.VOTING_CONTROLLER_TREASURY();
+        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
+
+        // sanity check: there must be registration fees to withdraw
         uint256 claimable = TOTAL_REGISTRATION_FEES - REGISTRATION_FEES_CLAIMED;
         require(claimable > 0, Errors.InvalidAmount());
 
-        address treasury = addressBook.getTreasury();
-        require(treasury != address(0), Errors.InvalidAddress());
+        // book claimed registration fees
+        REGISTRATION_FEES_CLAIMED += claimable;
 
-        _moca().safeTransfer(treasury, claimable);
+        // Transfer Moca to user [wraps if transfer fails within gas limit]
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, votingControllerTreasury, claimable, MOCA_TRANSFER_GAS_LIMIT);
 
-        emit Events.RegistrationFeesWithdrawn(treasury, claimable);
+        emit Events.RegistrationFeesWithdrawn(votingControllerTreasury, claimable);
     }
     
 //-------------------------------onlyVotingControllerAdmin: setters ---------------------------------------------------------
