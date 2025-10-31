@@ -35,7 +35,10 @@ contract VotingController is Pausable, LowLevelWMoca {
 
     // Contracts
     IAccessController public immutable accessController;
+    IVotingEscrowMoca public immutable votingEscrowMoca;
+    IEscrowedMoca public immutable escrowedMoca;
     address public immutable wMoca;
+
     
     // safety check
     uint256 public TOTAL_NUMBER_OF_POOLS;
@@ -97,12 +100,22 @@ contract VotingController is Pausable, LowLevelWMoca {
 
 //-------------------------------Constructor------------------------------------------
 
-    constructor(address accessController_, uint256 registrationFee, uint256 maxDelegateFeePct, uint256 delayDuration, address wMoca_, uint256 mocaTransferGasLimit) {
-        require(registrationFee > 0, Errors.InvalidAmount());
+    constructor(address accessController_, uint256 registrationFee, uint256 maxDelegateFeePct, uint256 delayDuration, 
+        address wMoca_, uint256 mocaTransferGasLimit, address votingEscrowMoca_, address escrowedMoca_) {
         
+        require(registrationFee > 0, Errors.InvalidAmount());
+
         // check: access controller is set [Treasury should be non-zero]
         accessController = IAccessController(accessController_);
-        require(accessController.TREASURY() != address(0), Errors.InvalidAddress());
+        require(accessController.VOTING_CONTROLLER_TREASURY() != address(0), Errors.InvalidAddress());
+        
+        // check: voting escrow moca is set
+        require(votingEscrowMoca_ != address(0), Errors.InvalidAddress());
+        votingEscrowMoca = IVotingEscrowMoca(votingEscrowMoca_);
+        
+        // check: escrowed moca is set
+        require(escrowedMoca_ != address(0), Errors.InvalidAddress());
+        escrowedMoca = IEscrowedMoca(escrowedMoca_);
         
         // initial unclaimed delay & fee increase delay
         require(delayDuration > 0, Errors.InvalidDelayPeriod());
@@ -870,7 +883,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Can only be called by a VotingController admin
      *      Reverts if the voting controller treasury address is unset, or there are no unclaimed registration fees to withdraw.
      */
-    function withdrawRegistrationFees() external payable onlyCronJob whenNotPaused {
+    function withdrawRegistrationFees() external payable onlyAssetManager whenNotPaused {
         require(TOTAL_REGISTRATION_FEES > 0, Errors.NoRegistrationFeesToWithdraw());
 
         // get treasury address
@@ -1156,62 +1169,40 @@ contract VotingController is Pausable, LowLevelWMoca {
         return bytes32(keccak256(abi.encode(callerAddress, block.timestamp, salt)));
     }
 
-
-    // if zero address, reverts automatically
-    function _veMoca() internal view returns (IVotingEscrowMoca) {
-        return IVotingEscrowMoca(addressBook.getVotingEscrowMoca());
-    }
-
-    // if zero address, reverts automatically
-    function _esMoca() internal view returns (IERC20) {
-        return IERC20(addressBook.getEscrowedMoca());
-    }
-
-    // if zero address, reverts automatically
-    function _moca() internal view returns (IERC20) {
-        return IERC20(addressBook.getMoca());
-    }
-
 //-------------------------------Modifiers---------------------------------------------------------------
     
     // creating pools, removing pools
     modifier onlyCronJob() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
         _;
     }
 
     // for setting contract params
     modifier onlyVotingControllerAdmin() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isVotingControllerAdmin(msg.sender), Errors.OnlyCallableByVotingControllerAdmin());
         _;
     }
 
     // for depositing/withdrawing assets [depositSubsidies(), finalizeEpoch(), withdrawUnclaimedX()]
     modifier onlyAssetManager() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
         _;
     }
 
     // pause
     modifier onlyMonitor() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
         _;
     }
 
     // for unpause + freeze 
     modifier onlyGlobalAdmin() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
         _;
     }   
     
     // to exfil assets, when frozen
     modifier onlyEmergencyExitHandler() {
-        IAccessController accessController = IAccessController(addressBook.getAccessController());
         require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
         _;
     }
@@ -1254,22 +1245,20 @@ contract VotingController is Pausable, LowLevelWMoca {
      *      Only callable by the Emergency Exit Handler [bot script].
      *      This is a kill switch function
      */
-    function emergencyExit() external onlyEmergencyExitHandler {
+    function emergencyExit() external payable onlyEmergencyExitHandler {
         if(isFrozen == 0) revert Errors.NotFrozen();
 
         // get treasury address
-        address treasury = addressBook.getTreasury();
-        require(treasury != address(0), Errors.InvalidAddress());
+        address votingControllerTreasury = accessController.VOTING_CONTROLLER_TREASURY();
+        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
 
         // exfil esMoca [rewards + subsidies]
-        IERC20 esMoca = _esMoca();  
-        esMoca.safeTransfer(treasury, esMoca.balanceOf(address(this)));
+        escrowedMoca.safeTransfer(votingControllerTreasury, escrowedMoca.balanceOf(address(this)));
 
         // exfil moca [registration fees]
-        IERC20 moca = _moca();
-        moca.safeTransfer(treasury, moca.balanceOf(address(this)));
+        _transferMocaAndWrapIfFailWithGasLimit(wMoca, votingControllerTreasury, address(this).balance, MOCA_TRANSFER_GAS_LIMIT);
 
-        emit Events.EmergencyExit(treasury);
+        emit Events.EmergencyExit(votingControllerTreasury);
     }
 
 
