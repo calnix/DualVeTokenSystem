@@ -95,9 +95,9 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         address wMoca_, address usd8_, uint256 mocaTransferGasLimit,
         string memory name, string memory version) EIP712(name, version) {
 
-        // check: access controller is set [not frozen]
+        // check: access controller is set [Treasury should be non-zero]
         accessController = IAccessController(accessController_);
-        require(accessController.isFrozen() == 0, Errors.InvalidAddress());
+        require(accessController.TREASURY() != address(0), Errors.InvalidAddress());
 
         // check: wrapped moca is set
         require(wMoca_ != address(0), Errors.InvalidAddress());

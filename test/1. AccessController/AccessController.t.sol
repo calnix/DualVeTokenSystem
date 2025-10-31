@@ -29,19 +29,13 @@ abstract contract State_DeployAccessController is Test {
     address public globalAdmin = makeAddr("globalAdmin");
     address public newGlobalAdmin = makeAddr("newGlobalAdmin");
 
-    // treasury addresses
-    address public paymentsTreasury = makeAddr("paymentsTreasury");
-    address public votingTreasury = makeAddr("votingTreasury");
-    address public esMocaTreasury = makeAddr("esMocaTreasury");
-
-    // operational role admin addresses
     address public monitorAdmin = makeAddr("monitorAdmin");
     address public cronJobAdmin = makeAddr("cronJobAdmin");
-    // operational role addresses
+
+    address public treasury = makeAddr("treasury");
     address public monitor = makeAddr("monitor");
     address public cronJob = makeAddr("cronJob");
 
-    // strategic role addresses
     address public issuerStakingControllerAdmin = makeAddr("issuerStakingControllerAdmin");
     address public paymentsControllerAdmin = makeAddr("paymentsControllerAdmin");
     address public votingControllerAdmin = makeAddr("votingControllerAdmin");
@@ -51,7 +45,7 @@ abstract contract State_DeployAccessController is Test {
     address public emergencyExitHandler = makeAddr("emergencyExitHandler");
 
     function setUp() public virtual {
-        accessController = new AccessController(globalAdmin, paymentsTreasury, votingTreasury, esMocaTreasury);
+        accessController = new AccessController(globalAdmin, treasury);
     }
 }
 
@@ -61,11 +55,8 @@ contract State_DeployAccessController_Test is State_DeployAccessController {
     function test_Constructor_SetsGlobalAdminAndTreasury() public {
         // check global admin
         assertTrue(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin));
-        // check treasury addresses
-        assertTrue(accessController.PAYMENTS_CONTROLLER_TREASURY() == paymentsTreasury);
-        assertTrue(accessController.VOTING_CONTROLLER_TREASURY() == votingTreasury);
-        assertTrue(accessController.ESCROWED_MOCA_TREASURY() == esMocaTreasury);
-
+        // check treasury
+        assertTrue(accessController.TREASURY() == treasury);
         // globalAdmin has DEFAULT_ADMIN_ROLE
         assertTrue(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin));
         

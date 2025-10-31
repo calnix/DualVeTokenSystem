@@ -8,7 +8,7 @@ import {AccessController} from "../../src/AccessController.sol";
 import {PaymentsController} from "../../src/PaymentsController.sol";
 //import {VotingController} from "../../src/VotingController.sol";
 //import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
-import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
+//import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
 import {IssuerStakingController} from "../../src/IssuerStakingController.sol";
 
 // import all libraries
@@ -74,9 +74,7 @@ abstract contract TestingHarness is Test {
     uint256 public verifier3SignerPrivateKey;
 
     // ------------ misc. ------------
-    address public paymentsTreasury = makeAddr("paymentsTreasury");
-    address public votingTreasury = makeAddr("votingTreasury");
-    address public esMocaTreasury = makeAddr("esMocaTreasury");
+    address public treasury = makeAddr("treasury");
 
     // ------------ users ------------
     address public user1 = makeAddr("user1");
@@ -130,7 +128,7 @@ abstract contract TestingHarness is Test {
         mockUSD8 = new MockUSD8();
 
         // 1. Deploy access controller
-        accessController = new AccessController(globalAdmin, paymentsTreasury, votingTreasury, esMocaTreasury);
+        accessController = new AccessController(globalAdmin, treasury);
 
         // 2. Initialize roles
         vm.startPrank(globalAdmin);

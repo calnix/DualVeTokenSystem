@@ -16,7 +16,6 @@ import {Errors} from "./libraries/Errors.sol";
 import {IAccessController} from "./interfaces/IAccessController.sol";
 import {IPaymentsController} from "./interfaces/IPaymentsController.sol";
 import {IVotingEscrowMoca} from "./interfaces/IVotingEscrowMoca.sol";
-import {IEscrowedMoca} from "./interfaces/IEscrowedMoca.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";

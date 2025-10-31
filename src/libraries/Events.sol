@@ -159,9 +159,7 @@ library Events {
 
 // --------- AccessController.sol ---------
     // Treasury
-    event PaymentsControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
-    event VotingControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
-    event EsMocaTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
+    event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     // Monitor admin functions
     event MonitorAdminRemoved(address indexed admin, address indexed removedBy);
     event MonitorAdminAdded(address indexed admin, address indexed addedBy);
