@@ -7,6 +7,11 @@ pragma solidity 0.8.27;
  * @notice Interface for AccessController, managing all system roles and permissions.
  */
 interface IAccessController {
+    // ---- RISK MANAGEMENT ----
+
+    function isFrozen() external view returns (uint256);
+    
+
     // ---- TREASURY ADDRESSES ----
 
     function PAYMENTS_CONTROLLER_TREASURY() external view returns (address);

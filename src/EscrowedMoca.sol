@@ -71,7 +71,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         
         // check: access controller is set [Treasury should be non-zero]
         accessController = IAccessController(accessController_);
-        require(accessController.TREASURY() != address(0), Errors.InvalidAddress());
+        require(accessController.ESCROWED_MOCA_TREASURY() != address(0), Errors.InvalidAddress());
 
         // sanity check: <= 100%; can be 0 [all penalties to treasury]       
         require(votersPenaltyPct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
@@ -211,7 +211,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      */
     function claimRedemptions(uint256[] calldata redemptionTimestamps) external payable whenNotPaused {
         uint256 length = redemptionTimestamps.length;
-        require(length > 0, Errors.InvalidArrayLength());
+        require(length > 0, Errors.InvalidArray());
 
         uint256 totalClaimable;
         for (uint256 i; i < length; ++i) {
@@ -341,7 +341,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @notice Updates the percentage of penalty allocated to voters. [0 allowed; all penalties to treasury]
      * @dev The value must be within (0, 10_000), representing up to 100% with 2 decimal precision.
      *      Only callable by EscrowedMocaAdmin.
-     * @param penaltyToVoters The new penalty percentage for voters (2dp precision, e.g., 100 = 1%).
+     * @param votersPenaltyPct The new penalty percentage for voters (2dp precision, e.g., 100 = 1%).
      */
     function setVotersPenaltyPct(uint256 votersPenaltyPct) external whenNotPaused onlyEscrowedMocaAdmin {
         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
