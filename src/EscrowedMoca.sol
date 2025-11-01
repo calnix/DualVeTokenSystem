@@ -217,7 +217,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         for (uint256 i; i < length; ++i) {
             uint256 redemptionTimestamp = redemptionTimestamps[i];
 
-            // sanity check: redemption is available
+            // sanity check: timestamp is in the past
             require(block.timestamp >= redemptionTimestamp, Errors.InvalidTimestamp());
 
             // get redemption pointer
@@ -239,6 +239,8 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         
         // decrement total moca pending redemption by the totalClaimable [penalties were already accounted for]
         TOTAL_MOCA_PENDING_REDEMPTION -= totalClaimable;
+        // decrement user total moca pending redemption by the totalClaimable
+        userTotalMocaPendingRedemption[msg.sender] -= totalClaimable;
 
         emit Events.RedemptionsClaimed(msg.sender, redemptionTimestamps, totalClaimable);
 
@@ -310,7 +312,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         // transfer moca [wraps if transfer fails within gas limit]
         _transferMocaAndWrapIfFailWithGasLimit(wMoca, esMocaTreasury, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
 
-        emit Events.PenaltyClaimed(totalClaimable);
+        emit Events.PenaltyClaimed(esMocaTreasury, totalClaimable);
     }
 
 

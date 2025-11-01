@@ -37,7 +37,7 @@ library Events {
     // releaseEscrowedMoca()
     event EscrowedMocaReleased(address indexed caller, uint256 amount);
     // claimPenalty()
-    event PenaltyClaimed(uint256 totalClaimable);
+    event PenaltyClaimed(address indexed treasury, uint256 totalClaimable);
     // emergencyExit
     event EmergencyExitEscrowedMoca(address[] users, uint256 totalMoca);
     event EmergencyExitPenalties(address indexed treasury, uint256 totalClaimable);

@@ -3,9 +3,12 @@ pragma solidity 0.8.27;
 
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 
+// External: OZ
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+
 // import all contracts
 import {AccessController} from "../../src/AccessController.sol";
-import {PaymentsController} from "../../src/PaymentsController.sol";
+//import {PaymentsController} from "../../src/PaymentsController.sol";
 //import {VotingController} from "../../src/VotingController.sol";
 //import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
 import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
@@ -34,7 +37,7 @@ abstract contract TestingHarness is Test {
     
     // actual contracts
     AccessController public accessController;
-    PaymentsController public paymentsController;
+    //PaymentsController public paymentsController;
     IssuerStakingController public issuerStakingController;
     EscrowedMoca public esMoca;
     //VotingEscrowMoca public veMoca;
@@ -154,11 +157,11 @@ abstract contract TestingHarness is Test {
         // 4. Deploy IssuerStakingController
         issuerStakingController = new IssuerStakingController(address(accessController), 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
 
-
+/*
         // 5. Deploy PaymentsController
         paymentsController = new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
              address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
-    
+*/ 
 
         // 6. Deploy EscrowedMoca
         esMoca = new EscrowedMoca(address(accessController), 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); // 10% penalty split
@@ -206,7 +209,7 @@ abstract contract TestingHarness is Test {
      * @param nonce The current nonce for the signer address
      * @return signature The EIP-712 signature
      */
-    function generateDeductBalanceSignature(
+/*    function generateDeductBalanceSignature(
         uint256 signerPrivateKey,
         bytes32 issuerId,
         bytes32 verifierId,
@@ -257,7 +260,7 @@ abstract contract TestingHarness is Test {
      * @param nonce The current nonce for the signer address
      * @return signature The EIP-712 signature
      */
-    function generateDeductBalanceZeroFeeSignature(
+/*    function generateDeductBalanceZeroFeeSignature(
         uint256 signerPrivateKey,
         bytes32 issuerId,
         bytes32 verifierId,
@@ -301,7 +304,7 @@ abstract contract TestingHarness is Test {
      * @param signerAddress The signer address of the verifier
      * @return nonce The current nonce
      */
-    function getVerifierNonce(address signerAddress) public view returns (uint256) {
+/*    function getVerifierNonce(address signerAddress) public view returns (uint256) {
         return paymentsController.getVerifierNonce(signerAddress);
     }
 
@@ -351,6 +354,7 @@ abstract contract TestingHarness is Test {
             schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, ++salt));
         }
     }
+    */
 }
 
 // Contract with expensive receive function
