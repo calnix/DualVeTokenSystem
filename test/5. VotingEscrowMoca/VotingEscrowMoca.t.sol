@@ -4,7 +4,7 @@ pragma solidity 0.8.27;
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
-import "./utils/TestingHarness.sol";
+import "../utils/TestingHarness.sol";
 
 abstract contract StateD0_Epoch0_Deploy is TestingHarness {    
 

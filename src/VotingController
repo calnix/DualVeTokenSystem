@@ -962,7 +962,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Only callable by the IssuerStakingController admin.
      * @param newMocaTransferGasLimit The new gas limit for moca transfer.
      */
-    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyIssuerStakingControllerAdmin whenNotPaused {
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyVotingControllerAdmin whenNotPaused {
         require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
 
         // cache old + update to new gas limit

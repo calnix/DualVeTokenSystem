@@ -40,8 +40,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
     // Contracts
     IAccessController public immutable accessController;
-    address public immutable wMoca;
-    IERC20 public immutable esMoca;
+    address public immutable WMOCA;
+    IERC20 public immutable ESMOCA;
 
     // global principal
     uint256 public TOTAL_LOCKED_MOCA;
@@ -92,6 +92,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // Used by VotingController to determine users' share of rewards from delegates
         // handover aggregation | aggregated delegated veBalance
         mapping(address user => mapping(address delegate => mapping(uint256 eTime => DataTypes.VeBalance veBalance))) public delegatedAggregationHistory; 
+        // slope changes for user's delegated locks [to support VotingController's claimRewardsFromDelegate()]
+        mapping(address user => mapping(address delegate => mapping(uint256 eTime => uint256 slopeChange))) public userDelegateSlopeChanges; 
 
 
 //-------------------------------Constructor-------------------------------------------------
@@ -104,32 +106,33 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
         // wrapped moca 
         require(wMoca_ != address(0), Errors.InvalidAddress());
-        wMoca = wMoca_;
+        WMOCA = wMoca_;
 
         // esMoca 
         require(esMoca_ != address(0), Errors.InvalidAddress());
-        esMoca = IERC20(esMoca_);
+        ESMOCA = IERC20(esMoca_);
 
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
+
+        // cannot deploy at T=0
+        require(block.timestamp > 0, Errors.InvalidTimestamp());
     }
 
 //-------------------------------User functions---------------------------------------------
 
-        // TODO: split entrypoint for esmoca[ERC20] and Moca[native] - native uses function with no amount param.
         // note: locks are booked to currentEpochStart
         /**
          * @notice Creates a new lock with the specified expiry, moca, esMoca, and optional delegate.
          * @dev The delegate parameter is optional and can be set to the zero address if not delegating.
          * @param expiry The timestamp when the lock will expire.
-         * @param moca The amount of MOCA to lock.
          * @param esMoca The amount of esMOCA to lock.
          * @param delegate The address to delegate voting power to (optional).
          * @return lockId The unique identifier of the created lock.
         */
-        function createLock(uint128 expiry, uint128 moca, uint128 esMoca, address delegate) external whenNotPaused returns (bytes32) {
-            return _createLockFor(msg.sender, expiry, moca, esMoca, delegate);
+        function createLock(uint128 expiry, uint128 esMoca, address delegate) external payable whenNotPaused returns (bytes32) {
+            return _createLockFor(msg.sender, expiry, msg.value, esMoca, delegate);
         }
 
         /**
@@ -141,13 +144,17 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @param mocaToIncrease The amount of MOCA to add to the lock.
          * @param esMocaToIncrease The amount of esMOCA to add to the lock.
          */
-        function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external whenNotPaused {
+        function increaseAmount(bytes32 lockId, uint128 esMocaToIncrease) external payable whenNotPaused {
             DataTypes.Lock memory oldLock = locks[lockId];
 
             require(oldLock.lockId != bytes32(0), Errors.InvalidLockId());
             require(oldLock.owner == msg.sender, Errors.InvalidOwner());
-            require(mocaToIncrease + esMocaToIncrease > 0, Errors.InvalidAmount());
             
+            // NOTE: FIX: Enforce minimum increment amount to avoid precision loss
+            uint256 mocaToIncrease = msg.value;
+            uint256 incrementAmount = mocaToIncrease + esMocaToIncrease;
+            require(incrementAmount >= Constants.MIN_LOCK_AMOUNT, Errors.InvalidAmount());
+
             // must have at least 2 Epoch left to increase amount: to meaningfully vote for the next epoch  
             // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch       
             require(oldLock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), Errors.LockExpiresTooSoon());
@@ -169,14 +176,14 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             /** if lock is delegated, then the lock has been loaned to the delegate
                 - must update delegateSlopeChanges, delegateHistory
-                - userHistory,userSLopeChanges do not track loaned locks
+                - userHistory,userSlopeChanges do not track loaned locks
                 so no reason to update _updateUserAndGlobal -> no bearing.
             */
 
             // copy old lock: update amount
             DataTypes.Lock memory updatedLock = oldLock;
-                updatedLock.moca += mocaToIncrease;
-                updatedLock.esMoca += esMocaToIncrease;
+                updatedLock.moca += uint128(mocaToIncrease);
+                updatedLock.esMoca += uint128(esMocaToIncrease);
                 
             // calc. delta: schedule slope changes + book new veBalance + mints additional veMoca to account | updates veGlobal
             DataTypes.VeBalance memory newVeBalance = _modifyPosition(veGlobal_, veAccount, oldLock, updatedLock, account, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
@@ -185,7 +192,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
             locks[lockId] = updatedLock;
             _pushCheckpoint(lockHistory[lockId], newVeBalance, uint128(currentEpochStart));  
     
-
             // emit event
 
             // STORAGE: increment global TOTAL_LOCKED_MOCA/TOTAL_LOCKED_ESMOCA + transfer tokens to contract
@@ -257,13 +263,14 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // emit event
         }
 
+        //TODO: native moca flow
         /**
          * @notice Withdraws principals of an expired lock 
          * @dev ve will be burnt, altho veBalance will return 0 on expiry
          * @dev Only the lock owner can call this function.
          * @param lockId The unique identifier of the lock to unlock.
          */
-        function unlock(bytes32 lockId) external whenNotPaused {
+        function unlock(bytes32 lockId) external payable whenNotPaused {
             DataTypes.Lock memory lock = locks[lockId];
 
             require(lock.lockId != bytes32(0), Errors.InvalidLockId());
@@ -381,7 +388,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // note: delegated veBalance booked to nextEpochStart
             delegatedAggregationHistory[msg.sender][delegate][nextEpochStart] = _add(delegatedAggregationHistory[msg.sender][delegate][nextEpochStart], lockVeBalance);
 
-
+            //NOTE: FIX: slope changes for user's delegated locks [to support VotingController's claimRewardsFromDelegate()]
+            userDelegateSlopeChanges[msg.sender][delegate][lock.expiry] += lockVeBalance.slope;
+            
             // STORAGE: update global state
             veGlobal = veGlobal_;   
 
@@ -441,6 +450,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
             // note: delegated veBalance booked to nextEpochStart
             delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart] = _sub(delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart], lockVeBalance);
+            
+            // NOTE: FIX: Cancel scheduled dslope for this lock's expiry in user-delegate context
+            userDelegateSlopeChanges[msg.sender][lock.delegate][lock.expiry] -= lockVeBalance.slope;
 
             // STORAGE: update global state
             veGlobal = veGlobal_;
@@ -503,10 +515,15 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // Transfer veMoca tokens from current delegate to new delegate
             _transfer(lock.delegate, newDelegate, lockVeBalance.bias);
 
+
             // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
             // note: delegated veBalance booked to nextEpochStart
             delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart] = _sub(delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart], lockVeBalance);
             delegatedAggregationHistory[msg.sender][newDelegate][nextEpochStart] = _add(delegatedAggregationHistory[msg.sender][newDelegate][nextEpochStart], lockVeBalance);
+
+            // NOTE: FIX: Reschedule user-delegate slope changes (cancel from old, add to new)
+            userDelegateSlopeChanges[msg.sender][lock.delegate][lock.expiry] -= lockVeBalance.slope;
+            userDelegateSlopeChanges[msg.sender][newDelegate][lock.expiry] += lockVeBalance.slope;
 
             // STORAGE: update lock
             lock.delegate = newDelegate;
@@ -568,11 +585,11 @@ contract VotingEscrowMoca is ERC20, Pausable {
         
         // delegate can be address(0)
         // lock must last for at least 2 Epochs: to meaningfully vote for the next epoch [we are sure] 
-        function _createLockFor(address user, uint128 expiry, uint128 mocaAmount, uint128 esMocaAmount, address delegate) internal returns (bytes32) {
+        function _createLockFor(address user, uint128 expiry, uint256 mocaAmount, uint128 esMocaAmount, address delegate) internal returns (bytes32) {
             require(user != address(0), Errors.InvalidUser());
             require(EpochMath.isValidEpochTime(expiry), Errors.InvalidExpiry());
 
-            // minimum total amount to avoid flooring to zero
+            // minimum total amount to avoid flooring to zero [mocaAmount == msg.value]
             uint256 totalAmount = mocaAmount + esMocaAmount;
             require(totalAmount >= Constants.MIN_LOCK_AMOUNT, Errors.InvalidAmount());
 
@@ -648,6 +665,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
             accountHistoryMapping[account][currentEpochStart] = veAccount;
             accountSlopeChangesMapping[account][expiry] += veIncoming.slope;
 
+            //NOTE: FIX
+            if (isDelegated) {
+                delegatedAggregationHistory[user][delegate][currentEpochStart] = _add(delegatedAggregationHistory[user][delegate][currentEpochStart], veIncoming);
+                userDelegateSlopeChanges[user][delegate][expiry] += veIncoming.slope;  // Schedule dslope
+            }
+
+
             // MINT: veMoca to account
             _mint(account, veIncoming.bias);
 
@@ -669,32 +693,32 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return bytes32(keccak256(abi.encode(user, block.timestamp, salt)));
         }
 
-        // does not update veGlobal into storage; calcs the latest veGlobal. updates lastUpdatedTimestamp, totalSupplyAt[]
+        // does not update veGlobal into storage; calcs the latest veGlobal. storage updates: lastUpdatedTimestamp & totalSupplyAt[]
         function _updateGlobal(DataTypes.VeBalance memory veGlobal_, uint256 lastUpdatedAt, uint256 currentEpochStart) internal returns (DataTypes.VeBalance memory) {       
-            // nothing to update: lastUpdate was within current epoch 
+            // veGlobal_ is up to date: lastUpdate was within current epoch
             if(lastUpdatedAt >= currentEpochStart) {
-                // no new epoch, no new checkpoint
-                return (veGlobal_); 
+                return (veGlobal_);  
             } 
 
-            // first time: no prior updates | set global lastUpdatedTimestamp
+            // FIRST TIME: no prior updates [global lastUpdatedTimestamp is set to currentEpochStart]
+            // Note: contract cannot be deployed at T=0; and its not possible for there to be any updates at T=0.
             if(lastUpdatedAt == 0) {
-                lastUpdatedTimestamp = currentEpochStart;   // move forward the anchor point to skip empty epochs
+                lastUpdatedTimestamp = currentEpochStart;   // move forward the anchor point to skip prior empty epochs
                 return veGlobal_;
             }
 
-            // there are updates to be done: update global veBalance
+            // UPDATES REQUIRED: update global veBalance to current epoch
             while (lastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
                 lastUpdatedAt += EpochMath.EPOCH_DURATION;                  
 
                 // apply scheduled slope reductions and handle decay for expiring locks
                 veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
-                // after removing expired locks, calc. and book current ve supply for the epoch
-                totalSupplyAt[lastUpdatedAt] = _getValueAt(veGlobal_, lastUpdatedAt);
+                // after removing expired locks, calc. and book current ve supply for the epoch 
+                totalSupplyAt[lastUpdatedAt] = _getValueAt(veGlobal_, lastUpdatedAt);           // STORAGE: updates totalSupplyAt[]
             }
 
-            // set final lastUpdatedTimestamp
+            // STORAGE: update global lastUpdatedTimestamp
             lastUpdatedTimestamp = currentEpochStart;
 
             return (veGlobal_);
@@ -733,43 +757,45 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             // get account's lastUpdatedTimestamp: {user | delegate}
             uint256 accountLastUpdatedAt = accountLastUpdatedMapping[account];
+            // LOAD: account's previous veBalance
+            DataTypes.VeBalance memory veAccount = accountHistoryMapping[account][accountLastUpdatedAt];      // either its empty struct or the previous veBalance
 
-            // init empty veBalance
-            DataTypes.VeBalance memory veAccount;
+            // RETURN: if both global and account are up to date [no updates required]
+            if (accountLastUpdatedAt >= currentEpochStart){
+                return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
+            }
 
-            // Check if account's first time: no previous locks created. If so, only update global
+
+            // ACCOUNT'S FIRST TIME: no previous locks created: update global & set account's lastUpdatedTimestamp [global lastUpdatedTimestamp is set to currentEpochStart]
+            // Note: contract cannot be deployed at T=0; and its not possible for a user to create a lock at T=0.
             if (accountLastUpdatedAt == 0) {
-                // User has 0 balance at epoch 0: only update global [no previous locks confirmed]
-                if(accountHistoryMapping[account][0].bias == 0){
-                    
-                    // update global: may or may not have updates [STORAGE: updates lastUpdatedTimestamp]
-                    veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
-                    return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
-                }
+
+                // set account's lastUpdatedTimestamp
+                accountLastUpdatedMapping[account] = currentEpochStart;
+                //accountHistoryMapping[account][currentEpochStart] = veAccount;  // DataTypes.VeBalance(0, 0)
+
+                // update global: may or may not have updates [STORAGE: updates global lastUpdatedTimestamp]
+                veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
+
+                return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
             }
                     
-            // LOAD: account's previous veBalance
-            veAccount = accountHistoryMapping[account][accountLastUpdatedAt];
 
-            // RETURN: if both global and account are up to date
-            if (accountLastUpdatedAt >= currentEpochStart)
-                return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
-
-            // Updating needed: global and account veBalance to current epoch
+            // UPDATES REQUIRED: update global & account veBalance to current epoch
             while (accountLastUpdatedAt < currentEpochStart) {
                 // advance 1 epoch
-                unchecked { accountLastUpdatedAt += EpochMath.EPOCH_DURATION; }
+                accountLastUpdatedAt += EpochMath.EPOCH_DURATION;       // accountLastUpdatedAt will be <= global lastUpdatedTimestamp [so we use that as the counter]
 
-                // --- Update global: if required ---
+                // --- UPDATE GLOBAL: if required ---
                 if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
                     
                     // subtract decay for this epoch && remove any scheduled slope changes from expiring locks
                     veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
                     // book ve state for the new epoch
-                    totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
+                    totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);                 // STORAGE: updates totalSupplyAt[]
                 }
                 
-                // Update account: apply scheduled slope reductions & decay for this epoch | cumulative of account's expired locks
+                // UPDATE ACCOUNT: apply scheduled slope reductions & decay for this epoch | cumulative of account's expired locks
                 uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];    
                 veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
                 
@@ -794,7 +820,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
             mapping(address => mapping(uint256 => DataTypes.VeBalance)) storage accountHistoryMapping,
             mapping(address => mapping(uint256 => uint256)) storage accountSlopeChangesMapping
-
             ) internal returns (DataTypes.VeBalance memory) {
 
             // convert old and new lock to veBalance
@@ -804,14 +829,46 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // get delta btw veBalance of old and new lock
             DataTypes.VeBalance memory increaseInVeBalance = _sub(newVeBalance, oldVeBalance);
 
-            // STORAGE: update global
+            // STORAGE: update global + account [user or delegated]
             veGlobal = _add(veGlobal_, increaseInVeBalance);
-            slopeChanges[newLock.expiry] += increaseInVeBalance.slope;
-
-            // STORAGE: update account
             veAccount = _add(veAccount, increaseInVeBalance);
             accountHistoryMapping[account][currentEpochStart] = veAccount;
-            accountSlopeChangesMapping[account][newLock.expiry] += increaseInVeBalance.slope;
+
+            if(newLock.expiry != oldLock.expiry) {
+                // SCENARIO: increaseDuration(): new expiry is different from old expiry
+                slopeChanges[oldLock.expiry] -= oldVeBalance.slope;
+                slopeChanges[newLock.expiry] += newVeBalance.slope;
+                
+                accountSlopeChangesMapping[account][oldLock.expiry] -= oldVeBalance.slope;
+                accountSlopeChangesMapping[account][newLock.expiry] += newVeBalance.slope;
+            } else {
+                // SCENARIO: increaseAmount(): expiry is the same
+                slopeChanges[newLock.expiry] += increaseInVeBalance.slope;
+                accountSlopeChangesMapping[account][newLock.expiry] += increaseInVeBalance.slope;
+            }
+
+            // NOTE: Fix: If delegated, update delegatedAggregationHistory + userDelegateSlopeChanges
+            if (oldLock.delegate != address(0)) {
+                
+                // 1. Increment aggregated veBalance by delta
+                DataTypes.VeBalance storage agg = delegatedAggregationHistory[msg.sender][oldLock.delegate][currentEpochStart];
+                agg.bias += increaseInVeBalance.bias;
+                agg.slope += increaseInVeBalance.slope;
+            
+                // 2. Adjust Scheduled Slopes for Delegation context (userDelegateSlopeChanges)
+                if (newLock.expiry != oldLock.expiry) {
+                    // SCENARIO: increaseDuration(): new expiry is different from old expiry
+                    // Cancel the original slope from the old expiry time
+                    userDelegateSlopeChanges[msg.sender][oldLock.delegate][oldLock.expiry] -= oldVeBalance.slope;
+                    // Schedule the *new* (same value, new expiry) slope at the new expiry time
+                    userDelegateSlopeChanges[msg.sender][oldLock.delegate][newLock.expiry] += newVeBalance.slope;
+
+                } else {
+                    // SCENARIO: increaseAmount(): expiry is the same
+                    // Only schedule the *increase in slope* (delta) at the existing expiry time
+                    userDelegateSlopeChanges[msg.sender][oldLock.delegate][newLock.expiry] += increaseInVeBalance.slope;
+                }
+            }
 
             // mint the delta (difference between old and new veBalance)
             _mint(account, newVeBalance.bias - oldVeBalance.bias);
@@ -858,13 +915,22 @@ contract VotingEscrowMoca is ERC20, Pausable {
             return res;
         }
 
-        // forward-looking; not historical search
+        /**
+         * @notice Calculates the decayed voting power from an absolute veBalance at a given timestamp.
+         * @dev Assumes absolute veBalance model: bias = slope * expiry (effective end timestamp).
+         *      Voting power = bias - slope * timestamp.
+         *      Saturates to 0 if fully decayed (timestamp >= expiry) to prevent underflow/reversion.
+         * @param a The veBalance struct {uint128 bias, uint128 slope}.
+         * @param timestamp The absolute timestamp for decay calculation.
+         * @return The decayed voting power 
+         */
         function _getValueAt(DataTypes.VeBalance memory a, uint256 timestamp) internal pure returns (uint256) {
-            if(a.bias < (a.slope * timestamp)) {
-                return 0;
-            }
+            uint256 decay = a.slope * timestamp;
+
+            if(a.bias <= decay) return 0;
+
             // offset inception inflation
-            return a.bias - (a.slope * timestamp); 
+            return a.bias - decay;
         }
 
         // calc. veBalance{bias,slope} from lock; based on expiry time | inception offset is handled by balanceOf() queries
@@ -880,7 +946,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         function _pushCheckpoint(DataTypes.Checkpoint[] storage lockHistory_, DataTypes.VeBalance memory veBalance, uint128 currentEpochStart) internal {
             uint256 length = lockHistory_.length;
 
-            // if last checkpoint is in the same epoch as incoming; overwrite
+            // if last checkpoint is in the same epoch as incoming; overwrite [veBalance should be updated outside this function]
             if(length > 0 && lockHistory_[length - 1].lastUpdatedAt == currentEpochStart) {
                 lockHistory_[length - 1].veBalance = veBalance;
             } else {
@@ -888,6 +954,70 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 // forge-lint: disable-next-line(unsafe-typecast)
                 lockHistory_.push(DataTypes.Checkpoint(veBalance, currentEpochStart));
             }
+        }
+
+        /// @dev Finds the largest eTime <= targetETime with a valid VeBalance in the history mapping.
+        /// @return The found eTime (0 if none).
+        function _findClosestPastETime(
+            mapping(uint256 => DataTypes.VeBalance) storage accountHistory,
+            uint256 targetETime
+        ) internal view returns (uint256) {
+            uint256 epochDuration = EpochMath.EPOCH_DURATION;
+            uint256 targetEpoch = targetETime / epochDuration;
+
+            uint256 low;
+            uint256 high = targetEpoch;
+            uint256 latestEpoch;
+
+            while (low <= high) {
+                uint256 mid = low + (high - low) / 2;
+                uint256 midETime = mid * epochDuration;
+
+                if (accountHistory[midETime].bias > 0 || accountHistory[midETime].slope > 0) { 
+                    latestEpoch = mid;
+                    low = mid + 1;  // Search for a later one.
+                } else {
+                    if (mid == 0) break;
+                    high = mid - 1;  // Search earlier.
+                }
+            }
+
+            return latestEpoch * epochDuration;
+        }
+
+        /**
+         * @dev Simulates forward application of slope changes in view for absolute bias systems.
+         *      Loops over potential eTimes (multiples of EPOCH_DURATION) and applies adjustments if any.
+         *      Assumes eTimes are aligned to multiples of EPOCH_DURATION.
+         * @param ve The starting VeBalance (will be modified in memory).
+         * @param startETime The starting eTime (exclusive for changes).
+         * @param targetTime The target timestamp to forward to (inclusive for changes).
+         * @param accountSlopeChanges The slopeChanges mapping to read from.
+         * @return The updated VeBalance after simulated forwards.
+         */
+        function _viewForwardAbsolute(
+            DataTypes.VeBalance memory ve,
+            uint256 startETime,
+            uint256 targetTime,
+            mapping(uint256 => uint256) storage accountSlopeChanges
+        ) internal view returns (DataTypes.VeBalance memory) {
+            
+            // calc. next eTime
+            uint256 epochDuration = EpochMath.EPOCH_DURATION;
+            uint256 nextETime = startETime + epochDuration;      // next eTime is always a multiple of EPOCH_DURATION
+
+            // loop over potential eTimes and apply adjustments, if any
+            while (nextETime <= targetTime) {
+                // get the slope change for the next eTime
+                uint256 dslope = accountSlopeChanges[nextETime];
+                if (dslope > 0) {
+                    ve.bias -= uint128(dslope * nextETime);  // Absolute adjustment (cast to uint128 assuming no overflow).
+                    ve.slope -= uint128(dslope);
+                }
+                nextETime += epochDuration;
+            }
+
+            return ve;
         }
 
 //-------------------------------Modifiers---------------------------------------------------------------
@@ -901,6 +1031,11 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // not using internal function: only 1 occurrence of this modifier
         modifier onlyCronJobRole() {
             require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
+            _;
+        }
+
+        modifier onlyVotingEscrowMocaAdmin(){
+            require(accessController.isVotingEscrowMocaAdmin(msg.sender), Errors.OnlyCallableByVotingEscrowMocaAdmin());
             _;
         }
 
@@ -1082,8 +1217,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // Get the appropriate last updated timestamp
             uint256 accountLastUpdatedAt = accountLastUpdatedTimestamp[account];
             
-            // account has no locks created: return empty veBalance
-            //if(accountLastUpdatedAt == 0) return veBalance; --> removed: what if user creates a lock at T0?
+            // account has no locks created: return empty veBalance [contract deployed after T0: nothing can be done at T0]
+            if(accountLastUpdatedAt == 0) return veBalance;
 
             // load account's previous veBalance from history
             veBalance = accountHistory[account][accountLastUpdatedAt];
@@ -1117,7 +1252,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @return totalSupply_ The up-to-date total supply of veTokens at the current block timestamp.
          */
         function totalSupply() public view override returns (uint256) {
-            if (isFrozen == 1) return 0;
+            require(isFrozen == 0, Errors.IsFrozen());  
 
             // update global veBalance to current epoch
             DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, EpochMath.getCurrentEpochStart());
@@ -1134,7 +1269,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @return The projected total supply of veTokens at the specified future timestamp.
          */
         function totalSupplyInFuture(uint128 time) public view returns (uint256) {
-            if (isFrozen == 1) return 0;
+            require(isFrozen == 0, Errors.IsFrozen());  
             require(time > block.timestamp, "Timestamp is in the past");
 
             DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, EpochMath.getEpochStartForTimestamp(time));
@@ -1152,7 +1287,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
          */
         function balanceOf(address user) public view override returns (uint256) {
             require(user != address(0), Errors.InvalidAddress());
-            if (isFrozen == 1) return 0;
+            require(isFrozen == 0, Errors.IsFrozen());  
+
             return balanceOf(user, false);  // Only personal voting power (non-delegated locks)
         }
 
@@ -1165,72 +1301,85 @@ contract VotingEscrowMoca is ERC20, Pausable {
          */
         function balanceOf(address user, bool forDelegated) public view returns (uint256) {
             require(user != address(0), Errors.InvalidAddress());
-            if (isFrozen == 1) return 0;
+            require(isFrozen == 0, Errors.IsFrozen()); 
+
             DataTypes.VeBalance memory veBalance = _viewAccount(user, forDelegated);
             return _getValueAt(veBalance, uint128(block.timestamp));
         }
 
-        // note: needed?
-        /**
-         * @notice Historical search of a user's voting escrowed balance (veBalance) at a specific timestamp.
-         * @dev veBalances are checkpointed per epoch. This function locates the closest epoch boundary to the input timestamp,
-         *      then interpolates the veBalance from that checkpoint to the exact timestamp.
-         *      Returns zero if the contract is frozen.
-         * @param user The address of the user whose veBalance is being queried.
-         * @param time The historical timestamp for which the veBalance is requested.
-         * @param forDelegated If true: delegated veBalance; if false: personal veBalance
-         * @return The user's veBalance at the specified timestamp.
-         */
-        function balanceOfAt(address user, uint256 time, bool forDelegated) external view returns (uint256) {
-            require(user != address(0), Errors.InvalidAddress());
-            if (isFrozen == 1) return 0;
-            require(time <= block.timestamp, Errors.InvalidTimestamp());
-
-            // find the closest epoch boundary (eTime) that is not larger than the input time
-            uint256 eTime = EpochMath.getEpochStartForTimestamp(time);
-            
-            // get the appropriate veBalance at that epoch boundary
-            DataTypes.VeBalance memory veBalance = forDelegated ? delegateHistory[user][eTime] : userHistory[user][eTime];
-            
-            // calc. voting power at the exact timestamp using the veBalance from the closest past epoch boundary
-            return _getValueAt(veBalance, time);
-        }
-
+        // note: used by VotingController for vote()
         /**
          * @notice Returns the user's voting power (veBalance) at the end of a specific epoch.
          * @dev Useful for historical queries and reward calculations. Returns zero if the contract is frozen.
-         *      Returns zero if the contract is frozen.
          * @param user The address of the user whose veBalance is being queried.
          * @param epoch The epoch number for which the veBalance is requested.
          * @param forDelegated If true: returns delegated veBalance; if false: returns personal veBalance.
          * @return The user's veBalance at the end of the specified epoch.
          */
         function balanceAtEpochEnd(address user, uint256 epoch, bool forDelegated) external view returns (uint256) {
+            require(isFrozen == 0, Errors.IsFrozen());
             require(user != address(0), Errors.InvalidAddress());
-            if (isFrozen == 1) return 0;
+
+            uint256 epochStartTime = EpochMath.getEpochStartTimestamp(epoch);
             uint256 epochEndTime = EpochMath.getEpochEndTimestamp(epoch);
-            
-            // get the appropriate veBalance at that epoch boundary | note: is epochEndTime inclusive?
-            DataTypes.VeBalance memory veBalance = forDelegated ? delegateHistory[user][epochEndTime] : userHistory[user][epochEndTime];
-            
-            // calc. voting power at the exact timestamp using the veBalance from the closest past epoch boundary
+
+            mapping(uint256 => DataTypes.VeBalance) storage accountHistory = forDelegated ? delegateHistory[user] : userHistory[user];
+
+            // Find the largest eTime <= epochStartTime with a valid checkpoint.
+            uint256 foundETime = _findClosestPastETime(accountHistory, epochStartTime);
+
+            // If no checkpoint found (foundETime == 0 and slot is unset), return 0.
+            if (foundETime == 0 && accountHistory[0].bias == 0) return 0;
+
+            // Get the VeBalance at the found eTime.
+            DataTypes.VeBalance memory veBalance = accountHistory[foundETime];
+
+            // Choose the appropriate slopeChanges mapping.
+            mapping(uint256 => uint256) storage accountSlopeChanges = forDelegated ? delegateSlopeChanges[user] : userSlopeChanges[user];
+
+            // Simulate forward application of slope changes from foundETime (exclusive) to epochEndTime (inclusive).
+            veBalance = _viewForwardAbsolute(veBalance, foundETime, epochEndTime, accountSlopeChanges);
+
+            // Calculate the value at epochEndTime (assuming _getValueAt is bias - slope * time).
             return _getValueAt(veBalance, epochEndTime);
         }
 
+        //Note: used by VotingController for claimRewardsFromDelegate() | returns userVotesAllocatedToDelegateForEpoch
         /**
          * @notice Retrieves the delegated veBalance for a user and delegate at the end of a specific epoch.
          * @dev Used by VotingController.claimRewardsFromDelegate() to determine the user's delegated voting power for reward calculations.
+         *      Uses binary search over possible epoch starts to find the closest prior checkpoint.
+         *      Then simulates forward application of any scheduled slope changes up to the epoch end
+         *      Returns the decayed value at epochEndTime (bias - slope * epochEndTime).
          * @param user The address of the user whose delegated veBalance is being queried.
          * @param delegate The address of the delegate to whom voting power was delegated.
          * @param epoch The epoch number for which the delegated veBalance is requested.
-         * @return The delegated veBalance (bias) at the end of the specified epoch.
-         */
+         * @return The delegated veBalance value at the end of the specified epoch.
+        */
         function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint128) {
             require(user != address(0), Errors.InvalidAddress());
             require(delegate != address(0), Errors.InvalidAddress());
-            if (isFrozen == 1) return 0;
-            uint256 epochEndTime = EpochMath.getEpochEndForTimestamp(epoch);
-            return delegatedAggregationHistory[user][delegate][epochEndTime].bias;
+            require(isFrozen == 0, Errors.IsFrozen());  
+
+            uint256 epochStartTime = EpochMath.getEpochStartTimestamp(epoch);
+            uint256 epochEndTime = EpochMath.getEpochEndTimestamp(epoch);
+
+            mapping(uint256 => DataTypes.VeBalance) storage accountHistory = delegatedAggregationHistory[user][delegate];
+
+            // Find the largest eTime <= epochStartTime with a valid checkpoint.
+            uint256 foundETime = _findClosestPastETime(accountHistory, epochStartTime);
+
+            // If no checkpoint found (foundETime == 0 and slot is unset), return 0.
+            if (foundETime == 0 && accountHistory[0].bias == 0) return 0;
+
+            // Get the VeBalance at the found eTime.
+            DataTypes.VeBalance memory veBalance = accountHistory[foundETime];
+
+            // Simulate forward application of slope changes from foundETime (exclusive) to epochEndTime (inclusive).
+            veBalance = _viewForwardAbsolute(veBalance, foundETime, epochEndTime, userDelegateSlopeChanges[user][delegate]);
+
+            // Calculate the value at epochEndTime (assuming _getValueAt is bias - slope * time).
+            return _getValueAt(veBalance, epochEndTime);
         }
 
 

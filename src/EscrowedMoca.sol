@@ -31,7 +31,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
 
     // Contracts
     IAccessController public immutable accessController;
-    address public immutable wMoca;
+    address public immutable WMOCA;
 
     uint256 public TOTAL_MOCA_PENDING_REDEMPTION;         // tracks the total MOCA balance pending redemption 
 
@@ -79,7 +79,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
 
         // wrapped moca 
         require(wMoca_ != address(0), Errors.InvalidAddress());
-        wMoca = wMoca_;
+        WMOCA = wMoca_;
 
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
@@ -190,7 +190,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
             emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp);
 
             // Transfer Moca to user [wraps if transfer fails within gas limit]
-            _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, mocaReceivable, MOCA_TRANSFER_GAS_LIMIT);
+            _transferMocaAndWrapIfFailWithGasLimit(WMOCA, msg.sender, mocaReceivable, MOCA_TRANSFER_GAS_LIMIT);
 
         } else {    // 6.1 Schedule redemption [user must claim later]
 
@@ -245,7 +245,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         emit Events.RedemptionsClaimed(msg.sender, redemptionTimestamps, totalClaimable);
 
         // Transfer Moca to user [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
+        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, msg.sender, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
     }
 
 
@@ -310,7 +310,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         CLAIMED_PENALTY_FROM_TREASURY = ACCRUED_PENALTY_TO_TREASURY;
 
         // transfer moca [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, esMocaTreasury, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
+        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, esMocaTreasury, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.PenaltyClaimed(esMocaTreasury, totalClaimable);
     }
@@ -330,7 +330,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         _burn(msg.sender, amount);
 
         // transfer moca [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, msg.sender, amount, MOCA_TRANSFER_GAS_LIMIT);
+        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, msg.sender, amount, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.EscrowedMocaReleased(msg.sender, amount);
     }
@@ -579,7 +579,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
             totalMocaAmount += userTotalMoca;
 
             // transfer moca [wraps if transfer fails within gas limit]
-            _transferMocaAndWrapIfFailWithGasLimit(wMoca, user, userTotalMoca, MOCA_TRANSFER_GAS_LIMIT);
+            _transferMocaAndWrapIfFailWithGasLimit(WMOCA, user, userTotalMoca, MOCA_TRANSFER_GAS_LIMIT);
         }
 
         emit Events.EmergencyExitEscrowedMoca(users, totalMocaAmount);
@@ -607,7 +607,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         CLAIMED_PENALTY_FROM_TREASURY = ACCRUED_PENALTY_TO_TREASURY;
         
         // transfer moca [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, esMocaTreasury, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
+        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, esMocaTreasury, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.EmergencyExitPenalties(esMocaTreasury, totalClaimable);
     }

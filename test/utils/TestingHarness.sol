@@ -8,11 +8,12 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 // import all contracts
 import {AccessController} from "../../src/AccessController.sol";
-//import {PaymentsController} from "../../src/PaymentsController.sol";
-//import {VotingController} from "../../src/VotingController.sol";
-//import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
-import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
 import {IssuerStakingController} from "../../src/IssuerStakingController.sol";
+//import {PaymentsController} from "../../src/PaymentsController.sol";
+import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
+import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
+//import {VotingController} from "../../src/VotingController.sol";
+
 
 // import all libraries
 import {DataTypes} from "../../src/libraries/DataTypes.sol";
@@ -37,10 +38,10 @@ abstract contract TestingHarness is Test {
     
     // actual contracts
     AccessController public accessController;
-    //PaymentsController public paymentsController;
     IssuerStakingController public issuerStakingController;
+    //PaymentsController public paymentsController;
     EscrowedMoca public esMoca;
-    //VotingEscrowMoca public veMoca;
+    VotingEscrowMoca public veMoca;
     //VotingController public votingController;
     
     // mocks
@@ -168,11 +169,11 @@ abstract contract TestingHarness is Test {
 
 
         // 7. Deploy VotingEscrowMoca
-        //veMoca = new VotingEscrowMoca(address(accessController));
+        veMoca = new VotingEscrowMoca(address(accessController), address(esMoca), address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
         
-        // 8. Whitelist VotingEscrowMoca in EscrowedMoca for transfers
-        //vm.prank(escrowedMocaAdmin);
-        //esMoca.setWhitelistStatus(address(veMoca), true);
+        //7.1: Whitelist VotingEscrowMoca in EscrowedMoca for transfers
+        vm.prank(escrowedMocaAdmin);
+        esMoca.setWhitelistStatus(address(veMoca), true);
 
         
         // ---- Misc. ---------

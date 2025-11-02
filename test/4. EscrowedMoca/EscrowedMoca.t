@@ -16,7 +16,7 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
 
     function test_Constructor() public {
         assertEq(address(esMoca.accessController()), address(accessController), "accessController not set correctly");
-        assertEq(address(esMoca.wMoca()), address(mockWMoca), "wMoca not set correctly");
+        assertEq(address(esMoca.WMOCA()), address(mockWMoca), "WMOCA not set correctly");
         assertEq(esMoca.MOCA_TRANSFER_GAS_LIMIT(), 2300, "MOCA_TRANSFER_GAS_LIMIT not set correctly");
         assertEq(esMoca.VOTERS_PENALTY_PCT(), 1000, "VOTERS_PENALTY_PCT not set correctly");
         
