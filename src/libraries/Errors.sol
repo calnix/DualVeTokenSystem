@@ -51,6 +51,7 @@ library Errors {
     error InvalidLockId();
     error InvalidLockState();
     error InvalidOwner();
+    error LockAlreadyDelegated();
     error InvalidEpochTime();
     error InvalidDelegate();
     error LockExpiresTooSoon();

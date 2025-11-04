@@ -69,8 +69,6 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
         mapping(bytes32 lockId => DataTypes.Lock lock) public locks;
         // Checkpoints are added upon every state transition; not by epoch. use binary search to find the checkpoint for any eTime
         mapping(bytes32 lockId => DataTypes.Checkpoint[] checkpoints) public lockHistory;
-        // mapping to track forward-booked epochs [for locks that were loaned out via delegation related functions]
-        mapping(bytes32 lockId => mapping(uint256 eTime => bool hasForwardBooking)) public lockHasForwardBooking;      // referred in increaseAmount, increaseDuration. to update forward-booked point
 
         // scheduled global slope changes
         mapping(uint256 eTime => uint256 slopeChange) public slopeChanges;
@@ -216,6 +214,9 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
             accountHistoryMapping[account][nextEpochStart] = forwardBooked;
         }
 
+        if (isDelegated) {
+            _bumpPairForwardBookedIfAny(oldLock.owner, oldLock.delegate, nextEpochStart, increaseInVeBalance);
+        }
 
         // emit event
         //emit Events.LockAmountIncreased(lockId, msg.sender, mocaToIncrease, esMocaToIncrease);
@@ -228,7 +229,8 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
             ESMOCA.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
         }
     }
-    
+
+
 
     /**
     * @notice Increases the duration of an existing lock.
@@ -298,6 +300,10 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
             accountHistoryMapping[account][nextEpochStart] = forwardBooked;
         }
 
+        if (isDelegated) {
+            _bumpPairForwardBookedIfAny(oldLock.owner, oldLock.delegate, nextEpochStart, increaseInVeBalance);
+        }
+
         // storage: update lock + checkpoint lock
         locks[lockId] = updatedLock;
         _pushCheckpoint(lockHistory[lockId], newVeBalance, uint128(currentEpochStart));        
@@ -312,7 +318,7 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
     * @dev Only the lock owner can call this function.
     * @param lockId The unique identifier of the lock to unlock.
     */
-    function unlock(bytes32 lockId) external payable whenNotPaused {
+    function unlock(bytes32 lockId) external whenNotPaused {
         DataTypes.Lock memory lock = locks[lockId];
 
         require(lock.lockId != bytes32(0), Errors.InvalidLockId());
@@ -332,13 +338,13 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
             ,
         ) = _updateAccountAndGlobal(account, isDelegated);
 
-        // STORAGE: update lock + book final checkpoint | note: book final checkpoint, since we do not delete the lock
-        lock.isUnlocked = true;    
-        locks[lockId] = lock;
-        _pushCheckpoint(lockHistory[lockId], veAccount, uint128(currentEpochStart));  
-
         // STORAGE: update global state
         veGlobal = veGlobal_;   
+
+
+        // STORAGE: update lock | push final checkpoint
+        lock.isUnlocked = true;    
+        _pushCheckpoint(lockHistory[lockId], _convertToVeBalance(lock), uint128(currentEpochStart));
 
         // STORAGE: decrement global totalLocked counters
         TOTAL_LOCKED_MOCA -= lock.moca;
@@ -350,9 +356,18 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
 
         emit Events.LockUnlocked(lockId, lock.owner, lock.moca, lock.esMoca);
 
+        // cache principals + delete from lock
+        uint256 cachedMoca = lock.moca;
+        uint256 cachedEsMoca = lock.esMoca;
+        delete lock.moca;
+        delete lock.esMoca;
+
+        // storage: update lock
+        locks[lockId] = lock;
+
         // return principals to lock.owner
-        if(lock.esMoca > 0) ESMOCA.safeTransfer(lock.owner, lock.esMoca);        
-        if(lock.moca > 0) _transferMocaAndWrapIfFailWithGasLimit(WMOCA, lock.owner, lock.moca, MOCA_TRANSFER_GAS_LIMIT);
+        if(cachedEsMoca > 0) ESMOCA.safeTransfer(lock.owner, cachedEsMoca);        
+        if(cachedMoca > 0) _transferMocaAndWrapIfFailWithGasLimit(WMOCA, lock.owner, cachedMoca, MOCA_TRANSFER_GAS_LIMIT);
     }
 
 //-------------------------------User Delegate functions-------------------------------------
@@ -382,9 +397,10 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
 
         DataTypes.Lock memory lock = locks[lockId];
         
-        // sanity check: lock
+        // sanity check lock: must exist, called by owner, must be undelegated
         require(lock.lockId != bytes32(0), Errors.InvalidLockId());
         require(lock.owner == msg.sender, Errors.InvalidOwner());
+        require(lock.delegate == address(0), Errors.LockAlreadyDelegated());
 
         // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]    
         _requireEligibleExpiry(lock.expiry);
@@ -461,6 +477,7 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
         // Update delegatedAggregationHistory to reflect that the user has delegated this lock's veBalance to the specified delegate for the next epoch.
         // This ensures the protocol can accurately account for the total veBalance a user has delegated to each delegate at every epoch, which is critical for correct rewards calculation.
         delegatedAggregationHistory[msg.sender][delegate][nextEpochStart] = _add(delegatedAggregationHistory[msg.sender][delegate][nextEpochStart], lockVeBalance);
+        userDelegateHasForwardBooking[msg.sender][delegate][nextEpochStart] = true;
 
         // Add the lock's slope to userDelegateSlopeChanges for this delegate; for _viewForwardAbsolute, to simulate the decay for user's delegated locks.
         userDelegateSlopeChanges[msg.sender][delegate][lock.expiry] += lockVeBalance.slope;
@@ -486,6 +503,9 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
         require(lock.lockId != bytes32(0), Errors.InvalidLockId());
         require(lock.delegate != address(0), Errors.InvalidDelegate());
         require(lock.isUnlocked == false, Errors.PrincipalsAlreadyReturned());
+
+        // lock must have at least 2 more epoch left, so that the user can vote in the next epoch [1 epoch for undelegation, 1 epoch for non-zero voting power]    
+        _requireEligibleExpiry(lock.expiry);
 
         
         //note: intentionally not enforced: delegates may have unregistered, so users must always be able to reclaim their locks
@@ -555,7 +575,8 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
         // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
         // note: delegated veBalance booked to nextEpochStart
         delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart] = _sub(delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart], lockVeBalance);
-        
+        userDelegateHasForwardBooking[msg.sender][lock.delegate][nextEpochStart] = true;
+
         // NOTE: FIX: Cancel scheduled dslope for this lock's expiry in user-delegate context
         userDelegateSlopeChanges[msg.sender][lock.delegate][lock.expiry] -= lockVeBalance.slope;
 
@@ -655,16 +676,18 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
         // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
         delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart] = _sub(delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart], lockVeBalance);
         delegatedAggregationHistory[msg.sender][newDelegate][nextEpochStart] = _add(delegatedAggregationHistory[msg.sender][newDelegate][nextEpochStart], lockVeBalance);
+        userDelegateHasForwardBooking[msg.sender][lock.delegate][nextEpochStart] = true;
+        userDelegateHasForwardBooking[msg.sender][newDelegate][nextEpochStart] = true;
 
         // NOTE: Reschedule user-delegate slope changes (cancel from old, add to new)
         userDelegateSlopeChanges[msg.sender][lock.delegate][lock.expiry] -= lockVeBalance.slope;
         userDelegateSlopeChanges[msg.sender][newDelegate][lock.expiry] += lockVeBalance.slope;
 
+        emit Events.LockDelegateSwitched(lockId, msg.sender, lock.delegate, newDelegate);
+
         // STORAGE: update lock
         lock.delegate = newDelegate;
-        locks[lockId] = lock;
-        
-        emit Events.LockDelegateSwitched(lockId, msg.sender, lock.delegate, newDelegate);
+        locks[lockId] = lock;        
     }
 
 
@@ -715,13 +738,12 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
 
 //-------------------------------Internal: Update functions----------------------------------------------       
 
-    // Note: earliest expiry from epoch N is start of N+2
     // must have at least 2 Epoch left to create lock: to meaningfully vote for the next epoch  
     // this is a result of VotingController.sol's forward-decay: benchmarking voting power to the end of the epoch     
     function _requireEligibleExpiry(uint256 expiry) internal view {
         // earliest expiry that yields >0 at end of next epoch (N+1) is start(N+3)
         uint256 minExpiry = EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 2);
-        require(expiry > minExpiry, Errors.LockExpiresTooSoon());
+        require(expiry >= minExpiry, Errors.LockExpiresTooSoon());
     }
 
 
@@ -1004,7 +1026,7 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
         if (oldLock.delegate != address(0)) {
             
             // 1. Increment aggregated veBalance by delta
-            DataTypes.VeBalance storage agg = delegatedAggregationHistory[msg.sender][oldLock.delegate][currentEpochStart];
+            DataTypes.VeBalance storage agg = delegatedAggregationHistory[oldLock.owner][oldLock.delegate][currentEpochStart];
             agg.bias += increaseInVeBalance.bias;
             agg.slope += increaseInVeBalance.slope;
         
@@ -1012,14 +1034,14 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
             if (newLock.expiry != oldLock.expiry) {
                 // SCENARIO: increaseDuration(): new expiry is different from old expiry
                 // Cancel the original slope from the old expiry time
-                userDelegateSlopeChanges[msg.sender][oldLock.delegate][oldLock.expiry] -= oldVeBalance.slope;
+                userDelegateSlopeChanges[oldLock.owner][oldLock.delegate][oldLock.expiry] -= oldVeBalance.slope;
                 // Schedule the *new* (same value, new expiry) slope at the new expiry time
-                userDelegateSlopeChanges[msg.sender][oldLock.delegate][newLock.expiry] += newVeBalance.slope;
+                userDelegateSlopeChanges[oldLock.owner][oldLock.delegate][newLock.expiry] += newVeBalance.slope;
 
             } else {
                 // SCENARIO: increaseAmount(): expiry is the same
                 // Only schedule the *increase in slope* (delta) at the existing expiry time
-                userDelegateSlopeChanges[msg.sender][oldLock.delegate][newLock.expiry] += increaseInVeBalance.slope;
+                userDelegateSlopeChanges[oldLock.owner][oldLock.delegate][newLock.expiry] += increaseInVeBalance.slope;
             }
         }
 
@@ -1032,7 +1054,22 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
 
 //-------------------------------Internal: delegate functions--------------------------------------------
 
-
+    function _bumpPairForwardBookedIfAny(
+        address user,
+        address delegate,
+        uint256 nextEpochStart,
+        DataTypes.VeBalance memory dVe
+    ) internal {
+        
+        if (userDelegateHasForwardBooking[user][delegate][nextEpochStart]) {
+            DataTypes.VeBalance storage fwd = delegatedAggregationHistory[user][delegate][nextEpochStart];
+            // For amount increase: dVe has bias + slope deltas
+            // For pure duration increase: dVe.slope == 0, dVe.bias > 0
+            fwd.bias  += dVe.bias;
+            fwd.slope += dVe.slope;
+            // flag stays true; it will be consumed during update
+        }
+    }
 
 //-------------------------------Internal: library functions--------------------------------------------
 
@@ -1120,27 +1157,36 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
          * @param targetETime The target eTime to search for.
          * @return The found eTime (0 if none).
          */
-        function _findClosestPastETime(mapping(uint256 => DataTypes.VeBalance) storage accountHistory, uint256 targetETime) internal view returns (uint256) {
+        function _findClosestPastETime(
+            mapping(uint256 => bool) storage accountHasForwardBooking,
+            uint256 targetETime
+        ) internal view returns (uint256) {
+
             uint256 epochDuration = EpochMath.EPOCH_DURATION;
             uint256 targetEpoch = targetETime / epochDuration;
 
             uint256 low;
             uint256 high = targetEpoch;
             uint256 latestEpoch;
+            bool foundAny;
+
 
             while (low <= high) {
                 uint256 mid = low + (high - low) / 2;
                 uint256 midETime = mid * epochDuration;
 
-                if (accountHistory[midETime].bias > 0 || accountHistory[midETime].slope > 0) { 
-                    latestEpoch = mid;
-                    low = mid + 1;  // Search for a later one.
+                // "Present" if there is a non-zero checkpoint OR an explicit forward-booked checkpoint (which may be zero)
+                if (accountHasForwardBooking[midETime]) { 
+                    foundAny = true;
+                    latestEpoch = mid;     // mid is valid; try to find a later one
+                    low = mid + 1;         // Search for a later one.
                 } else {
                     if (mid == 0) break;
-                    high = mid - 1;  // Search earlier.
+                    high = mid - 1;  // Search earlier one.
                 }
             }
 
+            if (!foundAny) return 0;       // no forward-booked checkpoint at or before target
             return latestEpoch * epochDuration;
         }
 
@@ -1148,19 +1194,19 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
          * @dev Simulates forward application of slope changes in view for absolute bias systems.
          *      Loops over potential eTimes (multiples of EPOCH_DURATION) and applies adjustments if any.
          *      Assumes eTimes are aligned to multiples of EPOCH_DURATION.
-         * @param ve The starting VeBalance (will be modified in memory).
+         * @param veBalance The starting VeBalance (will be modified in memory).
          * @param lastUpdatedAt The starting eTime (exclusive for changes).
          * @param targetTime The target timestamp to forward to (inclusive for changes).
          * @param accountSlopeChanges The slopeChanges mapping to read from.
          * @return The updated VeBalance after simulated forwards.
          */
-        function _viewForwardAbsoluteWithForwardBookings(DataTypes.VeBalance memory ve, uint256 lastUpdatedAt, uint256 targetTime,
+        function _viewForwardAbsoluteWithForwardBookings(DataTypes.VeBalance memory veBalance, uint256 lastUpdatedAt, uint256 targetTime,
             mapping(uint256 => uint256) storage accountSlopeChanges,
             mapping(uint256 => DataTypes.VeBalance) storage accountHistory,
             mapping(uint256 => bool) storage accountHasForwardBooking
         ) internal view returns (DataTypes.VeBalance memory) {
 
-            if (lastUpdatedAt >= targetTime) return ve;
+            if (lastUpdatedAt >= targetTime) return veBalance;
             
             // since we want balance at epoch end, <= instead of <
             while (lastUpdatedAt <= targetTime) {
@@ -1175,7 +1221,7 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
                     
                     // decrement decay for this epoch & apply scheduled slope changes
                     uint256 dslope = accountSlopeChanges[lastUpdatedAt];
-                    ve = _subtractExpired(ve, dslope, lastUpdatedAt);
+                    veBalance = _subtractExpired(veBalance, dslope, lastUpdatedAt);
                 }
             }
             return veBalance;
@@ -1294,7 +1340,7 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
             uint256 veMocaToBurn = uint256(_convertToVeBalance(lock).bias);
 
             // Burn veMOCA tokens
-            uint256 actualBalance = balanceOf(veHolder);
+            uint256 actualBalance = ERC20.balanceOf(veHolder);
             uint256 burnAmount = veMocaToBurn > actualBalance ? actualBalance : veMocaToBurn;
             if (burnAmount > 0) _burn(veHolder, burnAmount);                
             // Note: If burnAmount < veMocaToBurn, we accept the discrepancy
@@ -1496,7 +1542,7 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
               = forDelegated ? (delegateHistory[user], delegateSlopeChanges[user], delegateHasForwardBooking[user]) : (userHistory[user], userSlopeChanges[user], userHasForwardBooking[user]);
             
             // Find the largest eTime <= epochStartTime with a valid checkpoint.
-            uint256 foundETime = _findClosestPastETime(accountHistory, epochStartTime);
+            uint256 foundETime = _findClosestPastETime(accountHasForwardBooking, epochStartTime);
             if (foundETime == 0 && accountHistory[0].bias == 0) return 0;               // If no checkpoint found (foundETime == 0 and slot is unset), return 0.
 
             // Get the VeBalance at the found eTime.
@@ -1542,7 +1588,7 @@ contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
             mapping(uint256 => bool) storage accountHasForwardBooking = userDelegateHasForwardBooking[user][delegate];
 
             // Find the largest eTime <= epochStartTime with a valid checkpoint.
-            uint256 foundETime = _findClosestPastETime(accountHistory, epochStartTime);
+            uint256 foundETime = _findClosestPastETime(accountHasForwardBooking, epochStartTime);
             if (foundETime == 0 && accountHistory[0].bias == 0) return 0;               // If no checkpoint found (foundETime == 0 and slot is unset), return 0.
     
             // Get the VeBalance at the found eTime.
