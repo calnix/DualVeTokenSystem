@@ -15,7 +15,6 @@ import {Constants} from "./libraries/Constants.sol";
 
 // interfaces
 import {IAccessController} from "./interfaces/IAccessController.sol";
-import {IVotingController} from "./interfaces/IVotingController.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";
@@ -36,12 +35,12 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
     - make sure that the timestamp is correct: start/end of epoch; inclusive, exclusive (<= or <)
  */
 
-contract VotingEscrowMoca is ERC20, Pausable {
+contract VotingEscrowMoca is ERC20, LowLevelWMoca, Pausable {
     using SafeERC20 for IERC20;
 
     // Contracts
     IAccessController public immutable ACCESS_CONTROLLER;
-    IVotingController public immutable VOTING_CONTROLLER;
+    address public immutable VOTING_CONTROLLER;
     address public immutable WMOCA;
     IERC20 public immutable ESMOCA;
 
@@ -106,13 +105,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
     constructor(address accessController_, address votingController_, address esMoca_, address wMoca_, uint256 mocaTransferGasLimit) ERC20("veMoca", "veMOCA") {
 
-        // check: access controller is set [Treasury should be non-zero]
+        // check: access controller is set [not frozen]
         ACCESS_CONTROLLER = IAccessController(accessController_);
-        require(ACCESS_CONTROLLER.TREASURY() != address(0), Errors.InvalidAddress());
+        require(ACCESS_CONTROLLER.isFrozen() == 0, Errors.InvalidAddress());
 
-        // check: voting controller is set [not frozen]
-        VOTING_CONTROLLER = IVotingController(votingController_);
-        require(VOTING_CONTROLLER.isFrozen() == 0, Errors.InvalidAddress());
+        // check: voting controller is set
+        VOTING_CONTROLLER = votingController_;
+        require(VOTING_CONTROLLER != address(0), Errors.InvalidAddress());
 
         // wrapped moca 
         require(wMoca_ != address(0), Errors.InvalidAddress());
@@ -207,11 +206,11 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // STORAGE: increment global TOTAL_LOCKED_MOCA/TOTAL_LOCKED_ESMOCA + transfer tokens to contract
             if(mocaToIncrease > 0){
                 TOTAL_LOCKED_MOCA += mocaToIncrease;
-                _mocaToken().safeTransferFrom(msg.sender, address(this), mocaToIncrease);
+                // mocaToIncrease: msg.value
             }
             if(esMocaToIncrease > 0){
                 TOTAL_LOCKED_ESMOCA += esMocaToIncrease;
-                esMoca.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
+                ESMOCA.safeTransferFrom(msg.sender, address(this), esMocaToIncrease);
             }
         }
         
@@ -319,8 +318,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
             emit Events.LockUnlocked(lockId, lock.owner, lock.moca, lock.esMoca);
 
             // return principals to lock.owner
-            if(lock.moca > 0) _mocaToken().safeTransfer(lock.owner, lock.moca);
-            if(lock.esMoca > 0) _esMocaToken().safeTransfer(lock.owner, lock.esMoca);        
+            if(lock.moca > 0) _transferMocaAndWrapIfFailWithGasLimit(WMOCA, lock.owner, lock.moca, MOCA_TRANSFER_GAS_LIMIT);
+            if(lock.esMoca > 0) ESMOCA.safeTransfer(lock.owner, lock.esMoca);        
         }
 
 //-------------------------------User Delegate functions-------------------------------------
@@ -718,7 +717,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                     newLock.lockId = lockId; 
                     newLock.owner = user;
                     newLock.delegate = delegate;                //note: might be setting this to zero; but no point doing if(delegate != address(0))
-                    newLock.moca = mocaAmount;
+                    newLock.moca = uint128(mocaAmount);
                     newLock.esMoca = esMocaAmount;
                     newLock.expiry = expiry;
                 // STORAGE: book lock
@@ -1495,7 +1494,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
          * @param epoch The epoch number for which the delegated veBalance is requested.
          * @return The delegated veBalance value at the end of the specified epoch.
         */
-        function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint128) {
+        function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
             require(user != address(0), Errors.InvalidAddress());
             require(delegate != address(0), Errors.InvalidAddress());
             require(isFrozen == 0, Errors.IsFrozen());  

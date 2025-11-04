@@ -55,6 +55,7 @@ library Errors {
     error InvalidDelegate();
     error LockExpiresTooSoon();
     error PrincipalsAlreadyReturned();
+    error OnlyCallableByVotingEscrowMocaAdmin();
 
 // --------- VotingController.sol ---------
     error EpochNotEnded();

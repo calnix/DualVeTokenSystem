@@ -169,7 +169,7 @@ abstract contract TestingHarness is Test {
 
 
         // 7. Deploy VotingEscrowMoca
-        veMoca = new VotingEscrowMoca(address(accessController), address(esMoca), address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+        //veMoca = new VotingEscrowMoca(address(accessController), address(votingController), address(esMoca), address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
         
         //7.1: Whitelist VotingEscrowMoca in EscrowedMoca for transfers
         vm.prank(escrowedMocaAdmin);

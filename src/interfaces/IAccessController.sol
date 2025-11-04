@@ -10,7 +10,6 @@ interface IAccessController {
     // ---- RISK MANAGEMENT ----
 
     function isFrozen() external view returns (uint256);
-    
 
     // ---- TREASURY ADDRESSES ----
 
@@ -28,190 +27,68 @@ interface IAccessController {
 
     // ---- HIGH-FREQUENCY ROLES ----
 
-// -------------------- HIGH-FREQUENCY ROLES --------------------
-
-    /**
-     * @notice Returns true if the address has the Monitor role.
-     * @param addr The address to check.
-     */
+    // Monitor role
     function isMonitor(address addr) external view returns (bool);
-
-    /**
-     * @notice Returns true if the address has the CronJob role.
-     * @param addr The address to check.
-     */
-    function isCronJob(address addr) external view returns (bool);
-
-    /**
-     * @notice Adds an address as Monitor.
-     * @param addr The address to add.
-     */
     function addMonitor(address addr) external;
-
-    /**
-     * @notice Removes an address from Monitor role.
-     * @param addr The address to remove.
-     */
     function removeMonitor(address addr) external;
 
-    /**
-     * @notice Adds an address as CronJob.
-     * @param addr The address to add.
-     */
+    // CronJob role
+    function isCronJob(address addr) external view returns (bool);
     function addCronJob(address addr) external;
-
-    /**
-     * @notice Removes an address from CronJob role.
-     * @param addr The address to remove.
-     */
     function removeCronJob(address addr) external;
 
-    // -------------------- OPERATIONAL ADMIN ROLES --------------------
+    // ---- OPERATIONAL ADMIN ROLES ----
 
-    /**
-     * @notice Returns true if the address has the MonitorAdmin role.
-     * @param addr The address to check.
-     */
+    // Monitor Admin role
     function isMonitorAdmin(address addr) external view returns (bool);
-
-    /**
-     * @notice Returns true if the address has the CronJobAdmin role.
-     * @param addr The address to check.
-     */
-    function isCronJobAdmin(address addr) external view returns (bool);
-
-    /**
-     * @notice Adds an address as MonitorAdmin.
-     * @param addr The address to add.
-     */
     function addMonitorAdmin(address addr) external;
-
-    /**
-     * @notice Removes an address from MonitorAdmin role.
-     * @param addr The address to remove.
-     */
     function removeMonitorAdmin(address addr) external;
 
-    /**
-     * @notice Adds an address as CronJobAdmin.
-     * @param addr The address to add.
-     */
+    // CronJob Admin role
+    function isCronJobAdmin(address addr) external view returns (bool);
     function addCronJobAdmin(address addr) external;
-
-    /**
-     * @notice Removes an address from CronJobAdmin role.
-     * @param addr The address to remove.
-     */
     function removeCronJobAdmin(address addr) external;
 
-// -------------------- LOW-FREQUENCY STRATEGIC ROLES --------------------
+    // ---- LOW-FREQUENCY STRATEGIC ROLES (managed by DEFAULT_ADMIN_ROLE) ----
 
-    /**
-     * @notice Returns true if the address has the IssuerStakingControllerAdmin role.
-     * @param addr The address to check.
-     */
+    // IssuerStakingControllerAdmin
     function isIssuerStakingControllerAdmin(address addr) external view returns (bool);
+    function addIssuerStakingControllerAdmin(address addr) external;
+    function removeIssuerStakingControllerAdmin(address addr) external;
 
-    /**
-     * @notice Returns true if the address has the PaymentsControllerAdmin role.
-     * @param addr The address to check.
-     */
+    // PaymentsControllerAdmin
     function isPaymentsControllerAdmin(address addr) external view returns (bool);
-
-    /**
-     * @notice Returns true if the address has the VotingControllerAdmin role.
-     * @param addr The address to check.
-     */
-    function isVotingControllerAdmin(address addr) external view returns (bool);
-
-    /**
-     * @notice Returns true if the address has the EscrowedMocaAdmin role.
-     * @param addr The address to check.
-     */
-    function isEscrowedMocaAdmin(address addr) external view returns (bool);
-
-    /**
-     * @notice Adds an address as PaymentsControllerAdmin.
-     * @param addr The address to add.
-     */
     function addPaymentsControllerAdmin(address addr) external;
-
-    /**
-     * @notice Removes an address from PaymentsControllerAdmin role.
-     * @param addr The address to remove.
-     */
     function removePaymentsControllerAdmin(address addr) external;
 
-    /**
-     * @notice Adds an address as VotingControllerAdmin.
-     * @param addr The address to add.
-     */
+    // VotingControllerAdmin
+    function isVotingControllerAdmin(address addr) external view returns (bool);
     function addVotingControllerAdmin(address addr) external;
-
-    /**
-     * @notice Removes an address from VotingControllerAdmin role.
-     * @param addr The address to remove.
-     */
     function removeVotingControllerAdmin(address addr) external;
 
-    /**
-     * @notice Adds an address as EscrowedMocaAdmin.
-     * @param addr The address to add.
-     */
-    function addEscrowedMocaAdmin(address addr) external;
+    // VotingEscrowMocaAdmin
+    function isVotingEscrowMocaAdmin(address addr) external view returns (bool);
+    function addVotingEscrowMocaAdmin(address addr) external;
+    function removeVotingEscrowMocaAdmin(address addr) external;
 
-    /**
-     * @notice Removes an address from EscrowedMocaAdmin role.
-     * @param addr The address to remove.
-     */
+    // EscrowedMocaAdmin
+    function isEscrowedMocaAdmin(address addr) external view returns (bool);
+    function addEscrowedMocaAdmin(address addr) external;
     function removeEscrowedMocaAdmin(address addr) external;
 
-    // -------------------- ASSET MANAGER ROLE --------------------
+    // ---- ASSET MANAGER ROLE ----
 
-    /**
-     * @notice Returns true if the address has the AssetManager role.
-     * @param addr The address to check.
-     */
     function isAssetManager(address addr) external view returns (bool);
-
-    /**
-     * @notice Adds an address as AssetManager.
-     * @param addr The address to add.
-     */
     function addAssetManager(address addr) external;
-
-    /**
-     * @notice Removes an address from AssetManager role.
-     * @param addr The address to remove.
-     */
     function removeAssetManager(address addr) external;
 
-    // -------------------- EMERGENCY EXIT HANDLER ROLE --------------------
+    // ---- EMERGENCY EXIT HANDLER ROLE ----
 
-    /**
-     * @notice Returns true if the address has the EmergencyExitHandler role.
-     * @param addr The address to check.
-     */
     function isEmergencyExitHandler(address addr) external view returns (bool);
-
-    /**
-     * @notice Adds an address as EmergencyExitHandler.
-     * @param addr The address to add.
-     */
     function addEmergencyExitHandler(address addr) external;
-
-    /**
-     * @notice Removes an address from EmergencyExitHandler role.
-     * @param addr The address to remove.
-     */
     function removeEmergencyExitHandler(address addr) external;
 
-    // -------------------- GLOBAL ADMIN ROLE --------------------
+    // ---- GLOBAL ADMIN ROLE ----
 
-    /**
-     * @notice Returns true if the address has the GlobalAdmin (DEFAULT_ADMIN_ROLE).
-     * @param addr The address to check.
-     */
     function isGlobalAdmin(address addr) external view returns (bool);
-
 }
