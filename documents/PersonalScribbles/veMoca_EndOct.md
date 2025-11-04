@@ -629,3 +629,234 @@ contract VotingEscrowMoca is ERC20, Pausable {
 6. `_updateAccountAndGlobal(Alice)` runs from 1 to 3
 - in the *Epoch2* update, since `userHistory[Alice][epoch2] = {bias: 0, slope: 0}`, the else condition will execute
 - accountSlopeChangesMapping[Alice][2]
+
+i am right, ai is wrong.
+
+
+1. alice creates delegated lockA in Epoch0
+- userHistory[Alice][epoch0] = `{bias: 0, slope: 0}` (Alice never holds it)
+- delegateHistory[Bob][epoch0] = {bias: 200, slope: 10}
+
+2. Alice Creates Personal Lock (During Epoch 1)
+- `_updateAccountAndGlobal(Alice)` updates Alice to epoch 1
+- userHistory[Alice][epoch1] = `{bias: 600, slope: 20}`
+
+3. Alice Delegates Her Personal Lock (Still Epoch 1). 
+Forward-books:
+- Load existing: veUser = {bias: 600, slope: 20} 
+- Subtract lock: veAlice = {bias: 0, slope: 0} 
+- userHistory[Alice][epoch2] = {bias: 0, slope: 0} // Zero checkpoint!
+
+4. Alice Creates Another Lock (Still Epoch 1)
+- createLock(500 MOCA, expires epoch25)
+- userHistoryMapping[Alice][1] = veAccount{bias: non-zero, slope: bias: non-zero};
+
+<alice updated to epoch1>
+
+5. Epoch 3: `_updateAccountAndGlobal(Alice)`
+- Processing epoch 2: userHistory[Alice][epoch2] = {bias: 0, slope: 0}
+- <else> condition executes
+-> `uint256 expiringSlope` = accountSlopeChangesMapping[alice][2];
+--> expiringSlope = 0
+--> veAccount = _subtractExpired(`veAccount`, `expiringSlope=0``, `accountLastUpdatedAt:2`)
+veAccount remains unchanged since _subtractExpired is passed 0 for expiringSlope.
+veAccount will be reflective of her lock created after delegation 
+
+
+```solidity
+        // --- UPDATE ACCOUNT: Check for forward-booked checkpoint first ---
+        if (hasForwardBooking[account][accountLastUpdatedAt]) {
+            // Use the forward-booked value (even if zero)
+            veAccount = accountHistoryMapping[account][accountLastUpdatedAt];
+            // Clear the forward-booking flag as we've now processed it
+            hasForwardBooking[account][accountLastUpdatedAt] = false;
+
+            uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];
+            veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
+
+            // book account checkpoint
+            accountHistoryMapping[account][accountLastUpdatedAt] = veAccount;
+        } else {
+            // Standard reconstruction: apply scheduled slope reductions & decay
+            uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];
+            veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
+            
+            // book account checkpoint
+            accountHistoryMapping[account][accountLastUpdatedAt] = veAccount;
+        }
+
+```
+
+--------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------
+
+
+1. update account+global for both user and delegate, to current.
+2. get prewritten checkpoint at nextEpochStart: to stack
+```solidity
+            // STACKING FIX: Check if there's already a forward-booked value[frm a prior delegate call in the same epoch]
+            DataTypes.VeBalance memory veUserNextEpoch;
+            if (userHistory[msg.sender][nextEpochStart].bias > 0 || userHistory[msg.sender][nextEpochStart].slope > 0) {
+                // Use the existing forward-booked value as base
+                veUserNextEpoch = userHistory[msg.sender][nextEpochStart];
+            } else{
+                veUserNextEpoch = veUser;
+            }
+
+            // Remove specified lock from user's aggregated veBalance of the next epoch [prev. forward-booked or current veBalance]
+            // user cannot vote with the delegated lock in the next epoch
+            veUser = _sub(veUserNextEpoch, lockVeBalance);
+            userHistory[msg.sender][nextEpochStart] = veUser;
+            userSlopeChanges[msg.sender][lock.expiry] -= lockVeBalance.slope;       // cancel scheduled slope change for this lock's expiry
+            
+
+            // STACKING FIX: Check if there's already a forward-booked value[frm a prior delegate call in the same epoch]
+            DataTypes.VeBalance memory veDelegateNextEpoch;
+            if (delegateHistory[delegate][nextEpochStart].bias > 0 || delegateHistory[delegate][nextEpochStart].slope > 0) {
+                // Use the existing forward-booked value as base
+                veDelegateNextEpoch = delegateHistory[delegate][nextEpochStart];
+            } else{
+                veDelegateNextEpoch = veDelegate;
+            }
+            
+            // Add the lock to delegate's delegated balance
+            veDelegate = _add(veDelegateNextEpoch, lockVeBalance);
+            delegateHistory[delegate][nextEpochStart] = veDelegate;
+            delegateSlopeChanges[delegate][lock.expiry] += lockVeBalance.slope;
+            
+```
+3. add/sub as above: book to Epoch:N+1
+4. now the problem is tt in _updateAccountAndGlobal(), it will LOAD the veBalance at EpochN (in which delegation was called), apply slopeChanges, and **overwrite tt to EpochN+1**
+
+```solidity
+            // get account's lastUpdatedTimestamp: {user | delegate}
+            uint256 accountLastUpdatedAt = accountLastUpdatedMapping[account];
+           
+            // LOAD: account's previous veBalance
+>>>         DataTypes.VeBalance memory veAccount = accountHistoryMapping[account][accountLastUpdatedAt];      // either its empty struct or the previous veBalance
+
+            // 
+>>>         if (accountLastUpdatedAt >= currentEpochStart){}
+
+
+            // UPDATES REQUIRED: update global & account veBalance to current epoch
+            while (accountLastUpdatedAt < currentEpochStart) {
+                // advance 1 epoch
+                accountLastUpdatedAt += EpochMath.EPOCH_DURATION;       // accountLastUpdatedAt will be <= global lastUpdatedTimestamp [so we use that as the counter]
+
+                // --- UPDATE GLOBAL: if required ---
+                if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
+                    
+                    // subtract decay for this epoch && remove any scheduled slope changes from expiring locks
+                    veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
+                    // book ve state for the new epoch
+                    totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);                 // STORAGE: updates totalSupplyAt[]
+                }
+                
+>>>             // UPDATE ACCOUNT: apply scheduled slope reductions & decay for this epoch | cumulative of account's expired locks
+                uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];    
+>>>             veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
+                
+                // book account checkpoint 
+                accountHistoryMapping[account][accountLastUpdatedAt] = veAccount;
+            }
+
+            // STORAGE: update lastUpdatedTimestamp for global and account
+            lastUpdatedTimestamp = accountLastUpdatedAt;
+            accountLastUpdatedMapping[account] = accountLastUpdatedAt;      
+```
+
+so why don't we eagerly update the account to **EpochN+1**, in delegate functions. 
+then when `_updateAccountAndGlobal` is called, it exits early on `if (accountLastUpdatedAt >= currentEpochStart){..just updateGlobal..}`
+
+1. is it okay to update globally separately?
+- yes 
+```solidity
+                // apply scheduled slope reductions and handle decay for expiring locks
+                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[lastUpdatedAt], lastUpdatedAt);
+                // after removing expired locks, calc. and book current ve supply for the epoch 
+                totalSupplyAt[lastUpdatedAt] = _getValueAt(veGlobal_, lastUpdatedAt);           // STORAGE: updates totalSupplyAt[]
+```
+- global timestamp is updated, `veGlobal` & `totalSupplyAt`, are updated; and that is based on global `slopeChanges` mapping
+- updating account ahead of global, does not adversely impact an independent global update.
+
+**2. what problems are there is an account is updated ahead of global?**
+- 
+
+
+
+# appendix ref.
+
+to apply slope changes in delegate
+
+```solidity
+function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
+    // ... existing validation and updates ...
+    
+    // Get forward-booked values (with stacking)
+    DataTypes.VeBalance memory veUserNext = /* stacked value */;
+    DataTypes.VeBalance memory veDelegateNext = /* stacked value */;
+    
+    // APPLY SLOPE CHANGES: Check for expirations at nextEpochStart
+    uint256 userExpiringSlopeAtNext = userSlopeChanges[msg.sender][nextEpochStart];
+    if (userExpiringSlopeAtNext > 0) {
+        veUserNext = _subtractExpired(veUserNext, userExpiringSlopeAtNext, nextEpochStart);
+    }
+    
+    uint256 delegateExpiringSlopeAtNext = delegateSlopeChanges[delegate][nextEpochStart];
+    if (delegateExpiringSlopeAtNext > 0) {
+        veDelegateNext = _subtractExpired(veDelegateNext, delegateExpiringSlopeAtNext, nextEpochStart);
+    }
+    
+    // Now write complete checkpoints
+    userHistory[msg.sender][nextEpochStart] = veUserNext;
+    delegateHistory[delegate][nextEpochStart] = veDelegateNext;
+    
+    // Could then do eager update if all slope changes are handled
+    userLastUpdatedTimestamp[msg.sender] = nextEpochStart;
+    delegateLastUpdatedTimestamp[delegate] = nextEpochStart;
+}
+```
+
+```solidity
+// Apply any locks expiring at nextEpochStart (epoch 2)
+uint256 expiringSlope = userSlopeChanges[msg.sender][nextEpochStart];
+veUser = _subtractExpired(veUser, expiringSlope, nextEpochStart);
+
+// Then write complete checkpoint
+userHistory[msg.sender][nextEpochStart] = veUser;
+userLastUpdatedTimestamp[msg.sender] = nextEpochStart;
+```
+
+
+
+# increaseAmount, increaseDuration, createLock
+
+when a forwardBooked point is first booked into the nextEpoch, it accounts for the slopeChanges for that epoch. so it's updated to account for all cumulative decay that occurs in that nextEpoch as seen in the delegate functions. 
+
+is it possible, that the point was to be reupdated to account for a new dSlope? how could that come to be?
+- createLock, increaseAmount, increaseDuration: lock must expire >= 2 epochs   
+- so this is not possible correct?
+
+## Example:
+
+- Current epoch: N
+- Forward-booking happens at: epoch N+1 (nextEpochStart)
+- When forward-booking, all slope changes for epoch N+1 are already known and applied
+
+**Could New Slope Changes Be Added to Epoch N+1?**
+
+For a new slope change to be scheduled at epoch N+1, we'd need a lock expiring exactly at epoch N+1.
+
+This could only be possible through: createLock, increaseAmount, increaseDuration
+- all 3 functions implement a requirement that a lock must have at least 2 epochs left
+- so it would not impact a forward-booked point in the nextEpoch, should there be one
+
+**Conclusion**
+Not possible for new slope changes to be scheduled at nextEpochStart after a forward-booked checkpoint is created. The 2-epoch buffer ensures that:
+
+- Any locks created/modified during epoch N will expire at epoch N+2 or later
+- Forward-booked checkpoints at epoch N+1 are complete and final
+- No need to update them for new slope changes
+
+This is a clever design that simplifies the implementation - forward-booked checkpoints are immutable (except for delegation stacking within the same epoch).
