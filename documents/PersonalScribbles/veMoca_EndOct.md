@@ -162,3 +162,470 @@ This allows VotingController to accurately receive the voting power of a user.
 
 1. `VotingController.vote()`: `balanceAtEpochEnd()`
 2. `VotingController._claimDelegateRewards()`: `getSpecificDelegatedBalanceAtEpochEnd()`
+
+
+## On delegating locks
+
+fns: delegateLock, undelegateLock, switchDelegate
+
+For delegate/switchDelegate:
+
+- lock is already created
+- owner is marking it as delegate -> switching from user to delegate mappings. 
+- but this is forward-booked to the next epoch, to prevent double voting in the current epoch.
+- else users would be able to vote, then delegate, and the delegate receiver would be able to vote again, using the incoming lock's voting power
+
+forward-book does:
+- userHistory[msg.sender][nextEpochStart]
+- delegateHistory[delegate][nextEpochStart]
+- delegatedAggregationHistory[msg.sender][delegate][nextEpochStart]
+
+Note: userLastUpdatedTimestamp and delegateLastUpdatedTimestamp are not updated.
+> switch does the same but its delegate1 instead of user. undelegate is the opposite; add to user, remove frm delegate
+
+problem:
+
+`_updateAccountAndGlobal()`:
+``` solidity
+// get account's lastUpdatedTimestamp: {user | delegate}
+uint256 accountLastUpdatedAt = accountLastUpdatedMapping[account];
+// LOAD: account's previous veBalance
+DataTypes.VeBalance memory veAccount = accountHistoryMapping[account][accountLastUpdatedAt]; 
+
+    while (accountLastUpdatedAt < currentEpochStart) {
+        // advance 1 epoch
+        accountLastUpdatedAt += EpochMath.EPOCH_DURATION; 
+
+        // --- UPDATE GLOBAL: if required ---
+        if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {}
+        
+        // UPDATE ACCOUNT:
+        uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];    
+        veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
+
+        // note: book account checkpoint 
+        accountHistoryMapping[account][accountLastUpdatedAt] = veAccount;
+    }
+
+    //....
+```
+
+Assuming delegateLock was done in mid-way in Epoch10,
+- Epoch 11: `_updateAccountAndGlobal` is called [cos user calls any fn: increaseAmount/unlock, triggering this]
+- `_updateAccountAndGlobal` references last timestamp: `accountLastUpdatedAt` = Epoch 10, and loads `veAccount` form that time
+- then in the while loop, it does `_subtractExpired`, returning an updated `veAccount` which is fine,
+- but it overwrites `accountHistoryMapping[account][accountLastUpdatedAt] = veAccount`, with that update
+
+This means that it **overwrites** the update done in `delegateLock()` to both:
+- userHistory[msg.sender][nextEpochStart]
+- delegateHistory[delegate][nextEpochStart]
+
+So, the result is that the delegate action didn't take place, the lock was not 'moved' from the user to the delegate.
+The core of the bug is that the `_updateAccountAndGlobal` loop re-calculates state based only on `accountSlopeChanges`, and is completely blind to the state pre-written by the delegation functions.
+
+Fix1 :
+
+```solidity
+function _updateAccountAndGlobal(address account, bool isDelegate) internal 
+            returns ( 
+                    DataTypes.VeBalance memory, DataTypes.VeBalance memory, 
+                    uint256,
+                    mapping(address => mapping(uint256 => DataTypes.VeBalance)) storage,
+                    mapping(address => mapping(uint256 => uint256)) storage
+                )
+        {
+
+            (
+                mapping(address => mapping(uint256 => DataTypes.VeBalance)) storage accountHistoryMapping,
+                mapping(address => mapping(uint256 => uint256)) storage accountSlopeChangesMapping,
+                mapping(address => uint256) storage accountLastUpdatedMapping
+            ) = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
+
+            // CACHE: global veBalance + lastUpdatedTimestamp
+            DataTypes.VeBalance memory veGlobal_ = veGlobal;
+            uint256 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
+            
+            // get current epoch start
+            uint256 currentEpochStart = EpochMath.getCurrentEpochStart();
+
+            // --- THE FIX ---
+            // Check if a delegation function has already forward-booked a checkpoint
+            // for the current epoch. (Uses the check `bias > 0` OR `slope > 0` for validity)
+            DataTypes.VeBalance memory prewrittenCheckpoint = accountHistoryMapping[account][currentEpochStart];
+            if (prewrittenCheckpoint.bias > 0 || prewrittenCheckpoint.slope > 0) {
+                // A checkpoint already exists. This IS our state.
+                // We MUST update the timestamp to prevent the loop from running and overwriting it.
+                accountLastUpdatedMapping[account] = currentEpochStart;
+                
+                // We still need to update global, so call _updateGlobal independently.
+                veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
+                
+                // Return the pre-written state.
+                return (veGlobal_, prewrittenCheckpoint, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
+            }
+            // --- END FIX ---
+
+            [cite_start]uint256 accountLastUpdatedAt = accountLastUpdatedMapping[account]; [cite: 763]
+            [cite_start]DataTypes.VeBalance memory veAccount = accountHistoryMapping[account][accountLastUpdatedAt]; [cite: 764]
+
+            // RETURN: if both global and account are up to date [no updates required]
+            [cite_start]if (accountLastUpdatedAt >= currentEpochStart){ [cite: 765]
+                return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
+            }
+            
+            // ... (rest of the function remains identical) ...
+```
+
+# Fix 2:
+
+```solidity
+// In DataTypes.sol
+struct VeBalanceDelta {
+    VeBalance additions;
+    VeBalance subtractions;
+}
+
+// In VotingEscrowMoca.sol
+// For userHistory/delegateHistory
+mapping(address account => mapping(uint256 epoch => DataTypes.VeBalanceDelta)) public pendingAccountDeltas;
+
+// For delegatedAggregationHistory
+mapping(address user => mapping(address delegate => mapping(uint256 epoch => DataTypes.VeBalanceDelta))) public pendingAggregationDeltas;
+
+// 2. Modify Delegation Functions
+function delegateLock(){
+    // ...
+    // OLD: userHistory[msg.sender][nextEpochStart] = veUser;
+    // NEW:
+    pendingAccountDeltas[msg.sender][nextEpochStart].subtractions = _add(pendingAccountDeltas[msg.sender][nextEpochStart].subtractions, lockVeBalance);
+    
+    // ...
+    // OLD: delegateHistory[delegate][nextEpochStart] = veDelegate;
+    // NEW:
+    pendingAccountDeltas[delegate][nextEpochStart].additions = _add(pendingAccountDeltas[delegate][nextEpochStart].additions, lockVeBalance);
+
+    // ...
+    // OLD: delegatedAggregationHistory[msg.sender][delegate][nextEpochStart] = _add(...)
+    // NEW:
+    pendingAggregationDeltas[msg.sender][delegate][nextEpochStart].additions = _add(pendingAggregationDeltas[msg.sender][delegate][nextEpochStart].additions, lockVeBalance);
+    // ...
+}
+
+// 3. Modify _updateAccountAndGlobal (The State-Changing Path)
+
+while (accountLastUpdatedAt < currentEpochStart) {
+        accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
+
+        // 1. Apply expiries
+        uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];
+        veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
+
+        // 2. Apply pending delegation deltas
+        DataTypes.VeBalanceDelta memory delta = pendingAccountDeltas[account][accountLastUpdatedAt];
+        if (delta.additions.bias > 0 || delta.additions.slope > 0) {
+            veAccount = _add(veAccount, delta.additions);
+        }
+        if (delta.subtractions.bias > 0 || delta.subtractions.slope > 0) {
+            veAccount = _sub(veAccount, delta.subtractions);
+        }
+        
+        // 3. Consume the event
+        delete pendingAccountDeltas[account][accountLastUpdatedAt];
+
+        // 4. Write final checkpoint
+        accountHistoryMapping[account][accountLastUpdatedAt] = veAccount;
+    }
+
+// 4. Modify _viewForwardAbsolute (The "Seamless" View Path)
+function _viewForwardAbsolute(
+        DataTypes.VeBalance memory ve,
+        uint256 startETime,
+        uint256 targetTime,
+        mapping(uint256 => uint256) storage accountSlopeChanges,
+        // --- ADD NEW PARAMETER ---
+        mapping(address => mapping(uint256 => DataTypes.VeBalanceDelta)) storage pendingDeltas,
+        address account
+    ) internal view returns (DataTypes.VeBalance memory) {
+        // ...
+        while (nextETime <= targetTime) {
+            // 1. Apply expiries
+            uint256 dslope = accountSlopeChanges[nextETime];
+            if (dslope > 0) {
+                ve = _subtractExpired(ve, dslope, nextETime);
+            }
+
+            // 2. Apply pending delegation deltas
+            DataTypes.VeBalanceDelta memory delta = pendingDeltas[account][nextETime];
+            if (delta.additions.bias > 0 || delta.additions.slope > 0) {
+                ve = _add(ve, delta.additions);
+            }
+            if (delta.subtractions.bias > 0 || delta.subtractions.slope > 0) {
+                ve = _sub(ve, delta.subtractions);
+            }
+            
+            nextETime += epochDuration;
+        }
+        return ve;
+    }
+// balanceOfAtEnd & getSpecificDelegatedBalanceAtEpochEnd reply on _viewForwardAbsolute
+```
+
+```solidity
+function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
+            [cite_start]// ... (initial checks and findETime are the same) [cite: 407-411]
+
+            [cite_start]DataTypes.VeBalance memory veBalance = accountHistory[foundETime]; [cite: 412]
+
+            // --- MODIFIED CALL ---
+            // OLD: veBalance = _viewForwardAbsolute(veBalance, foundETime, epochEndTime, userDelegateSlopeChanges[user][delegate]);
+            // NEW:
+            veBalance = _viewForwardAbsolute(
+                veBalance,
+                foundETime,
+                epochEndTime,
+                userDelegateSlopeChanges[user][delegate], // Pass the slope changes mapping
+                pendingAggregationDeltas[user][delegate]  // Pass the pending deltas mapping
+            );
+
+            [cite_start]return _getValueAt(veBalance, epochEndTime); [cite: 414]
+        }
+```
+
+# MY FIX
+
+### VotingController calls 2 functions from VotingEscrowedMoca
+
+1. `VotingController.vote()`: `balanceAtEpochEnd()`
+2. `VotingController._claimDelegateRewards()`: `getSpecificDelegatedBalanceAtEpochEnd()`
+
+## 1. in delegate, do not book to nextEpoch.
+- book to a pending mapping
+- both `balanceAtEpochEnd()` & `getSpecificDelegatedBalanceAtEpochEnd()` will reference this [in case state for tt account has not been update to push pending to actual]
+- need settlement function `_updateDelegatedAggregation` that consumes pendingDeltas and updates the relevant mappings like `delegatedAggregationHistory`, `userHistory`, `delegateHistory`
+
+## Process
+1. book deltas to pending mapping
+2. in `_updateAccountAndGlobal()`, call `_updateDelegatedAggregation` 
+3. that will book pending into: `delegatedAggregationHistory`, `userHistory`, `delegateHistory`, 
+4. `userDelegateSlopeChanges[user][delegate]` updates are handled within the delegate function
+
+```solidity
+            // transfer veMoca tokens from user to delegate 
+            _transfer(msg.sender, delegate, lockVeBalance.bias);         // delegateLock
+            _transfer(lock.delegate, msg.sender, lockVeBalance.bias);    // undelegateLock
+            _transfer(lock.delegate, newDelegate, lockVeBalance.bias);   // switchDelegate
+
+```
+- token transfer should be handled when pending is merged. 
+
+
+```solidity
+            // transfer veMoca tokens from user to delegate 
+            
+```
+
+
+- `balanceAtEpochEnd` -> relies on `delegateHistory`/`userHistory`
+- `getSpecificDelegatedBalanceAtEpochEnd` -> relies on `_viewForwardAbsolute(...,userDelegateSlopeChanges[user][delegate])` which simulates the decay for user's delegated locks.
+
+## details
+
+`_bookPendingDelegations(address user, address delegate, uint256 targetEpoch)`
+
+- has to be called by the user, to book his pending delegated deltas
+- and we need to know against which delegate
+- so this can only be called in the following functions:
+1. delegateLock()
+2. undelegateLock()
+3. switchDelegate()
+
+then for increaseAmount, increaseDuration:
+- `if (lock.delegate != address(0)) {_bookPendingDelegations(msg.sender, lock.delegate, epoch)}`
+- 
+
+Cannot be called generically in `_updateAccountAndGlobal()`
+
+
+## _bookPendingDelegations
+
+1. delegateLock()
+- `_bookPendingDelegations(user, delegate, userLastUpdatedAt)`
+- 
+
+for switchDelegate, we do not update the user 
+- we `_updateAccountAndGlobal(oldDelegate,true)` + `_updateAccountAndGlobal(newDelegate,true)`
+- do we need ot update the user?
+
+# fix 3
+
+```solidity
+evaluate this simpler approach:
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+// ... existing imports ...
+
+contract VotingEscrowMoca is ERC20, Pausable {
+    // ... existing state (no new mappings needed) ...
+
+    // ------------------------------- Delegation Functions (Updated for Stacking) -------------------------------
+
+    function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
+        // sanity check: delegate
+        require(delegate != address(0), Errors.InvalidAddress());
+        require(delegate != msg.sender, Errors.InvalidDelegate());
+        require(isRegisteredDelegate[delegate], Errors.DelegateNotRegistered()); // implicit address(0) check: newDelegate != address(0)
+        DataTypes.Lock memory lock = locks[lockId];
+       
+        // sanity check: lock
+        require(lock.lockId != bytes32(0), Errors.InvalidLockId());
+        require(lock.owner == msg.sender, Errors.InvalidOwner());
+        // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]
+        // allow the delegate to meaningfully vote for the next epoch
+        require(lock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
+
+        // Update user & global: account for decay since lastUpdate and any scheduled slope changes | false since lock is not yet delegated
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint256 currentEpochStart,,) = _updateAccountAndGlobal(msg.sender, false);
+        uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+
+        // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
+        DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock);
+
+        // FIX 2: Stack multiple delegations - load existing prewritten for user (if any), apply sub delta, rewrite
+        DataTypes.VeBalance memory existingUserCheckpoint = userHistory[msg.sender][nextEpochStart];
+        veUser = existingUserCheckpoint.bias > 0 || existingUserCheckpoint.slope > 0 ? existingUserCheckpoint : veUser; // Use prewritten if exists
+        veUser = _sub(veUser, lockVeBalance);
+        userHistory[msg.sender][nextEpochStart] = veUser;
+        userSlopeChanges[msg.sender][lock.expiry] -= lockVeBalance.slope;
+
+        // Update delegate: true for delegated
+        (, DataTypes.VeBalance memory veDelegate,,,) = _updateAccountAndGlobal(delegate, true);
+
+        // FIX 2: Stack for delegate - load existing, apply add delta, rewrite
+        DataTypes.VeBalance memory existingDelegateCheckpoint = delegateHistory[delegate][nextEpochStart];
+        veDelegate = existingDelegateCheckpoint.bias > 0 || existingDelegateCheckpoint.slope > 0 ? existingDelegateCheckpoint : veDelegate;
+        veDelegate = _add(veDelegate, lockVeBalance);
+        delegateHistory[delegate][nextEpochStart] = veDelegate;
+        delegateSlopeChanges[delegate][lock.expiry] += lockVeBalance.slope;
+
+        // transfer veMoca tokens from user to delegate
+        _transfer(msg.sender, delegate, lockVeBalance.bias);
+
+        // STORAGE: mark lock as delegated
+        lock.delegate = delegate;
+        locks[lockId] = lock;
+
+        // delegatedAggregationHistory: Stack similarly
+        DataTypes.VeBalance memory existingAgg = delegatedAggregationHistory[msg.sender][delegate][nextEpochStart];
+        DataTypes.VeBalance memory aggDelta = _add(existingAgg, lockVeBalance);
+        delegatedAggregationHistory[msg.sender][delegate][nextEpochStart] = aggDelta;
+
+        //NOTE: FIX: slope changes for user's delegated locks [to support VotingController's claimRewardsFromDelegate()]
+        userDelegateSlopeChanges[msg.sender][delegate][lock.expiry] += lockVeBalance.slope;
+       
+        // STORAGE: update global state
+        veGlobal = veGlobal_;
+        // Emit event
+        //emit LockDelegated(lockId, msg.sender, delegate);
+    }
+
+    // Similarly update undelegateLock and switchDelegate:
+    // - Load existing prewritten at nextEpochStart.
+    // - Apply sub/add delta for veBalance and agg.
+    // - Rewrite cumulative.
+    // - Adjust slopes as before.
+
+    // ------------------------------- _updateAccountAndGlobal (Updated for Gaps) -------------------------------
+
+    function _updateAccountAndGlobal(address account, bool isDelegate) internal
+        returns (
+                DataTypes.VeBalance memory, DataTypes.VeBalance memory,
+                uint256,
+                mapping(address => mapping(uint256 => DataTypes.VeBalance)) storage, // accountHistoryMapping
+                mapping(address => mapping(uint256 => uint256)) storage // accountSlopeChangesMapping
+            )
+    {
+        // Streamlined mapping lookups based on account type
+        (
+            mapping(address => mapping(uint256 => DataTypes.VeBalance)) storage accountHistoryMapping,
+            mapping(address => mapping(uint256 => uint256)) storage accountSlopeChangesMapping,
+            mapping(address => uint256) storage accountLastUpdatedMapping
+        )
+            = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
+        // CACHE: global veBalance + lastUpdatedTimestamp
+        DataTypes.VeBalance memory veGlobal_ = veGlobal;
+        uint256 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
+   
+        // get current epoch start
+        uint256 currentEpochStart = EpochMath.getCurrentEpochStart();
+        // get account's lastUpdatedTimestamp: {user | delegate}
+        uint256 accountLastUpdatedAt = accountLastUpdatedMapping[account];
+        // LOAD: account's previous veBalance
+        DataTypes.VeBalance memory veAccount = accountHistoryMapping[account][accountLastUpdatedAt]; // either its empty struct or the previous veBalance
+        // RETURN: if both global and account are up to date [no updates required]
+        if (accountLastUpdatedAt >= currentEpochStart){
+            // update global to current epoch
+            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
+            return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
+        }
+        // ACCOUNT'S FIRST TIME: no previous locks created: update global & set account's lastUpdatedTimestamp [global lastUpdatedTimestamp is set to currentEpochStart]
+        // Note: contract cannot be deployed at T=0; and its not possible for a user to create a lock at T=0.
+        if (accountLastUpdatedAt == 0) {
+            // set account's lastUpdatedTimestamp
+            accountLastUpdatedMapping[account] = currentEpochStart;
+            //accountHistoryMapping[account][currentEpochStart] = veAccount; // DataTypes.VeBalance(0, 0)
+            // update global: may or may not have updates [STORAGE: updates global lastUpdatedTimestamp]
+            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
+            return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
+        }
+               
+        // UPDATES REQUIRED: update global & account veBalance to current epoch
+        while (accountLastUpdatedAt < currentEpochStart) {
+            // advance 1 epoch
+            accountLastUpdatedAt += EpochMath.EPOCH_DURATION; // accountLastUpdatedAt will be <= global lastUpdatedTimestamp [so we use that as the counter]
+            // --- UPDATE GLOBAL: if required ---
+            if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
+               
+                // subtract decay for this epoch && remove any scheduled slope changes from expiring locks
+                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
+                // book ve state for the new epoch
+                totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt); // STORAGE: updates totalSupplyAt[]
+            }
+           
+            // FIX 1: Check for prewritten checkpoint at this intermediate eTime
+            DataTypes.VeBalance memory prewritten = accountHistoryMapping[account][accountLastUpdatedAt];
+            if (prewritten.bias > 0 || prewritten.slope > 0) {
+                // Use prewritten if exists (from forward-booking)
+                veAccount = prewritten;
+            } else {
+                // Otherwise, reconstruct with decay/expiries
+                uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];
+                veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
+            }
+           
+            // book account checkpoint (write or overwrite with correct value)
+            accountHistoryMapping[account][accountLastUpdatedAt] = veAccount;
+        }
+        // STORAGE: update lastUpdatedTimestamp for global and account
+        lastUpdatedTimestamp = accountLastUpdatedAt;
+        accountLastUpdatedMapping[account] = accountLastUpdatedAt;
+        // return
+        return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
+    }
+
+    // _updateGlobal and other functions unchanged
+}
+```
+
+1. alice creates lockA in Epoch0
+2. alice delegates lockA in Epoch1 [This forward-books to Epoch2]
+3. userHistory[Alice][epoch2] = {bias: 0, slope: 0}  [due to forward-booking deduction]
+4. alice creates **lockB** in **Epoch1** [createLock(1000 MOCA, expires epoch 30)]
+-- `_updateAccountAndGlobal(Alice)` runs but only up to epoch 1
+-- `userHistory[Alice][epoch1] = {bias: 300, slope: 20}` (now has new lock)
+-- `userSlopeChanges[Alice][epoch30] += 10`
+5. alice calls: increaseAmount(lockB, 100 MOCA) in **Epoch3**
+6. `_updateAccountAndGlobal(Alice)` runs from 1 to 3
+- in the *Epoch2* update, since `userHistory[Alice][epoch2] = {bias: 0, slope: 0}`, the else condition will execute
+- accountSlopeChangesMapping[Alice][2]

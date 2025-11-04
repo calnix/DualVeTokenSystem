@@ -95,10 +95,13 @@ contract VotingEscrowMoca is ERC20, Pausable {
         // slope changes for user's delegated locks [to support VotingController's claimRewardsFromDelegate()]
         mapping(address user => mapping(address delegate => mapping(uint256 eTime => uint256 slopeChange))) public userDelegateSlopeChanges; 
 
-        // mapping to track forward-booked epochs [for locks that were loaned out via delegation related functions]
-        mapping(bytes32 lockId => mapping(uint256 eTime => bool hasForwardBooking)) public lockHasForwardBooking;         // referred in increaseAmount, increaseDuration. to update forward-booked point
-        mapping(address user => mapping(uint256 eTime => bool hasForwardBooking)) public userHasForwardBooking;           // for _updateAccountAndGlobal() to recognize forward-booked zero values 
-        mapping(address delegate => mapping(uint256 eTime => bool hasForwardBooking)) public delegateHasForwardBooking;   // for _updateAccountAndGlobal() to recognize forward-booked zero values 
+
+        // pending delegation queue
+        mapping(address user => mapping(uint256 eTime => DataTypes.VeBalanceDelta)) public pendingUserDeltas;                            // [to apply to userHistory]
+        mapping(address delegate => mapping(uint256 eTime => DataTypes.VeBalanceDelta)) public pendingDelegateDeltas;                    // [to apply to delegateHistory]
+        mapping(address user => mapping(address delegate => mapping(uint256 eTime => DataTypes.VeBalanceDelta))) public pendingAggregatedDeltas;  // [to apply to delegatedAggregationHistory]
+
+
 
 //-------------------------------Constructor-------------------------------------------------
 
@@ -154,7 +157,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
             require(oldLock.lockId != bytes32(0), Errors.InvalidLockId());
             require(oldLock.owner == msg.sender, Errors.InvalidOwner());
             
-            // NOTE: FIX: Enforce minimum increment amount to avoid precision loss
+            // Enforce minimum increment amount to avoid precision loss
             uint256 mocaToIncrease = msg.value;
             uint256 incrementAmount = mocaToIncrease + esMocaToIncrease;
             require(incrementAmount >= Constants.MIN_LOCK_AMOUNT, Errors.InvalidAmount());
@@ -319,311 +322,225 @@ contract VotingEscrowMoca is ERC20, Pausable {
 
 //-------------------------------User Delegate functions-------------------------------------
 
-    /** Problem: user can vote, then delegate
-        ⦁	sub their veBal, add to delegate veBal
-        ⦁	_vote only references `veMoca.balanceOfAt(caller, epochEnd, isDelegated)`
-        ⦁	so this creates a double-voting exploit
-        Solution: forward-delegate. impacts on next epoch.
-        This problem does not occur when users' are createLock(isDelegated) 
-    */
-
-    /**
-        * @notice Delegates a lock's voting power to a registered delegate
-        * @dev Only the lock creator can delegate. The lock must not be expired or already delegated
-        *      Updates user and delegate veBalance, slope changes, and aggregation history
-        *      Prevents double-voting by forward-booking the delegation to the next epoch 
-        *      Users can vote with the delegated lock for the current epoch, but no longer from the next epoch onwards
-        * @param lockId The unique identifier of the lock to delegate
-        * @param delegate The address of the registered delegate to receive voting power
+        /** note: consider creating _updateAccount(). then can streamline w/ _updateGlobal, _updateAccount(user), _updateAccount(delegate) | 
+            but there must be a strong case for need to have _updateAccount as a standalone beyond delegate
+            as gas diff is not significant
         */
-    function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
-        // sanity check: delegate
-        require(delegate != address(0), Errors.InvalidAddress());
-        require(delegate != msg.sender, Errors.InvalidDelegate());
-        require(isRegisteredDelegate[delegate], Errors.DelegateNotRegistered()); // implicit address(0) check: newDelegate != address(0)
-
-        DataTypes.Lock memory lock = locks[lockId];
-        
-        // sanity check: lock
-        require(lock.lockId != bytes32(0), Errors.InvalidLockId());
-        require(lock.owner == msg.sender, Errors.InvalidOwner());
-
-        // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]    
-        // allow the delegate to meaningfully vote for the next epoch        
-        require(lock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
 
 
-        // Update user & global: account for decay since lastUpdate and any scheduled slope changes | false since lock is not yet delegated
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint256 currentEpochStart,,) = _updateAccountAndGlobal(msg.sender, false);
-        
-        // Update delegate: required before adding the lock to delegate's balance [global will not be updated; was handled in earlier update]
-        // true: update delegate's aggregated veBalance; not personal
-        (, DataTypes.VeBalance memory veDelegate,,,) = _updateAccountAndGlobal(delegate, true);
-
-        // STORAGE: update user + delegate for current epoch
-        userHistory[msg.sender][currentEpochStart] = veUser;
-        delegateHistory[delegate][currentEpochStart] = veDelegate;
-        // STORAGE: update global state
-        veGlobal = veGlobal_;   
-
-        // ----- accounts and global updated to currentEpoch -----
-
-
-        // get nextEpoch
-        uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
-
-        // get the lock's current veBalance
-        DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
-        
-
-        // STACKING FIX: Check if there's already a forward-booked value[frm a prior delegate call in the same epoch]
-        DataTypes.VeBalance memory veUserNextEpoch;
-        if (userHasForwardBooking[msg.sender][nextEpochStart]) {
-            // Use the existing forward-booked value
-            veUserNextEpoch = userHistory[msg.sender][nextEpochStart];
-        } else{
-            // update currentEpoch's veBal to nextEpoch by applying slope changes
-            uint256 expiringSlope = userSlopeChanges[msg.sender][nextEpochStart];
-            veUserNextEpoch = _subtractExpired(veUser, expiringSlope, nextEpochStart);
-        }
-
-        // STACKING FIX: Check if there's already a forward-booked value[frm a prior delegate call in the same epoch]
-        DataTypes.VeBalance memory veDelegateNextEpoch;
-        if (delegateHasForwardBooking[delegate][nextEpochStart]) {
-            // Use the existing forward-booked value as base
-            veDelegateNextEpoch = delegateHistory[delegate][nextEpochStart];
-        } else{
-            // update currentEpoch's veBal to nextEpoch by applying slope changes
-            uint256 expiringSlope = delegateSlopeChanges[delegate][nextEpochStart];
-            veDelegateNextEpoch = _subtractExpired(veDelegate, expiringSlope, nextEpochStart);
-        }
-
-        
-        // Remove specified lock from user's aggregated veBalance of the next epoch [prev. forward-booked or current veBalance]
-        // user cannot vote with the delegated lock in the next epoch
-        veUserNextEpoch = _sub(veUserNextEpoch, lockVeBalance);
-        userHistory[msg.sender][nextEpochStart] = veUserNextEpoch;
-        userSlopeChanges[msg.sender][lock.expiry] -= lockVeBalance.slope;       // cancel scheduled slope change for this lock's expiry
-        userHasForwardBooking[msg.sender][nextEpochStart] = true;
-        
-        
-        // Add the lock to delegate's delegated balance
-        veDelegateNextEpoch = _add(veDelegateNextEpoch, lockVeBalance);
-        delegateHistory[delegate][nextEpochStart] = veDelegateNextEpoch;
-        delegateSlopeChanges[delegate][lock.expiry] += lockVeBalance.slope;
-        delegateHasForwardBooking[delegate][nextEpochStart] = true;
-
-
-        // transfer veMoca tokens from user to delegate 
-        _transfer(msg.sender, delegate, lockVeBalance.bias);
-
-        // STORAGE: mark lock as delegated
-        lock.delegate = delegate;
-        locks[lockId] = lock;
-
-        // Update delegatedAggregationHistory to reflect that the user has delegated this lock's veBalance to the specified delegate for the next epoch.
-        // This ensures the protocol can accurately account for the total veBalance a user has delegated to each delegate at every epoch, which is critical for correct rewards calculation.
-        delegatedAggregationHistory[msg.sender][delegate][nextEpochStart] = _add(delegatedAggregationHistory[msg.sender][delegate][nextEpochStart], lockVeBalance);
-
-        // Add the lock's slope to userDelegateSlopeChanges for this delegate; for _viewForwardAbsolute, to simulate the decay for user's delegated locks.
-        userDelegateSlopeChanges[msg.sender][delegate][lock.expiry] += lockVeBalance.slope;
-
-
-        // Emit event
-        //emit LockDelegated(lockId, msg.sender, delegate);
-    }
-
-    /**
-        * @notice Undelegates a lock's voting power from a registered delegate
-        * @dev Only the lock creator can undelegate. The lock must be currently delegated and not expired.
-        *      Updates user and delegate veBalance, slope changes, and aggregation history
-        *      Prevents double-voting by forward-booking the undelegation to the next epoch 
-        *      Delegate can vote with the lock for the current epoch, but no longer from the next epoch onwards
-        * @param lockId The unique identifier of the lock to undelegate
+        /** Problem: user can vote, then delegate
+            ⦁	sub their veBal, add to delegate veBal
+            ⦁	_vote only references `veMoca.balanceOfAt(caller, epochEnd, isDelegated)`
+            ⦁	so this creates a double-voting exploit
+            Solution: forward-delegate. impacts on next epoch.
+            This problem does not occur when users' are createLock(isDelegated) 
         */
-    function undelegateLock(bytes32 lockId) external whenNotPaused {
-        DataTypes.Lock memory lock = locks[lockId];
 
-        // sanity checks
-        require(lock.owner == msg.sender, Errors.InvalidOwner());
-        require(lock.lockId != bytes32(0), Errors.InvalidLockId());
-        require(lock.delegate != address(0), Errors.InvalidDelegate());
-        require(lock.isUnlocked == false, Errors.PrincipalsAlreadyReturned());
+        //note: use array for locks
+        /**
+         * @notice Delegates a lock's voting power to a registered delegate
+         * @dev Only the lock creator can delegate. The lock must not be expired or already delegated
+         *      Updates user and delegate veBalance, slope changes, and aggregation history
+         *      Prevents double-voting by forward-booking the delegation to the next epoch 
+         *      Users can vote with the delegated lock for the current epoch, but no longer from the next epoch onwards
+         * @param lockId The unique identifier of the lock to delegate
+         * @param delegate The address of the registered delegate to receive voting power
+         */
+        function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
+            // sanity check: delegate
+            require(delegate != address(0), Errors.InvalidAddress());
+            require(delegate != msg.sender, Errors.InvalidDelegate());
+            require(isRegisteredDelegate[delegate], Errors.DelegateNotRegistered()); // implicit address(0) check: newDelegate != address(0)
 
-        
-        //note: intentionally not enforced: delegates may have unregistered, so users must always be able to reclaim their locks
-        //require(isRegisteredDelegate[delegate], "Delegate not registered");
+            DataTypes.Lock memory lock = locks[lockId];
+            
+            // sanity check: lock
+            require(lock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(lock.owner == msg.sender, Errors.InvalidOwner());
 
-        //note: intentionally not enforced: expired locks should be undelegated
-        //require(lock.expiry > block.timestamp, "Lock expired");
+            // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]    
+            // allow the delegate to meaningfully vote for the next epoch        
+            require(lock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
 
-        
-        // Update delegate: apply decay since lastUpdate and any scheduled slope changes [required before removing the lock from delegate's balance]
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint256 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
-        // Update user: false: update user's personal aggregated veBalance; not delegated veBalance [required before we can book lock's veBalance to user]
-        (, DataTypes.VeBalance memory veUser,,,) = _updateAccountAndGlobal(msg.sender, false);
+            // Update user & global: account for decay since lastUpdate and any scheduled slope changes | false since lock is not yet delegated
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser, uint256 currentEpochStart,,) = _updateAccountAndGlobal(msg.sender, false);
+            
+            // Update delegate: required before adding the lock to delegate's balance [ignore global, since it was handled in earlier update]
+            // true: update delegate's aggregated veBalance; not personal
+            (, DataTypes.VeBalance memory veDelegate,,,) = _updateAccountAndGlobal(delegate, true);
 
-        // ----- accounts and global updated to currentEpoch -----
+            // get the next epoch start
+            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
-        // get nextEpoch
-        uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+            // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
+            DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
 
-        // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
-        DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
+            // Pending update: In next epoch, remove specified lock from user's aggregated veBalance, to prevent user from voting with delegated lock
+            pendingUserDeltas[msg.sender][nextEpochStart].subtractions = _add(pendingUserDeltas[msg.sender][nextEpochStart].subtractions, lockVeBalance);
+            userSlopeChanges[msg.sender][lock.expiry] -= lockVeBalance.slope;
+           
+            // Pending update: In next epoch, add the lock to delegate's delegated balance
+            pendingDelegateDeltas[delegate][nextEpochStart].additions = _add(pendingDelegateDeltas[delegate][nextEpochStart].additions, lockVeBalance);
+            delegateSlopeChanges[delegate][lock.expiry] += lockVeBalance.slope;
 
+            // Pending update: In next epoch, add the lock to delegate's aggregated balance
+            pendingAggregatedDeltas[msg.sender][delegate][nextEpochStart].additions = _add(pendingAggregatedDeltas[msg.sender][delegate][nextEpochStart].additions, lockVeBalance);
 
-        // STACKING FIX: Check if there's already a forward-booked value[from a prior delegate/undelegate call in the same epoch]
-        DataTypes.VeBalance memory veDelegateNextEpoch;
-        if (delegateHasForwardBooking[lock.delegate][nextEpochStart]) {
-            // Use the existing forward-booked value as base
-            veDelegateNextEpoch = delegateHistory[lock.delegate][nextEpochStart];
-        } else {
-            // update currentEpoch's veBal to nextEpoch by applying slope changes
-            uint256 expiringSlope = delegateSlopeChanges[lock.delegate][nextEpochStart];
-            veDelegateNextEpoch = _subtractExpired(veDelegate, expiringSlope, nextEpochStart);
+            // transfer veMoca tokens from user to delegate 
+            //_transfer(msg.sender, delegate, lockVeBalance.bias);
+
+            // STORAGE: mark lock as delegated
+            lock.delegate = delegate;
+            locks[lockId] = lock;
+
+            // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
+            //delegatedAggregationHistory[msg.sender][delegate][nextEpochStart] = _add(delegatedAggregationHistory[msg.sender][delegate][nextEpochStart], lockVeBalance);
+            // slope changes for user's delegated locks [to support VotingController's claimRewardsFromDelegate()]
+            userDelegateSlopeChanges[msg.sender][delegate][lock.expiry] += lockVeBalance.slope;
+            
+            // STORAGE: update global state
+            veGlobal = veGlobal_;   
+
+            // Emit event
+            //emit LockDelegated(lockId, msg.sender, delegate);
         }
 
-        // STACKING FIX: Check if there's already a forward-booked value[from a prior delegate/undelegate call in the same epoch]
-        DataTypes.VeBalance memory veUserNextEpoch;
-        if (userHasForwardBooking[msg.sender][nextEpochStart]) {
-            // Use the existing forward-booked value
-            veUserNextEpoch = userHistory[msg.sender][nextEpochStart];
-        } else {
-            // update currentEpoch's veBal to nextEpoch by applying slope changes
-            uint256 expiringSlope = userSlopeChanges[msg.sender][nextEpochStart];
-            veUserNextEpoch = _subtractExpired(veUser, expiringSlope, nextEpochStart);
+        //note: use array for locks
+        /**
+         * @notice Undelegates a lock's voting power from a registered delegate
+         * @dev Only the lock creator can undelegate. The lock must be currently delegated and not expired.
+         *      Updates user and delegate veBalance, slope changes, and aggregation history
+         *      Prevents double-voting by forward-booking the undelegation to the next epoch 
+         *      Delegate can vote with the lock for the current epoch, but no longer from the next epoch onwards
+         * @param lockId The unique identifier of the lock to undelegate
+         */
+        function undelegateLock(bytes32 lockId) external whenNotPaused {
+            DataTypes.Lock memory lock = locks[lockId];
+
+            // sanity checks
+            require(lock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(lock.delegate != address(0), Errors.InvalidDelegate());
+            require(lock.owner == msg.sender, Errors.InvalidOwner());
+            require(lock.isUnlocked == false, Errors.PrincipalsAlreadyReturned());
+
+            
+            //note: intentionally not enforced: delegates may have unregistered, so users must always be able to reclaim their locks
+            //require(isRegisteredDelegate[delegate], "Delegate not registered");
+
+            //note: intentionally not enforced: expired locks should be undelegated
+            //require(lock.expiry > block.timestamp, "Lock expired");
+
+            
+            // Update delegate: apply decay since lastUpdate and any scheduled slope changes [required before removing the lock from delegate's balance]
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veDelegate, uint256 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
+            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+
+            // get the lock's current veBalance [no checkpoint required as lock attributes have not changed]
+            DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
+
+            // Remove the lock from delegate's aggregated veBalance
+            veDelegate = _sub(veDelegate, lockVeBalance);
+            delegateHistory[lock.delegate][nextEpochStart] = veDelegate;
+            delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
+
+            // Update user: false: update user's personal aggregated veBalance; not delegated veBalance [required before we can book lock's veBalance to user]
+            (, DataTypes.VeBalance memory veUser,,,) = _updateAccountAndGlobal(msg.sender, false);
+
+            // Add the lock to user's personal aggregated veBalance
+            veUser = _add(veUser, lockVeBalance);
+            userHistory[msg.sender][nextEpochStart] = veUser;
+            userSlopeChanges[msg.sender][lock.expiry] += lockVeBalance.slope;
+
+            // transfer veMoca tokens from user to delegate 
+            _transfer(lock.delegate, msg.sender, lockVeBalance.bias);
+
+            // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
+            // note: delegated veBalance booked to nextEpochStart
+            delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart] = _sub(delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart], lockVeBalance);
+            
+            // NOTE: FIX: Cancel scheduled dslope for this lock's expiry in user-delegate context
+            userDelegateSlopeChanges[msg.sender][lock.delegate][lock.expiry] -= lockVeBalance.slope;
+
+            // STORAGE: update global state
+            veGlobal = veGlobal_;
+
+            // STORAGE: delete delegate address from lock
+            delete lock.delegate;
+            locks[lockId] = lock;
+
+            emit Events.LockUndelegated(lockId, msg.sender, lock.delegate);
         }
-
-        // Remove the lock from delegate's aggregated veBalance of the next epoch [prev. forward-booked or current veBalance]
-        veDelegateNextEpoch = _sub(veDelegateNextEpoch, lockVeBalance);
-        delegateHistory[lock.delegate][nextEpochStart] = veDelegateNextEpoch;
-        delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
-        delegateHasForwardBooking[lock.delegate][nextEpochStart] = true;
-
-        // Add the lock to user's personal aggregated veBalance of the next epoch
-        veUserNextEpoch = _add(veUserNextEpoch, lockVeBalance);
-        userHistory[msg.sender][nextEpochStart] = veUserNextEpoch;
-        userSlopeChanges[msg.sender][lock.expiry] += lockVeBalance.slope;
-        userHasForwardBooking[msg.sender][nextEpochStart] = true;
-
-        // transfer veMoca tokens from user to delegate 
-        _transfer(lock.delegate, msg.sender, lockVeBalance.bias);
-
-        // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
-        // note: delegated veBalance booked to nextEpochStart
-        delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart] = _sub(delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart], lockVeBalance);
         
-        // NOTE: FIX: Cancel scheduled dslope for this lock's expiry in user-delegate context
-        userDelegateSlopeChanges[msg.sender][lock.delegate][lock.expiry] -= lockVeBalance.slope;
+        /**
+         * @notice Switches the delegate of a lock to another registered delegate
+         * @dev Only the lock creator can switch the delegate. The lock must not be expired and must be currently delegated.
+         *      Updates user and delegate veBalance, slope changes, and aggregation history
+         *      Prevents double-voting by forward-booking the delegation to the next epoch 
+         *      Current delegate can vote with the lock for the current epoch, but no longer from the next epoch onwards
+         * @param lockId The unique identifier of the lock
+         * @param newDelegate The address of the new delegate
+         */
+        function switchDelegate(bytes32 lockId, address newDelegate) external whenNotPaused {
+            // sanity check: delegate
+            require(newDelegate != address(0), Errors.InvalidAddress());
+            require(newDelegate != msg.sender, Errors.InvalidDelegate());
+            require(isRegisteredDelegate[newDelegate], Errors.DelegateNotRegistered());      // implicit address(0) check: newDelegate != address(0)
 
-        // STORAGE: delete delegate address from lock
-        delete lock.delegate;
-        locks[lockId] = lock;
+            DataTypes.Lock memory lock = locks[lockId];
 
-        emit Events.LockUndelegated(lockId, msg.sender, lock.delegate);
-    }
-    
-    /**
-        * @notice Switches the delegate of a lock to another registered delegate
-        * @dev Only the lock creator can switch the delegate. The lock must not be expired and must be currently delegated.
-        *      Updates user and delegate veBalance, slope changes, and aggregation history
-        *      Prevents double-voting by forward-booking the delegation to the next epoch 
-        *      Current delegate can vote with the lock for the current epoch, but no longer from the next epoch onwards
-        * @param lockId The unique identifier of the lock
-        * @param newDelegate The address of the new delegate
-        */
-    function switchDelegate(bytes32 lockId, address newDelegate) external whenNotPaused {
-        // sanity check: delegate
-        require(newDelegate != address(0), Errors.InvalidAddress());
-        require(newDelegate != msg.sender, Errors.InvalidDelegate());
-        require(isRegisteredDelegate[newDelegate], Errors.DelegateNotRegistered());      // implicit address(0) check: newDelegate != address(0)
+            // sanity check: lock
+            require(lock.lockId != bytes32(0), Errors.InvalidLockId());
+            require(lock.owner == msg.sender, Errors.InvalidOwner());
+            require(lock.delegate != newDelegate, Errors.InvalidDelegate());
 
-        DataTypes.Lock memory lock = locks[lockId];
+            // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]            
+            // allow the delegate to meaningfully vote for the next epoch
+            require(lock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
 
-        // sanity check: lock
-        require(lock.lockId != bytes32(0), Errors.InvalidLockId());
-        require(lock.owner == msg.sender, Errors.InvalidOwner());
-        require(lock.delegate != newDelegate, Errors.InvalidDelegate());
+            // Update current delegate: account for decay since lastUpdate and any scheduled slope changes [required before removing the lock from the current delegate]
+            // true: update current delegate's aggregated veBalance; not personal
+            (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veCurrentDelegate, uint256 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
+            uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
-        // lock must have at least 2 more epoch left, so that the delegate can vote in the next epoch [1 epoch for delegation, 1 epoch for non-zero voting power]            
-        // allow the delegate to meaningfully vote for the next epoch
-        require(lock.expiry > EpochMath.getEpochEndTimestamp(EpochMath.getCurrentEpochNumber() + 1), "Lock expires too soon");
+            // get lock's current veBalance [no checkpoint required as lock attributes have not changed]
+            DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
+            
+            // Remove lock from current delegate
+            veCurrentDelegate = _sub(veCurrentDelegate, lockVeBalance);
+            delegateHistory[lock.delegate][nextEpochStart] = veCurrentDelegate;
+            delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
 
-        // Update current delegate: account for decay since lastUpdate and any scheduled slope changes [required before removing the lock from the current delegate]
-        // true: update current delegate's aggregated veBalance; not personal
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veCurrentDelegate, uint256 currentEpochStart,,) = _updateAccountAndGlobal(lock.delegate, true);
-        // Update new delegate: required before adding the lock to delegate's balance [ignore global, since it was handled in earlier update]
-        // true: update new delegate's aggregated veBalance; not personal
-        (, DataTypes.VeBalance memory veNewDelegate,,,) = _updateAccountAndGlobal(newDelegate, true);
+            // Update new delegate: required before adding the lock to delegate's balance [ignore global, since it was handled in earlier update]
+            // true: update new delegate's aggregated veBalance; not personal
+            (, DataTypes.VeBalance memory veNewDelegate,,,) = _updateAccountAndGlobal(newDelegate, true);
+            
+            // Add lock to new delegate
+            veNewDelegate = _add(veNewDelegate, lockVeBalance);
+            delegateHistory[newDelegate][nextEpochStart] = veNewDelegate;
+            delegateSlopeChanges[newDelegate][lock.expiry] += lockVeBalance.slope;
 
-        // STORAGE: update current delegate + new delegate for current epoch
-        delegateHistory[lock.delegate][currentEpochStart] = veCurrentDelegate;
-        delegateHistory[newDelegate][currentEpochStart] = veNewDelegate;
-        // STORAGE: update global state
-        veGlobal = veGlobal_;
-
-        // ----- accounts and global updated to currentEpoch -----
-
-        // get nextEpoch
-        uint256 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
-
-        // get lock's current veBalance [no checkpoint required as lock attributes have not changed]
-        DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock); 
+            // Transfer veMoca tokens from current delegate to new delegate
+            _transfer(lock.delegate, newDelegate, lockVeBalance.bias);
 
 
-        // STACKING FIX: Check if there's already a forward-booked value[from a prior delegate/switch call in the same epoch]
-        DataTypes.VeBalance memory veCurrentDelegateNextEpoch;
-        if (delegateHasForwardBooking[lock.delegate][nextEpochStart]) {
-            // Use the existing forward-booked value as base
-            veCurrentDelegateNextEpoch = delegateHistory[lock.delegate][nextEpochStart];
-        } else {
-            // update currentEpoch's veBal to nextEpoch by applying slope changes
-            uint256 expiringSlope = delegateSlopeChanges[lock.delegate][nextEpochStart];
-            veCurrentDelegateNextEpoch = _subtractExpired(veCurrentDelegate, expiringSlope, nextEpochStart);
+            // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
+            // note: delegated veBalance booked to nextEpochStart
+            delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart] = _sub(delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart], lockVeBalance);
+            delegatedAggregationHistory[msg.sender][newDelegate][nextEpochStart] = _add(delegatedAggregationHistory[msg.sender][newDelegate][nextEpochStart], lockVeBalance);
+
+            // NOTE: FIX: Reschedule user-delegate slope changes (cancel from old, add to new)
+            userDelegateSlopeChanges[msg.sender][lock.delegate][lock.expiry] -= lockVeBalance.slope;
+            userDelegateSlopeChanges[msg.sender][newDelegate][lock.expiry] += lockVeBalance.slope;
+
+            // STORAGE: update lock
+            lock.delegate = newDelegate;
+            locks[lockId] = lock;
+            
+            // STORAGE: update global state
+            veGlobal = veGlobal_;
+
+            emit Events.LockDelegateSwitched(lockId, msg.sender, lock.delegate, newDelegate);
         }
-
-        // STACKING FIX: Check if there's already a forward-booked value[from a prior delegate/switch call in the same epoch]
-        DataTypes.VeBalance memory veNewDelegateNextEpoch;
-        if (delegateHasForwardBooking[newDelegate][nextEpochStart]) {
-            // Use the existing forward-booked value as base
-            veNewDelegateNextEpoch = delegateHistory[newDelegate][nextEpochStart];
-        } else {
-            // update currentEpoch's veBal to nextEpoch by applying slope changes
-            uint256 expiringSlope = delegateSlopeChanges[newDelegate][nextEpochStart];
-            veNewDelegateNextEpoch = _subtractExpired(veNewDelegate, expiringSlope, nextEpochStart);
-        }
-
-        
-        // Remove lock from current delegate's aggregated veBalance of the next epoch [prev. forward-booked or current veBalance]
-        veCurrentDelegateNextEpoch = _sub(veCurrentDelegateNextEpoch, lockVeBalance);
-        delegateHistory[lock.delegate][nextEpochStart] = veCurrentDelegateNextEpoch;
-        delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
-        delegateHasForwardBooking[lock.delegate][nextEpochStart] = true;
-
-        // Add lock to new delegate's aggregated veBalance of the next epoch
-        veNewDelegateNextEpoch = _add(veNewDelegateNextEpoch, lockVeBalance);
-        delegateHistory[newDelegate][nextEpochStart] = veNewDelegateNextEpoch;
-        delegateSlopeChanges[newDelegate][lock.expiry] += lockVeBalance.slope;
-        delegateHasForwardBooking[newDelegate][nextEpochStart] = true;
-
-        // Transfer veMoca tokens from current delegate to new delegate
-        _transfer(lock.delegate, newDelegate, lockVeBalance.bias);
-
-
-        // delegatedAggregationHistory tracks how much veBalance a user has delegated out; to be used for rewards accounting by VotingController
-        delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart] = _sub(delegatedAggregationHistory[msg.sender][lock.delegate][nextEpochStart], lockVeBalance);
-        delegatedAggregationHistory[msg.sender][newDelegate][nextEpochStart] = _add(delegatedAggregationHistory[msg.sender][newDelegate][nextEpochStart], lockVeBalance);
-
-        // NOTE: Reschedule user-delegate slope changes (cancel from old, add to new)
-        userDelegateSlopeChanges[msg.sender][lock.delegate][lock.expiry] -= lockVeBalance.slope;
-        userDelegateSlopeChanges[msg.sender][newDelegate][lock.expiry] += lockVeBalance.slope;
-
-        // STORAGE: update lock
-        lock.delegate = newDelegate;
-        locks[lockId] = lock;
-        
-        emit Events.LockDelegateSwitched(lockId, msg.sender, lock.delegate, newDelegate);
-    }
 
 
 //-------------------------------Admin function: createLockFor()---------------------------------------------
@@ -671,7 +588,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         emit Events.DelegateUnregistered(delegate);
     }
 
-//-------------------------------Internal: Update functions----------------------------------------------       
+//-------------------------------Internal: update functions----------------------------------------------       
         
         // delegate can be address(0)
         // lock must last for at least 2 Epochs: to meaningfully vote for the next epoch [we are sure] 
@@ -834,10 +751,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
             (
                 mapping(address => mapping(uint256 => DataTypes.VeBalance)) storage accountHistoryMapping,
                 mapping(address => mapping(uint256 => uint256)) storage accountSlopeChangesMapping,
-                mapping(address => uint256) storage accountLastUpdatedMapping,
-                mapping(address => mapping(uint256 => bool)) storage accountHasForwardBookingMapping
+                mapping(address => uint256) storage accountLastUpdatedMapping
             ) 
-                = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp, delegateHasForwardBooking) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp, userHasForwardBooking);
+                = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
 
             // CACHE: global veBalance + lastUpdatedTimestamp
             DataTypes.VeBalance memory veGlobal_ = veGlobal;
@@ -851,10 +767,8 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // LOAD: account's previous veBalance
             DataTypes.VeBalance memory veAccount = accountHistoryMapping[account][accountLastUpdatedAt];      // either its empty struct or the previous veBalance
 
-            // RETURN: account is updated to current epoch; but global may not be, due to forward-booking from delegation actions
-            if (accountLastUpdatedAt >= currentEpochStart) {
-                // update global to current epoch
-                veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart); 
+            // RETURN: if both global and account are up to date [no updates required]
+            if (accountLastUpdatedAt >= currentEpochStart){
                 return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
             }
 
@@ -888,20 +802,9 @@ contract VotingEscrowMoca is ERC20, Pausable {
                     totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);                 // STORAGE: updates totalSupplyAt[]
                 }
                 
-                // --- UPDATE ACCOUNT: Check for forward-booked checkpoint first ---
-                if (accountHasForwardBookingMapping[account][accountLastUpdatedAt]) {
-                    // Use the forward-booked value (even if zero) 
-                    veAccount = accountHistoryMapping[account][accountLastUpdatedAt];
-                    // Clear the forward-booking flag as we've now processed it
-                    accountHasForwardBookingMapping[account][accountLastUpdatedAt] = false;
-
-                } else {    // standard process
-                    
-                    // use previous epoch's value and apply slope changes for the epoch
-                    uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];
-                    veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
-                }
-
+                // UPDATE ACCOUNT: apply scheduled slope reductions & decay for this epoch | cumulative of account's expired locks
+                uint256 expiringSlope = accountSlopeChangesMapping[account][accountLastUpdatedAt];    
+                veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
                 
                 // book account checkpoint 
                 accountHistoryMapping[account][accountLastUpdatedAt] = veAccount;
@@ -914,6 +817,65 @@ contract VotingEscrowMoca is ERC20, Pausable {
             // return
             return (veGlobal_, veAccount, currentEpochStart, accountHistoryMapping, accountSlopeChangesMapping);
         }
+
+
+        /** Note: does not update `userLastUpdatedTimestamp[user]` or `delegateLastUpdatedTimestamp[delegate]`
+         * @notice Processes and applies all pending delegation deltas up to the specified epoch
+         * @dev This function consumes pending deltas and updates the actual storage mappings.
+         *      Deletes the pending deltas after processing.
+         *      Slope changes were handled in the respective top-level functions [delegateLock, switchDelegate, undelegateLock]
+         * @param account The user address whose delegation history to update
+         * @param delegate The delegate address 
+         * @param userLastUpdatedAt The last updated timestamp of the user
+         * @param currentEpochStart The epoch up to which to process deltas
+        */
+        function _bookPendingDelegations(address user, address delegate, uint256 userLastUpdatedAt, uint256 currentEpochStart) internal {
+          
+            while(userLastUpdatedAt < currentEpochStart) {
+                userLastUpdatedAt += EpochMath.EPOCH_DURATION;
+
+                uint256 totalIncomingBias;
+                
+                // USER: update userHistory
+                DataTypes.VeBalanceDelta storage userPendingDeltaPtr = pendingUserDeltas[user][userLastUpdatedAt];
+                if (userPendingDeltaPtr.additions.bias > 0 || userPendingDeltaPtr.additions.slope > 0) {
+                    userHistory[user][userLastUpdatedTimestamp].bias += userPendingDeltaPtr.additions.bias;
+                    userHistory[user][userLastUpdatedTimestamp].slope += userPendingDeltaPtr.additions.slope;
+                }
+                if (userPendingDeltaPtr.subtractions.bias > 0 || userPendingDeltaPtr.subtractions.slope > 0) {
+                    userHistory[user][userLastUpdatedTimestamp].bias -= userPendingDeltaPtr.subtractions.bias;
+                    userHistory[user][userLastUpdatedTimestamp].slope -= userPendingDeltaPtr.subtractions.slope;
+                }
+
+                // DELEGATE: update delegateHistory
+                DataTypes.VeBalanceDelta storage delegatePendingDeltaPtr = pendingDelegateDeltas[delegate][userLastUpdatedAt];
+                if (delegatePendingDeltaPtr.additions.bias > 0 || delegatePendingDeltaPtr.additions.slope > 0) {
+                    delegateHistory[delegate][userLastUpdatedTimestamp].bias += delegatePendingDeltaPtr.additions.bias;
+                    delegateHistory[delegate][userLastUpdatedTimestamp].slope += delegatePendingDeltaPtr.additions.slope;
+                }
+                if (delegatePendingDeltaPtr.subtractions.bias > 0 || delegatePendingDeltaPtr.subtractions.slope > 0) {
+                    delegateHistory[delegate][userLastUpdatedTimestamp].bias -= delegatePendingDeltaPtr.subtractions.bias;
+                    delegateHistory[delegate][userLastUpdatedTimestamp].slope -= delegatePendingDeltaPtr.subtractions.slope;
+                }
+
+                // AGGREGATED: update delegatedAggregationHistory
+                DataTypes.VeBalanceDelta storage aggregatedPendingDeltaPtr = pendingAggregatedDeltas[user][delegate][userLastUpdatedAt];
+                if (aggregatedPendingDeltaPtr.additions.bias > 0 || aggregatedPendingDeltaPtr.additions.slope > 0) {
+                    delegatedAggregationHistory[user][delegate][userLastUpdatedTimestamp].bias += aggregatedPendingDeltaPtr.additions.bias;
+                    delegatedAggregationHistory[user][delegate][userLastUpdatedTimestamp].slope += aggregatedPendingDeltaPtr.additions.slope;
+                }
+                if (aggregatedPendingDeltaPtr.subtractions.bias > 0 || aggregatedPendingDeltaPtr.subtractions.slope > 0) {
+                    delegatedAggregationHistory[user][delegate][userLastUpdatedTimestamp].bias -= aggregatedPendingDeltaPtr.subtractions.bias;
+                    delegatedAggregationHistory[user][delegate][userLastUpdatedTimestamp].slope -= aggregatedPendingDeltaPtr.subtractions.slope;
+                }
+
+                // DELETE: pending deltas
+                delete pendingUserDeltas[user][userLastUpdatedAt];      
+                delete pendingDelegateDeltas[delegate][userLastUpdatedAt];
+                delete pendingAggregatedDeltas[user][delegate][userLastUpdatedAt];
+            }
+        }
+
 
         // TODO: any possible rounding errors due to calc. of delta; instead of removed old then add new?
         function _modifyPosition(
@@ -978,34 +940,6 @@ contract VotingEscrowMoca is ERC20, Pausable {
             
             return newVeBalance;
         }
-
-        // Eager simulation (from prior)
-        function _simulateAccountUpdateTo(address account, bool isDelegate, uint256 targetETime) internal view returns (DataTypes.VeBalance memory) {
-            // get account's slope changes mapping and last updated timestamp
-            mapping(uint256 => uint256) storage accountSlopeChangesMapping = isDelegate ? delegateSlopeChanges[account] : userSlopeChanges[account];
-            uint256 accountLastUpdatedAt = isDelegate ? delegateLastUpdatedTimestamp[account] : userLastUpdatedTimestamp[account];
-
-            // get account's previous veBalance
-            DataTypes.VeBalance memory veAccount = isDelegate ? delegateHistory[account][accountLastUpdatedAt] : userHistory[account][accountLastUpdatedAt];
-
-            // if account has no previous locks created, set accountLastUpdatedAt to current epoch start
-            if (accountLastUpdatedAt == 0) accountLastUpdatedAt = EpochMath.getCurrentEpochStart();
-
-            // update account's veBalance to targetETime
-            while (accountLastUpdatedAt < targetETime) {
-                // advance 1 epoch
-                accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
-                // apply slope changes for the epoch
-                uint256 expiringSlope = accountSlopeChangesMapping[accountLastUpdatedAt];
-                veAccount = _subtractExpired(veAccount, expiringSlope, accountLastUpdatedAt);
-            }
-            
-            return veAccount;
-        }
-    
-//-------------------------------Internal: delegate functions--------------------------------------------
-
-
 
 //-------------------------------Internal: library functions--------------------------------------------
 
@@ -1104,7 +1038,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
                 uint256 mid = low + (high - low) / 2;
                 uint256 midETime = mid * epochDuration;
 
-                if (accountHistory[midETime].bias > 0 || accountHistory[midETime].slope > 0) { 
+                if (accountHistory[midETime].bias > 0 || accountHistory[midETime].slope > 0) {  
                     latestEpoch = mid;
                     low = mid + 1;  // Search for a later one.
                 } else {
@@ -1117,7 +1051,7 @@ contract VotingEscrowMoca is ERC20, Pausable {
         }
 
         /**
-         * @dev Simulates forward application of slope changes in view for absolute bias systems.
+         * @dev Simulates forward application of slope changes in view
          *      Loops over potential eTimes (multiples of EPOCH_DURATION) and applies adjustments if any.
          *      Assumes eTimes are aligned to multiples of EPOCH_DURATION.
          * @param ve The starting VeBalance (will be modified in memory).

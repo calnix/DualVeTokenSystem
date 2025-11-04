@@ -30,6 +30,7 @@
 2. Claimed asset will be either native moca or wrapped moca - `_transferMocaAndWrapIfFailWithGasLimit`
 3. Assets are transferred to `ESCROWED_MOCA_TREASURY`
 
+**TODO**: change to `cronJob`.
 
 ## Ad-hoc: [VotingEscrowMoca.sol]
 

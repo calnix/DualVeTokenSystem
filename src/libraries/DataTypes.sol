@@ -169,6 +169,11 @@ library DataTypes {
         uint128 slope;
     }
 
+    struct VeBalanceDelta {
+        DataTypes.VeBalance additions;
+        DataTypes.VeBalance subtractions;
+    }
+
 // --------- EscrowedMoca.sol -------
 
     struct RedemptionOption {
