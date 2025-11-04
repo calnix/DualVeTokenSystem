@@ -860,3 +860,32 @@ Not possible for new slope changes to be scheduled at nextEpochStart after a for
 - No need to update them for new slope changes
 
 This is a clever design that simplifies the implementation - forward-booked checkpoints are immutable (except for delegation stacking within the same epoch).
+
+
+# _viewForwardAbsoluteWithForwardBookings
+
+**What’s going on**
+
+In one transaction you might do:
+(1) delegateLock → forward-books the (user, delegate) pair at nextEpochStart with the lock’s current ve (call it X) and sets userDelegateHasForwardBooking[user][delegate][nextEpochStart] = true.
+(2) increaseAmount → the lock gets bigger by Δ in the same epoch/tx.
+
+Your increaseAmount code correctly adds Δ to the delegate’s account forward-booked entry (because delegateHasForwardBooking[delegate][nextEpochStart] is true).
+But it does not add Δ to the (user, delegate) pair forward-booked entry at nextEpochStart.
+
+Later, when `getSpecificDelegatedBalanceAtEpochEnd(user, delegate, epoch)` runs, your updated `_findClosestPastETime` (flag-only) sees:
+
+```
+if (accountHasForwardBooking[midETime]) {
+    latestEpoch = mid;      // mid is valid; push right
+    low = mid + 1;
+}
+```
+So it anchors on the forward-booked checkpoint at nextEpochStart—which is still X (from delegateLock), not X + Δ.
+The forward simulator then starts from that stale base, so the pair’s value is understated for that epoch.
+
+**Why forward-booking “misses” here**
+
+Forward-booking does handle stacking for account mappings because increaseAmount already bumps the delegate’s forward-booked slot.
+It misses for the (user,delegate) pair because nothing bumps delegatedAggregationHistory[user][delegate][nextEpochStart] after delegateLock wrote X.
+Since your finder now relies only on the flag, it will always pick that latest flagged epoch—even if the value in delegatedAggregationHistory wasn’t brought up to date.
