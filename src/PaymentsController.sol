@@ -788,7 +788,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
 
     // clear all tiers
     function clearVerifierSubsidyTiers() external onlyPaymentsAdmin whenNotPaused {
-        // clear all tiers
         delete _subsidyTiers;
         emit Events.VerifierStakingTiersCleared();
     }
