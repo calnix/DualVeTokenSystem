@@ -743,7 +743,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     }
 
     /**
-     * @notice Sets multiple subsidy tiers at once.
+     * @notice Overwrites the subsidy tiers array with latest inputs. [Ensures ascending order and contiguity]
      * @dev Only callable by the PaymentsController admin.
      * @param mocaStaked The moca staked for each tier.
      * @param subsidyPercentages The subsidy percentage for each tier.
