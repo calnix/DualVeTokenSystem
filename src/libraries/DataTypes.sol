@@ -58,6 +58,10 @@ library DataTypes {
         bytes32 poolId;
     }
 
+    struct SubsidyTier {
+        uint128 mocaStaked;           // minimum MOCA required for this tier
+        uint128 subsidyPercentage;    // subsidy percentage for this tier
+    }
     // epoch accounting: treasury + voters
     struct FeesAccrued {
         uint128 feesAccruedToProtocol;

@@ -12,6 +12,7 @@ library Errors {
 
     // --------- Generic ---------
     error InvalidId();
+    error InvalidIndex();
     error InvalidUser(); 
     error InvalidAmount();
     error InvalidFeePct();
@@ -43,6 +44,8 @@ library Errors {
     error ProtocolFeeAlreadyWithdrawn();
     error VotersFeeAlreadyWithdrawn();
     error ZeroVotersFee();
+    error InvalidMocaStakedTierOrder();
+    error InvalidSubsidyPercentageTierOrder();
     error OnlyCallableByEmergencyExitHandlerOrVerifier();
 
 // --------- VotingEscrowMoca.sol ---------

@@ -251,6 +251,8 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
 
 //-------------------------------CronJob functions-----------------------------------------
 
+    //note: P wants this to be scripted via cronjob, instead of AssetManager.
+
     /**
      * @notice Escrows native Moca on behalf of multiple users.
      * @dev Transfers native Moca from the caller to the contract and mints esMoca to each user. 
@@ -287,7 +289,6 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         emit Events.StakedOnBehalf(users, amounts);
     }
 
-//-------------------------------Asset manager functions-----------------------------------------
     
     /**
      * @notice Claims accrued penalty amounts for voters and treasury. [Penalties are accrued in Moca]
@@ -295,7 +296,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      *      Updates claimed penalty tracking variables to match total accrued.
      *      Note: potential tiny dust from rounding.
      */
-    function claimPenalties() external payable onlyAssetManager whenNotPaused {
+    function claimPenalties() external payable onlyCronJob whenNotPaused {
         // get treasury address
         address esMocaTreasury = accessController.ESCROWED_MOCA_TREASURY();
         require(esMocaTreasury != address(0), Errors.InvalidAddress());
@@ -321,7 +322,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @dev Only callable by EscrowedMocaAdmin.
      * @param amount The amount of esMoca to release to the admin caller.
      */
-    function releaseEscrowedMoca(uint256 amount) external payable onlyAssetManager whenNotPaused {
+    function releaseEscrowedMoca(uint256 amount) external payable onlyCronJob whenNotPaused {
         // sanity check: amount + balance
         require(amount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= amount, Errors.InsufficientBalance());
@@ -449,11 +450,6 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     }
 
     // for depositing/withdrawing assets [stakeOnBehalf(), ]
-    modifier onlyAssetManager() {
-        require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
-        _;
-    }
-
     modifier onlyCronJob() {
         require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
         _;

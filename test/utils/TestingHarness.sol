@@ -9,9 +9,9 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 // import all contracts
 import {AccessController} from "../../src/AccessController.sol";
 import {IssuerStakingController} from "../../src/IssuerStakingController.sol";
-//import {PaymentsController} from "../../src/PaymentsController.sol";
+import {PaymentsController} from "../../src/PaymentsController.sol";
 import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
-import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
+//import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
 //import {VotingController} from "../../src/VotingController.sol";
 
 
@@ -39,9 +39,9 @@ abstract contract TestingHarness is Test {
     // actual contracts
     AccessController public accessController;
     IssuerStakingController public issuerStakingController;
-    //PaymentsController public paymentsController;
+    PaymentsController public paymentsController;
     EscrowedMoca public esMoca;
-    VotingEscrowMoca public veMoca;
+    //VotingEscrowMoca public veMoca;
     //VotingController public votingController;
     
     // mocks
@@ -158,22 +158,22 @@ abstract contract TestingHarness is Test {
         // 4. Deploy IssuerStakingController
         issuerStakingController = new IssuerStakingController(address(accessController), 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
 
-/*
+
         // 5. Deploy PaymentsController
         paymentsController = new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
              address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
-*/ 
+ 
 
         // 6. Deploy EscrowedMoca
-        esMoca = new EscrowedMoca(address(accessController), 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); // 10% penalty split
+        //esMoca = new EscrowedMoca(address(accessController), 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); // 10% penalty split
 
 
         // 7. Deploy VotingEscrowMoca
         //veMoca = new VotingEscrowMoca(address(accessController), address(votingController), address(esMoca), address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
         
         //7.1: Whitelist VotingEscrowMoca in EscrowedMoca for transfers
-        vm.prank(escrowedMocaAdmin);
-        esMoca.setWhitelistStatus(address(veMoca), true);
+        //vm.prank(escrowedMocaAdmin);
+        //esMoca.setWhitelistStatus(address(veMoca), true);
 
         
         // ---- Misc. ---------
