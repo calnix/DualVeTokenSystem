@@ -147,7 +147,7 @@ library Events {
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VotingFeePercentageUpdated(uint256 voterFeePercentage);
     event VerifierStakingTiersSet(uint128[] mocaStaked, uint128[] subsidyPercentages);
-    event VerifierStakingTiersCleared(uint256[] tierIndexes);
+    event VerifierStakingTiersCleared();
     // updateVerifierContract
     event VerifierContractUpdated(address oldVerifierContract, address newVerifierContract);
         

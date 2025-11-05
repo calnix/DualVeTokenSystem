@@ -684,7 +684,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     function _getSubsidyPercentage(uint256 verifierMocaStaked) internal view returns (uint256) {
         
         // Loop backwards to find highest qualifying tier immediately
-        uint256 i = Constants.MAX_SUBSIDY_TIERS;
+        uint256 i = 10;
         while(i > 0) {
             --i;
             // get tier's moca staked
@@ -750,7 +750,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      */
     function setVerifierSubsidyTiers(uint128[] calldata mocaStaked, uint128[] calldata subsidyPercentages) external onlyPaymentsAdmin whenNotPaused {
         uint256 length = mocaStaked.length;
-        require(length > 0 && length <= Constants.MAX_SUBSIDY_TIERS, Errors.InvalidArray());
+        require(length > 0 && length <= 10, Errors.InvalidArray());
         require(length == subsidyPercentages.length, Errors.MismatchedArrayLengths());
 
         // Build a new contiguous tier set: indices [0..length-1] set, [length..MAX-1] zeroed
@@ -786,19 +786,11 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.VerifierStakingTiersSet(mocaStaked, subsidyPercentages);
     }
 
-    // clear multiple tiers at once
-    function clearVerifierSubsidyTiers(uint256[] calldata tierIndexes) external onlyPaymentsAdmin whenNotPaused {
-        uint256 length = tierIndexes.length;
-        require(length <= Constants.MAX_SUBSIDY_TIERS, Errors.InvalidArray());
-
-        for(uint256 i; i < length; ++i) {
-            require(tierIndexes[i] < Constants.MAX_SUBSIDY_TIERS, Errors.InvalidIndex()); // index is 0-9
-
-            delete _subsidyTiers[tierIndexes[i]].mocaStaked;
-            delete _subsidyTiers[tierIndexes[i]].subsidyPercentage;
-        }
-
-        emit Events.VerifierStakingTiersCleared(tierIndexes);
+    // clear all tiers
+    function clearVerifierSubsidyTiers() external onlyPaymentsAdmin whenNotPaused {
+        // clear all tiers
+        delete _subsidyTiers;
+        emit Events.VerifierStakingTiersCleared();
     }
 
 
@@ -1135,7 +1127,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @return tier The subsidy tier at the specified index.
      */
     function getSubsidyTier(uint256 tierIndex) external view returns (DataTypes.SubsidyTier memory) {
-        require(tierIndex < Constants.MAX_SUBSIDY_TIERS, Errors.InvalidAmount());
+        require(tierIndex < 10, Errors.InvalidAmount());
         return _subsidyTiers[tierIndex];
     }
 
