@@ -57,7 +57,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     mapping(uint256 redemptionType => DataTypes.RedemptionOption redemptionOption) public redemptionOptions;
     
     // redemption history
-    mapping(address user => mapping(uint256 redemptionTimestamp => DataTypes.Redemption redemption)) public redemptionSchedule;
+    mapping(address user => mapping(uint256 redemptionTimestamp => uint256 mocaReceivable)) public redemptionSchedule;
 
     mapping(address user => uint256 totalMocaPendingRedemption) public userTotalMocaPendingRedemption;
 
@@ -111,7 +111,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @custom:requirements `redemptionOption` must be enabled and configured.
      * Emits {RedemptionScheduled} or {Redeemed} depending on lock duration.
      */
-    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount) external payable whenNotPaused {
+    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount, uint256 minExpectedReceivable) external payable whenNotPaused {
         // sanity checks: amount & balance
         require(redemptionAmount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
@@ -135,12 +135,16 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
             penaltyAmount = redemptionAmount - mocaReceivable;
 
             // sanity checks: ensure penaltyAmount & mocaReceivable are > 0 [flooring]
-            require(mocaReceivable > 0, Errors.InvalidAmount()); 
+            require(mocaReceivable > minExpectedReceivable, Errors.InvalidAmount()); 
             require(penaltyAmount > 0, Errors.InvalidAmount()); 
 
-            // we block cases where either penaltyAmount or mocaReceivable is floored to 0
+            // we block cases where penaltyAmount is floored to 0,
             // when selecting a redemption option, the user must honour its penalty, and receive a non-zero amount of moca. 
             // this prevents users from abusing the system(or getting griefed), and protects protocol from rounding/misconfiguration errors.
+
+            // we block cases where mocaReceivable is less than minExpectedReceivable,
+            // this prevents cases where selectRedemptionOption is sent right after a change in the penalty fee,
+            // resulting in a lower mocaReceivable than expected.
         }
 
         // 2. Burn esMoca tokens from the caller
@@ -171,33 +175,27 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         }
 
         // 4. Calculate redemption timestamp 
-        uint256 redemptionTimestamp = block.timestamp + option.lockDuration;
+        uint128 redemptionTimestamp = uint128(block.timestamp) + option.lockDuration;
 
-        // 5. Book redemption details to storage [even instant redemptions are booked for consistent record-keeping]
-        DataTypes.Redemption storage redemptionPtr = redemptionSchedule[msg.sender][redemptionTimestamp];
-        redemptionPtr.mocaReceivable += mocaReceivable;
-        redemptionPtr.penalty += penaltyAmount;
-
-
-        // 6. Handle instant redemptions
+        // 5. Handle instant redemptions
         if(option.lockDuration == 0) { 
-            
-            // Book claimed amount 
-            redemptionPtr.claimed += mocaReceivable;
-            
-            //TOTAL_MOCA_PENDING_REDEMPTION -> no need to increment since no pending redemption
 
-            emit Events.Redeemed(msg.sender, mocaReceivable, redemptionTimestamp);
+            // event emitted for FE to display the redemption details
+            emit Events.Redeemed(msg.sender, mocaReceivable, penaltyAmount);
 
             // Transfer Moca to user [wraps if transfer fails within gas limit]
             _transferMocaAndWrapIfFailWithGasLimit(WMOCA, msg.sender, mocaReceivable, MOCA_TRANSFER_GAS_LIMIT);
 
-        } else {    // 6.1 Schedule redemption [user must claim later]
+        } else {    // 5.1 Schedule redemption [user must claim later]
 
-            // Increment pending counters by the mocaReceivable [global + user]
+            // store redemption amount to storage
+            redemptionSchedule[msg.sender][redemptionTimestamp] = mocaReceivable;
+
+            // increment pending counters by the mocaReceivable [global + user]
             TOTAL_MOCA_PENDING_REDEMPTION += mocaReceivable;
             userTotalMocaPendingRedemption[msg.sender] += mocaReceivable;
 
+            // event emitted for FE to display the redemption details
             emit Events.RedemptionScheduled(msg.sender, mocaReceivable, penaltyAmount, redemptionTimestamp);
         }
     }
@@ -206,12 +204,15 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     /**
      * @notice Claims the redeemed MOCA tokens after the lock period has elapsed.
      * @dev Transfers native Moca; if transfer fails within gas limit, wraps to wMoca and transfers the wMoca to user.
+     *      Deletes mocaReceivable from redemptionSchedule mapping after claiming, to prevent re-claiming the same redemption.
      *      Note: does not burn esMoca tokens - that is done during selectRedemptionOption() call.
      * @param redemptionTimestamps The timestamps at which the redemptions become available for claim.
      */
     function claimRedemptions(uint256[] calldata redemptionTimestamps) external payable whenNotPaused {
         uint256 length = redemptionTimestamps.length;
         require(length > 0, Errors.InvalidArray());
+
+        uint256[] memory mocaReceivables = new uint256[](length);
 
         uint256 totalClaimable;
         for (uint256 i; i < length; ++i) {
@@ -220,18 +221,18 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
             // sanity check: timestamp is in the past
             require(block.timestamp >= redemptionTimestamp, Errors.InvalidTimestamp());
 
-            // get redemption pointer
-            DataTypes.Redemption storage redemptionPtr = redemptionSchedule[msg.sender][redemptionTimestamp];
+            // get redemption amount
+            uint256 mocaReceivable = redemptionSchedule[msg.sender][redemptionTimestamp];
+            require(mocaReceivable > 0, Errors.NothingToClaim());
 
-            // check redemption eligibility: there is something to claim
-            uint256 claimableAmount = redemptionPtr.mocaReceivable - redemptionPtr.claimed;
-            require(claimableAmount > 0, Errors.NothingToClaim());
+            // mark as claimed: set mocaReceivable to 0 in storage
+            delete redemptionSchedule[msg.sender][redemptionTimestamp];
 
-            // book claimed amount
-            redemptionPtr.claimed += claimableAmount;
+            // add to mocaReceivables array
+            mocaReceivables[i] = mocaReceivable;
 
             // increment total claimable
-            totalClaimable += claimableAmount;
+            totalClaimable += mocaReceivable;
         }
         
         // invariant: should never be triggered
@@ -242,7 +243,8 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         // decrement user total moca pending redemption by the totalClaimable
         userTotalMocaPendingRedemption[msg.sender] -= totalClaimable;
 
-        emit Events.RedemptionsClaimed(msg.sender, redemptionTimestamps, totalClaimable);
+        // event emitted for FE to display the redemption details
+        emit Events.RedemptionsClaimed(msg.sender, redemptionTimestamps, mocaReceivables);
 
         // Transfer Moca to user [wraps if transfer fails within gas limit]
         _transferMocaAndWrapIfFailWithGasLimit(WMOCA, msg.sender, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
@@ -409,20 +411,26 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @notice Updates the whitelist status for an address, allowing or revoking permission to transfer esMoca.
      * @dev   Whitelisted addresses can transfer esMoca to other addresses (e.g., Asset Manager to VotingController).
      *        Note: for Asset Manager to deposit esMoca to VotingController.
-     * @param addr The address to update whitelist status for.
+     * @param addresses The addresses to update whitelist status for.
      * @param isWhitelisted True to whitelist, false to remove from whitelist.
      */
-    function setWhitelistStatus(address addr, bool isWhitelisted) external whenNotPaused onlyEscrowedMocaAdmin {
-        require(addr != address(0), Errors.InvalidAddress());
+    function setWhitelistStatus(address[] calldata addresses, bool isWhitelisted) external whenNotPaused onlyEscrowedMocaAdmin {
+        uint256 length = addresses.length;
+        require(length > 0, Errors.InvalidArray());
 
-        // check: current status
-        bool currentStatus = whitelist[addr];
-        require(currentStatus != isWhitelisted, Errors.WhitelistStatusUnchanged());
+        for(uint256 i; i < length; ++i) {
+            address addr = addresses[i];
+            require(addr != address(0), Errors.InvalidAddress());
 
-        // storage: update whitelist status
-        whitelist[addr] = isWhitelisted;
+            // check: current status
+            bool currentStatus = whitelist[addr];
+            require(currentStatus != isWhitelisted, Errors.WhitelistStatusUnchanged());
 
-        emit Events.AddressWhitelisted(addr, isWhitelisted);
+            // storage: update whitelist status
+            whitelist[addr] = isWhitelisted;
+        }
+
+        emit Events.AddressWhitelisted(addresses, isWhitelisted);
     }
 
     /**
@@ -483,7 +491,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @param amount Number of tokens to transfer.
      * @return success True if the transfer is permitted and succeeds.
      */
-    function transfer(address recipient, uint256 amount) public override whenNotPaused returns (bool) {
+    function transfer(address recipient, uint256 amount) public override returns (bool) {
         require(whitelist[msg.sender], Errors.OnlyCallableByWhitelistedAddress());
         return super.transfer(recipient, amount);
     }
@@ -496,7 +504,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @param amount The number of tokens to transfer.
      * @return success True if the transfer is permitted and succeeds.
      */
-    function transferFrom(address sender, address recipient, uint256 amount) public override whenNotPaused returns (bool) {
+    function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool) {
         require(whitelist[msg.sender], Errors.OnlyCallableByWhitelistedAddress());
         return super.transferFrom(sender, recipient, amount);
     }

@@ -22,9 +22,9 @@ library Events {
     // redeem()
     event RedemptionScheduled(address indexed caller, uint256 mocaReceivable, uint256 penaltyAmount, uint256 redemptionTimestamp);
     event PenaltyAccrued(uint256 penaltyToVoters, uint256 penaltyToTreasury);
-    event Redeemed(address indexed caller, uint256 mocaReceivable, uint256 redemptionTimestamp);
+    event Redeemed(address indexed caller, uint256 mocaReceivable, uint256 penaltyAmount);
     // claimRedemption()
-    event RedemptionsClaimed(address indexed caller, uint256[] redemptionTimestamps, uint256 mocaReceivable);
+    event RedemptionsClaimed(address indexed caller, uint256[] redemptionTimestamps, uint256[] mocaReceivables);
     // stakeOnBehalf()
     event StakedOnBehalf(address[] callers, uint256[] amounts);
     // setPenaltyToVoters()
@@ -35,7 +35,7 @@ library Events {
     event RedemptionOptionEnabled(uint256 redemptionOption, uint256 receivablePct, uint256 lockDuration);
     event RedemptionOptionDisabled(uint256 redemptionOption);
     // setWhitelistStatus()
-    event AddressWhitelisted(address indexed addr, bool isWhitelisted);
+    event AddressWhitelisted(address[] addresses, bool isWhitelisted);
     // releaseEscrowedMoca()
     event EscrowedMocaReleased(address indexed caller, uint256 amount);
     // claimPenalty()
