@@ -69,13 +69,12 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     mapping(bytes32 schemaId => DataTypes.Schema schema) internal _schemas;
     mapping(bytes32 verifierId => DataTypes.Verifier verifier) internal _verifiers;
 
-
     // nonces for preventing race conditions [ECDSA.sol::recover handles sig.malfunctions]
     // we do not store this in verifier struct since signerAddress is updatable
-    mapping(address signerAddress => uint256 nonce) internal _verifierNonces;
+    mapping(address signerAddress => mapping(address userAddress => uint256 nonce)) internal _verifierNonces;
 
     // Staking tiers: determines subsidy percentage for each verifier | admin fn will setup the tiers
-    DataTypes.SubsidyTier[10] internal _subsidyTiers;
+    DataTypes.SubsidyTier[Constants.MAX_SUBSIDY_TIERS] internal _subsidyTiers;
 
 
     // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
@@ -87,7 +86,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     // for correct withdrawal of fees and rewards
     mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) internal _epochFeesAccrued;    
 
-//-------------------------------Constructor---------------------------------------------------------------------
+//------------------------------- Constructor---------------------------------------------------------------------
 
     // name: PaymentsController, version: 1
     constructor(
@@ -122,7 +121,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         FEE_INCREASE_DELAY_PERIOD = delayPeriod;
     }
 
-//-------------------------------Issuer functions-----------------------------------------------------------------
+//------------------------------- Issuer functions-----------------------------------------------------------------
 
 
     /**
@@ -287,7 +286,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     }
 
 
-//-------------------------------Verifier functions---------------------------------------------------------------
+//------------------------------- Verifier functions---------------------------------------------------------------
 
     /**
      * @notice Generates and registers a new verifier with a unique verifierId.
@@ -512,7 +511,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param expiry The signature expiry timestamp.
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
-    function deductBalance(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
+    function deductBalance(bytes32 issuerId, bytes32 verifierId, address userAddress, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
         require(expiry > block.timestamp, Errors.SignatureExpired()); 
         require(amount > 0, Errors.InvalidAmount());
         
@@ -546,10 +545,10 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         {
             address signerAddress = verifierStorage.signerAddress;
             
-            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, amount, expiry, _verifierNonces[signerAddress])));
+            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, userAddress, amount, expiry, _verifierNonces[signerAddress][userAddress])));
             // handles both EOA and contract signatures | returns true if signature is valid
             require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature()); 
-            ++_verifierNonces[signerAddress];
+            ++_verifierNonces[signerAddress][userAddress];
 
             // check if amount matches latest schema fee
             require(amount == currentFee, Errors.InvalidSchemaFee());
@@ -623,7 +622,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param expiry The timestamp after which the signature is invalid.
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
-    function deductBalanceZeroFee(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, uint256 expiry, bytes calldata signature) external whenNotPaused {
+    function deductBalanceZeroFee(bytes32 issuerId, bytes32 verifierId, bytes32 schemaId, address userAddress, uint256 expiry, bytes calldata signature) external whenNotPaused {
         require(expiry > block.timestamp, Errors.SignatureExpired());
         
         // Verify schema has zero fee
@@ -637,15 +636,16 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
                 issuerId, 
                 verifierId, 
                 schemaId, 
+                userAddress,
                 expiry, 
-                _verifierNonces[signerAddress]
+                _verifierNonces[signerAddress][userAddress]
             ))
         );
         require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
         
         // Update counters
         unchecked {
-            ++_verifierNonces[signerAddress];
+            ++_verifierNonces[signerAddress][userAddress];
             ++_schemas[schemaId].totalVerified;
             ++_issuers[issuerId].totalVerified;
         }
@@ -663,19 +663,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         uint256 verifierMocaStaked = _verifiers[verifierId].mocaStaked;
         
         // find the highest tier the verifier qualifies for
-        uint256 subsidyPct;
-        uint256 length = _subsidyTiers.length;
-        for(uint256 i; i < length; ++i) {
-
-            // if tier threshold is 0, skip (uninitialized tier)
-            if(_subsidyTiers[i].mocaStaked == 0) continue;
-            
-            // if verifier has staked >= tier threshold, this is a qualifying tier
-            if(verifierMocaStaked >= _subsidyTiers[i].mocaStaked) {
-                // keep the highest qualifying tier (assume array is sorted ascending)
-                subsidyPct = _subsidyTiers[i].subsidyPercentage;
-            }
-        }
+        uint256 subsidyPct = _getSubsidyPercentage(verifierMocaStaked);
 
         // if subsidy percentage is non-zero, calculate and book subsidy
         if(subsidyPct > 0) {
@@ -691,6 +679,30 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         }
     }
    
+    // finds the highest qualifying tier and returns the subsidy percentage for that tier
+    // expects subsidy tier array to be orders in ascending fashion (from smallest to largest)
+    function _getSubsidyPercentage(uint256 verifierMocaStaked) internal view returns (uint256) {
+        
+        // Loop backwards to find highest qualifying tier immediately
+        uint256 i = Constants.MAX_SUBSIDY_TIERS;
+        while(i > 0) {
+            --i;
+            // get tier's moca staked
+            uint128 tierMocaStaked = _subsidyTiers[i].mocaStaked;
+
+            // skip unset tiers
+            if(tierMocaStaked == 0) continue;
+            
+            // if verifier qualifies for this tier, return immediately (highest qualifying tier)
+            if(verifierMocaStaked >= tierMocaStaked) return _subsidyTiers[i].subsidyPercentage;
+
+            if(i == 0) break; // avoid underflow
+        }
+        
+        // no qualifying tier found
+        return 0;
+    }
+    
 //------------------------------- PaymentsControllerAdmin: update functions---------------------------------------
 
     // add/update/remove | can be 0 
@@ -730,50 +742,90 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.VotingFeePercentageUpdated(votingFeePercentage);
     }
 
+    /**
+     * @notice Sets multiple subsidy tiers at once.
+     * @dev Only callable by the PaymentsController admin.
+     * @param tierIndexes The indexes of the tiers to set.
+     * @param mocaStaked The moca staked for each tier.
+     * @param subsidyPercentage The subsidy percentage for each tier.
+     */
     function setVerifierSubsidyTiers(uint256[] calldata tierIndexes, uint128[] calldata mocaStaked, uint128[] calldata subsidyPercentage) external onlyPaymentsAdmin whenNotPaused {
         uint256 length = tierIndexes.length;
-        require(length <= 10, Errors.InvalidArray());
+        require(length <= Constants.MAX_SUBSIDY_TIERS, Errors.InvalidArray());
         require(length == mocaStaked.length && length == subsidyPercentage.length, Errors.InvalidArray());
 
-        DataTypes.SubsidyTier[10] memory memorySubsidyTiers = _subsidyTiers;
+        // check for duplicate tierIndexes
+        for(uint256 i; i < length; ++i) {
+            for(uint256 j = i + 1; j < length; ++j) {
+                if(tierIndexes[i] == tierIndexes[j]) revert Errors.DuplicateTierIndex();
+            }
+        }
 
+        DataTypes.SubsidyTier[Constants.MAX_SUBSIDY_TIERS] memory memorySubsidyTiers = _subsidyTiers;
+
+        // apply updates in memory
         for(uint256 i; i < length; ++i) {
             // validate inputs: tierIndex, mocaStaked, subsidyPercentage
-            require(tierIndexes[i] < 10, Errors.InvalidIndex());
-            require(mocaStaked[i] > 0, Errors.InvalidAmount());
-            require(subsidyPercentage[i] < Constants.PRECISION_BASE, Errors.InvalidPercentage());
+            require(tierIndexes[i] < Constants.MAX_SUBSIDY_TIERS, Errors.InvalidIndex()); // index is 0-9
+            require(mocaStaked[i] > 0, Errors.InvalidAmount()); // mocaStaked cannot be 0
+            require(subsidyPercentage[i] > 0 && subsidyPercentage[i] < Constants.PRECISION_BASE, Errors.InvalidPercentage()); // subsidyPercentage cannot be 0 or greater than 100%
 
-            // update memorySubsidyTiers
+            // update specific tier in memorySubsidyTiers
             memorySubsidyTiers[tierIndexes[i]].mocaStaked = mocaStaked[i];
             memorySubsidyTiers[tierIndexes[i]].subsidyPercentage = subsidyPercentage[i];
         }
 
-        // check that memorySubsidyTiers final array is ascending
-        for(uint256 i; i < 10; ++i) {
-            // unset tier: skip
-            if(memorySubsidyTiers[i].mocaStaked == 0 && memorySubsidyTiers[i].subsidyPercentage == 0) continue;
+        // determine last set index (highest non-zero tier)
+        bool hasSet;
+        uint256 lastSetIndex;
+        uint256 i = Constants.MAX_SUBSIDY_TIERS;
+        while(i > 0) {
+            --i;
 
-            // check that tiers are ascending
-            if(i < 9) {
-                // check that current tier's mocaStaked is less than next tier's mocaStaked
-                require(memorySubsidyTiers[i].mocaStaked < memorySubsidyTiers[i + 1].mocaStaked, Errors.InvalidMocaStakedTierOrder());
-                // check that current tier's subsidyPercentage is less than next tier's subsidyPercentage
-                require(memorySubsidyTiers[i].subsidyPercentage <= memorySubsidyTiers[i + 1].subsidyPercentage, Errors.InvalidSubsidyPercentageTierOrder());
+            if (memorySubsidyTiers[i].mocaStaked > 0) { // mocaStaked > 0, so subsidyPercentage > 0 [checked above]
+                lastSetIndex = i;
+                hasSet = true;
+                break;
+            }
+
+            if(i == 0) break; // avoid underflow
+        }
+
+
+        // enforce contiguity (0 to lastSetIndex, all non-zero) and ascending order
+        if (hasSet) {
+            uint128 prevMoca;
+            uint128 prevPct;
+            for (uint256 i; i <= lastSetIndex; ++i) {
+                uint128 cm = memorySubsidyTiers[i].mocaStaked;
+                uint128 cp = memorySubsidyTiers[i].subsidyPercentage;
+
+                // contiguous: no gaps within 0..lastSetIndex
+                require(cm > 0 && cp > 0, Errors.InvalidAmount());
+
+                if (i > 0) {
+                    require(cm > prevMoca, Errors.InvalidMocaStakedTierOrder());
+                    require(cp > prevPct, Errors.InvalidSubsidyPercentageTierOrder()); 
+                }
+                prevMoca = cm;
+                prevPct = cp;
             }
         }
 
-        // STORAGE: update entire array
+        // STORAGE: update _subsidyTiers with memorySubsidyTiers
         _subsidyTiers = memorySubsidyTiers;
 
-        emit Events.VerifierStakingTiersUpdated(tierIndexes, memorySubsidyTiers);
+        emit Events.VerifierStakingTiersSet(tierIndexes, memorySubsidyTiers);
     }
 
     // clear multiple tiers at once
     function clearVerifierSubsidyTiers(uint256[] calldata tierIndexes) external onlyPaymentsAdmin whenNotPaused {
         uint256 length = tierIndexes.length;
-        require(length <= 10, Errors.InvalidArray());
+        require(length <= Constants.MAX_SUBSIDY_TIERS, Errors.InvalidArray());
 
         for(uint256 i; i < length; ++i) {
+            require(tierIndexes[i] < Constants.MAX_SUBSIDY_TIERS, Errors.InvalidIndex()); // index is 0-9
+
             delete _subsidyTiers[tierIndexes[i]].mocaStaked;
             delete _subsidyTiers[tierIndexes[i]].subsidyPercentage;
         }
@@ -1082,41 +1134,30 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     }
 
     /**
-     * @notice Returns the nonce for a given signerAddress.
+     * @notice Returns the nonce for a given signerAddress and userAddress.
      * @param signerAddress The address of the signer.
-     * @return nonce The nonce for the signer.
+     * @param userAddress The address of the user.
+     * @return nonce The nonce for the signer and userAddress.
      */
-    function getVerifierNonce(address signerAddress) external view returns (uint256) {
-        return _verifierNonces[signerAddress];
+    function getVerifierNonce(address signerAddress, address userAddress) external view returns (uint256) {
+        return _verifierNonces[signerAddress][userAddress];
     }
 
     /**
-     * @notice Returns the subsidy percentage for a given verifier based on their staked amount.
-     * @dev Finds the highest tier the verifier qualifies for (same logic as _bookSubsidy).
+     * @notice Returns the subsidy percentage for a given staked amount.
+     * @dev Finds the highest tier the staked amount qualifies for (same logic as _bookSubsidy).
      * @param mocaStaked The amount of MOCA staked.
-     * @return subsidyPercentage The subsidy percentage the verifier qualifies for.
+     * @return subsidyPercentage The subsidy percentage the staked amount qualifies for.
      */
-    function getVerifierSubsidyPercentage(uint256 mocaStaked) external view returns (uint256) {
-        uint256 subsidyPct;
-        
-        // find the highest tier that mocaStaked qualifies for
-        uint256 length = _subsidyTiers.length;
-        for(uint256 i; i < length; ++i) {
-            if(_subsidyTiers[i].mocaStaked == 0) continue;
-            
-            if(mocaStaked >= _subsidyTiers[i].mocaStaked) {
-                subsidyPct = _subsidyTiers[i].subsidyPercentage;
-            }
-        }
-        
-        return subsidyPct;
+    function getEligibleSubsidyPercentage(uint256 mocaStaked) external view returns (uint256) {
+        return _getSubsidyPercentage(mocaStaked);
     }
 
     /**
-     * @notice Returns all 10 subsidy tiers.
+     * @notice Returns all subsidy tiers.
      * @return tiers Array of all subsidy tiers.
      */
-    function getAllSubsidyTiers() external view returns (DataTypes.SubsidyTier[10] memory) {
+    function getAllSubsidyTiers() external view returns (DataTypes.SubsidyTier[Constants.MAX_SUBSIDY_TIERS] memory) {
         return _subsidyTiers;
     }
 
@@ -1126,7 +1167,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @return tier The subsidy tier at the specified index.
      */
     function getSubsidyTier(uint256 tierIndex) external view returns (DataTypes.SubsidyTier memory) {
-        require(tierIndex < 10, Errors.InvalidAmount());
+        require(tierIndex < Constants.MAX_SUBSIDY_TIERS, Errors.InvalidAmount());
         return _subsidyTiers[tierIndex];
     }
 

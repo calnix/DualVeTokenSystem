@@ -46,6 +46,7 @@ library Errors {
     error ZeroVotersFee();
     error InvalidMocaStakedTierOrder();
     error InvalidSubsidyPercentageTierOrder();
+    error DuplicateTierIndex();
     error OnlyCallableByEmergencyExitHandlerOrVerifier();
 
 // --------- VotingEscrowMoca.sol ---------
