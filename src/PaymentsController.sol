@@ -74,7 +74,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     mapping(address signerAddress => mapping(address userAddress => uint256 nonce)) internal _verifierNonces;
 
     // Staking tiers: determines subsidy percentage for each verifier | admin fn will setup the tiers
-    DataTypes.SubsidyTier[Constants.MAX_SUBSIDY_TIERS] internal _subsidyTiers;
+    DataTypes.SubsidyTier[10] internal _subsidyTiers;
 
 
     // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
@@ -745,77 +745,45 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     /**
      * @notice Sets multiple subsidy tiers at once.
      * @dev Only callable by the PaymentsController admin.
-     * @param tierIndexes The indexes of the tiers to set.
      * @param mocaStaked The moca staked for each tier.
-     * @param subsidyPercentage The subsidy percentage for each tier.
+     * @param subsidyPercentages The subsidy percentage for each tier.
      */
-    function setVerifierSubsidyTiers(uint256[] calldata tierIndexes, uint128[] calldata mocaStaked, uint128[] calldata subsidyPercentage) external onlyPaymentsAdmin whenNotPaused {
-        uint256 length = tierIndexes.length;
-        require(length <= Constants.MAX_SUBSIDY_TIERS, Errors.InvalidArray());
-        require(length == mocaStaked.length && length == subsidyPercentage.length, Errors.InvalidArray());
+    function setVerifierSubsidyTiers(uint128[] calldata mocaStaked, uint128[] calldata subsidyPercentages) external onlyPaymentsAdmin whenNotPaused {
+        uint256 length = mocaStaked.length;
+        require(length > 0 && length <= Constants.MAX_SUBSIDY_TIERS, Errors.InvalidArray());
+        require(length == subsidyPercentages.length, Errors.MismatchedArrayLengths());
 
-        // check for duplicate tierIndexes
-        for(uint256 i; i < length; ++i) {
-            for(uint256 j = i + 1; j < length; ++j) {
-                if(tierIndexes[i] == tierIndexes[j]) revert Errors.DuplicateTierIndex();
-            }
-        }
+        // Build a new contiguous tier set: indices [0..length-1] set, [length..MAX-1] zeroed
+        DataTypes.SubsidyTier[10] memory newTiers;
 
-        DataTypes.SubsidyTier[Constants.MAX_SUBSIDY_TIERS] memory memorySubsidyTiers = _subsidyTiers;
+        // indices [length..MAX-1] remain zero (contiguity enforced)
+        uint128 prevMoca;
+        uint128 prevPct;
+        for (uint256 i; i < length; ++i) {
+            uint128 currentMocaStaked = mocaStaked[i];
+            uint128 currentSubsidyPct = subsidyPercentages[i];
 
-        // apply updates in memory
-        for(uint256 i; i < length; ++i) {
-            // validate inputs: tierIndex, mocaStaked, subsidyPercentage
-            require(tierIndexes[i] < Constants.MAX_SUBSIDY_TIERS, Errors.InvalidIndex()); // index is 0-9
-            require(mocaStaked[i] > 0, Errors.InvalidAmount()); // mocaStaked cannot be 0
-            require(subsidyPercentage[i] > 0 && subsidyPercentage[i] < Constants.PRECISION_BASE, Errors.InvalidPercentage()); // subsidyPercentage cannot be 0 or greater than 100%
+            // Non-zero values for contiguous head
+            require(currentMocaStaked > 0, Errors.InvalidAmount());
+            require(currentSubsidyPct > 0 && currentSubsidyPct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
 
-            // update specific tier in memorySubsidyTiers
-            memorySubsidyTiers[tierIndexes[i]].mocaStaked = mocaStaked[i];
-            memorySubsidyTiers[tierIndexes[i]].subsidyPercentage = subsidyPercentage[i];
-        }
-
-        // determine last set index (highest non-zero tier)
-        bool hasSet;
-        uint256 lastSetIndex;
-        uint256 i = Constants.MAX_SUBSIDY_TIERS;
-        while(i > 0) {
-            --i;
-
-            if (memorySubsidyTiers[i].mocaStaked > 0) { // mocaStaked > 0, so subsidyPercentage > 0 [checked above]
-                lastSetIndex = i;
-                hasSet = true;
-                break;
+            // Strictly ascending
+            if (i > 0) {
+                require(currentMocaStaked > prevMoca, Errors.InvalidMocaStakedTierOrder());
+                require(currentSubsidyPct > prevPct, Errors.InvalidSubsidyPercentageTierOrder());
             }
 
-            if(i == 0) break; // avoid underflow
+            newTiers[i].mocaStaked = currentMocaStaked;
+            newTiers[i].subsidyPercentage = currentSubsidyPct;
+
+            prevMoca = currentMocaStaked;
+            prevPct = currentSubsidyPct;
         }
+        
+        // STORAGE: update _subsidyTiers with newTiers
+        _subsidyTiers = newTiers;
 
-
-        // enforce contiguity (0 to lastSetIndex, all non-zero) and ascending order
-        if (hasSet) {
-            uint128 prevMoca;
-            uint128 prevPct;
-            for (uint256 i; i <= lastSetIndex; ++i) {
-                uint128 cm = memorySubsidyTiers[i].mocaStaked;
-                uint128 cp = memorySubsidyTiers[i].subsidyPercentage;
-
-                // contiguous: no gaps within 0..lastSetIndex
-                require(cm > 0 && cp > 0, Errors.InvalidAmount());
-
-                if (i > 0) {
-                    require(cm > prevMoca, Errors.InvalidMocaStakedTierOrder());
-                    require(cp > prevPct, Errors.InvalidSubsidyPercentageTierOrder()); 
-                }
-                prevMoca = cm;
-                prevPct = cp;
-            }
-        }
-
-        // STORAGE: update _subsidyTiers with memorySubsidyTiers
-        _subsidyTiers = memorySubsidyTiers;
-
-        emit Events.VerifierStakingTiersSet(tierIndexes, memorySubsidyTiers);
+        emit Events.VerifierStakingTiersSet(mocaStaked, subsidyPercentages);
     }
 
     // clear multiple tiers at once
@@ -1157,7 +1125,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @notice Returns all subsidy tiers.
      * @return tiers Array of all subsidy tiers.
      */
-    function getAllSubsidyTiers() external view returns (DataTypes.SubsidyTier[Constants.MAX_SUBSIDY_TIERS] memory) {
+    function getAllSubsidyTiers() external view returns (DataTypes.SubsidyTier[10] memory) {
         return _subsidyTiers;
     }
 

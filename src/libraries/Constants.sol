@@ -24,6 +24,4 @@ library Constants {
     // signature for PaymentsController::deductBalanceZeroFee() | does not include amount
     bytes32 internal constant DEDUCT_BALANCE_ZERO_FEE_TYPEHASH = keccak256("DeductBalanceZeroFee(bytes32 issuerId,bytes32 verifierId,bytes32 schemaId,address userAddress,uint256 expiry,uint256 nonce)"); 
 
-    // maximum number of subsidy tiers
-    uint256 internal constant MAX_SUBSIDY_TIERS = 10;
 }

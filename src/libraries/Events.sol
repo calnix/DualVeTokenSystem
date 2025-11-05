@@ -146,7 +146,7 @@ library Events {
     event FeeIncreaseDelayPeriodUpdated(uint256 newDelayPeriod);
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
     event VotingFeePercentageUpdated(uint256 voterFeePercentage);
-    event VerifierStakingTiersSet(uint256[] tierIndexes, DataTypes.SubsidyTier[10] subsidyTiers);
+    event VerifierStakingTiersSet(uint128[] mocaStaked, uint128[] subsidyPercentages);
     event VerifierStakingTiersCleared(uint256[] tierIndexes);
     // updateVerifierContract
     event VerifierContractUpdated(address oldVerifierContract, address newVerifierContract);
