@@ -297,8 +297,9 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @dev Transfers the total claimable penalty (sum of voters and treasury) to esMoca treasury address
      *      Updates claimed penalty tracking variables to match total accrued.
      *      Note: potential tiny dust from rounding.
+     *      Also to be used in case of emergency exit scenario, to exfiltrate penalties to the esMoca treasury.
      */
-    function claimPenalties() external payable onlyCronJob whenNotPaused {
+    function claimPenalties() external payable onlyCronJob {
         // get treasury address
         address esMocaTreasury = accessController.ESCROWED_MOCA_TREASURY();
         require(esMocaTreasury != address(0), Errors.InvalidAddress());
@@ -587,32 +588,5 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         }
 
         emit Events.EmergencyExitEscrowedMoca(users, totalMocaAmount);
-    }
-
-    /**
-     * @notice Exfiltrate all accrued penalties from the contract to the esMoca treasury.
-     * @dev Only callable by the Emergency Exit Handler role, when the contract is frozen.
-     *      EsMoca treasury address is queried from AccessController.
-     */
-    function emergencyExitPenalties() external payable onlyEmergencyExitHandler {
-        require(isFrozen == 1, Errors.NotFrozen());
-        
-        // get esMoca treasury address
-        address esMocaTreasury = accessController.ESCROWED_MOCA_TREASURY();
-        require(esMocaTreasury != address(0), Errors.InvalidAddress());
-
-        // check: is there anything to claim?
-        uint256 totalPenaltyAccrued = ACCRUED_PENALTY_TO_VOTERS + ACCRUED_PENALTY_TO_TREASURY;
-        uint256 totalClaimable = totalPenaltyAccrued - CLAIMED_PENALTY_FROM_VOTERS - CLAIMED_PENALTY_FROM_TREASURY;
-        require(totalClaimable > 0, Errors.NothingToClaim());
-
-        // book claimed penalties
-        CLAIMED_PENALTY_FROM_VOTERS = ACCRUED_PENALTY_TO_VOTERS;
-        CLAIMED_PENALTY_FROM_TREASURY = ACCRUED_PENALTY_TO_TREASURY;
-        
-        // transfer moca [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, esMocaTreasury, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
-
-        emit Events.EmergencyExitPenalties(esMocaTreasury, totalClaimable);
     }
 }
