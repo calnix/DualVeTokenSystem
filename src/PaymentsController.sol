@@ -211,16 +211,17 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param newFee The new fee to set, expressed in USD8 (6 decimals).
      * @return newFee The new fee that was set. Returns value for better middleware integration.
      */
-    function updateSchemaFee(bytes32 issuerId, bytes32 schemaId, uint128 newFee) external whenNotPaused returns (uint256) {        
+    function updateSchemaFee(bytes32 schemaId, uint128 newFee) external whenNotPaused returns (uint256) {        
         // cache pointers
-        DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
+        DataTypes.Issuer storage issuerPtr = _issuers[schemaPtr.issuerId];
 
         // caller must be issuer's admin address
         require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
 
-        // check if schemaId is valid
+        // check if schemaId is valid + belongs to issuer
         require(schemaPtr.schemaId != bytes32(0), Errors.InvalidId());
+        require(schemaPtr.issuerId == issuerPtr.issuerId, Errors.InvalidIssuer());
 
         // sanity check: fee cannot be greater than 10,000 USD8 | free credentials are allowed
         require(newFee < 10_000 * Constants.USD8_PRECISION, Errors.InvalidAmount());
@@ -746,7 +747,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @notice Overwrites the subsidy tiers array with latest inputs. [Ensures ascending order and contiguity]
      * @dev Only callable by the PaymentsController admin.
      * @param mocaStaked The moca staked for each tier.
-     * @param subsidyPercentages The subsidy percentage for each tier.
+     * @param subsidyPercentages The subsidy percentage for each tier. [Can be 100%, but not 0. If 0, no reason to setup a tier]
      */
     function setVerifierSubsidyTiers(uint128[] calldata mocaStaked, uint128[] calldata subsidyPercentages) external onlyPaymentsAdmin whenNotPaused {
         uint256 length = mocaStaked.length;
@@ -765,7 +766,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
 
             // Non-zero values for contiguous head
             require(currentMocaStaked > 0, Errors.InvalidAmount());
-            require(currentSubsidyPct > 0 && currentSubsidyPct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
+            require(currentSubsidyPct > 0 && currentSubsidyPct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
 
             // Strictly ascending
             if (i > 0) {
