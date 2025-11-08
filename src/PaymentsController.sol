@@ -734,7 +734,12 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     
 //------------------------------- PaymentsControllerAdmin: update functions---------------------------------------
 
-    // add/update/remove | can be 0 
+    /**
+     * @notice Updates the poolId associated with a schema. Can set, update, or remove the poolId.
+     * @dev Only callable by PaymentsController admin. The schema must exist.
+     * @param schemaId The unique id of the schema to update.
+     * @param poolId The new poolId to associate with the schema (can be zero to remove).
+     */
     function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin whenNotPaused {
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
 
@@ -747,6 +752,13 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.PoolIdUpdated(schemaId, poolId);
     }
 
+
+    /**
+     * @notice Updates the fee increase delay period for schema fee increases.
+     * @dev Only callable by PaymentsController admin. The delay period must be greater than 0,
+     *      and a multiple of the epoch duration defined in EpochMath.
+     * @param newDelayPeriod The new delay period to set, in seconds. Must be divisible by EpochMath.EPOCH_DURATION.
+     */
     function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyPaymentsAdmin whenNotPaused {
         require(newDelayPeriod > 0, Errors.InvalidDelayPeriod());
         require(newDelayPeriod % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
@@ -756,7 +768,12 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.FeeIncreaseDelayPeriodUpdated(newDelayPeriod);
     }
 
-    // protocol fee can be 0
+    /**
+     * @notice Updates the protocol fee percentage.
+     * @dev Only callable by PaymentsController admin. 
+     *      The new total fee percentage cannot be greater than 100% [10_000].
+     * @param protocolFeePercentage The new protocol fee percentage to set.
+     */
     function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyPaymentsAdmin whenNotPaused {
         // total fee percentage cannot be greater than 100%
         require(protocolFeePercentage + VOTING_FEE_PERCENTAGE < Constants.PRECISION_BASE, Errors.InvalidPercentage());
@@ -766,7 +783,12 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.ProtocolFeePercentageUpdated(protocolFeePercentage);
     }
 
-    // voter fee can be 0
+    /**
+     * @notice Updates the voting fee percentage.
+     * @dev Only callable by PaymentsController admin. The voting fee percentage cannot be greater than 100% [10_000].
+     *      The new total fee percentage cannot be greater than 100% [10_000].
+     * @param votingFeePercentage The new voting fee percentage to set.
+     */
     function updateVotingFeePercentage(uint256 votingFeePercentage) external onlyPaymentsAdmin whenNotPaused {
         // total fee percentage cannot be greater than 100%
         require(votingFeePercentage + PROTOCOL_FEE_PERCENTAGE < Constants.PRECISION_BASE, Errors.InvalidPercentage());
@@ -820,7 +842,10 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.VerifierStakingTiersSet(mocaStaked, subsidyPercentages);
     }
 
-    // clear all tiers
+    /**
+     * @notice Clears all verifier subsidy tiers.
+     * @dev Only callable by the PaymentsController admin.
+     */
     function clearVerifierSubsidyTiers() external onlyPaymentsAdmin whenNotPaused {
         delete _subsidyTiers;
         emit Events.VerifierStakingTiersCleared();
@@ -1203,5 +1228,15 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      */
     function getEpochFeesAccrued(uint256 epoch) external view returns (DataTypes.FeesAccrued memory) {
         return _epochFeesAccrued[epoch];
+    }
+
+    /**
+     * @notice Returns the nonce for a given caller and entity type.
+     * @param caller The caller address.
+     * @param entityType The entity type.
+     * @return nonce The nonce for the caller and entity type.
+     */
+    function getCallerNonce(address caller, DataTypes.EntityType entityType) external view returns (uint256) {
+        return _callerNonces[caller][entityType];
     }
 }
