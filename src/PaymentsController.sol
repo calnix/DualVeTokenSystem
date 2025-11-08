@@ -1233,7 +1233,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     /**
      * @notice Returns the nonce for a given caller and entity type.
      * @param caller The caller address.
-     * @param entityType The entity type.
+     * @param entityType The entity type. [0: ISSUER, 1: VERIFIER, 2: SCHEMA]
      * @return nonce The nonce for the caller and entity type.
      */
     function getCallerNonce(address caller, DataTypes.EntityType entityType) external view returns (uint256) {
