@@ -115,6 +115,9 @@ library Errors {
     error OnlyCallableByEmergencyExitHandlerOrUser();
 
 // --------- AccessController.sol ---------
+    error InvalidRole();
+    error AlreadyHasRole();
+    error DoesNotHaveRole();
     error CallerNotRiskOrPoolAdmin();
     error OnlyCallableByAssetManager();
     error OnlyCallableByMonitor();

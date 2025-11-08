@@ -3,6 +3,7 @@ pragma solidity 0.8.27;
 
 // External: OZ
 import {AccessControl} from "./../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
 import {Errors} from "./libraries/Errors.sol";
@@ -22,7 +23,7 @@ import {Events} from "./libraries/Events.sol";
  *      while role management remains deliberately slow and secure through multi-sig coordination.
  */
 
-contract AccessController is AccessControl {
+contract AccessController is AccessControl, Pausable {
  
     // ______ HIGH-FREQUENCY ROLES [AUTOMATED OPERATIONAL FUNCTIONS] ______
     bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");      // Pause only
@@ -48,9 +49,6 @@ contract AccessController is AccessControl {
     address public PAYMENTS_CONTROLLER_TREASURY;
     address public VOTING_CONTROLLER_TREASURY;
     address public ESCROWED_MOCA_TREASURY;
-
-    // Risk
-    uint256 public isFrozen;
 
 //-------------------------------Constructor-------------------------------------------------------
 
@@ -97,12 +95,18 @@ contract AccessController is AccessControl {
 
     /**
      * @notice Sets the admin role for a specific role
-     * @dev By default the admin role for all roles is `DEFAULT_ADMIN_ROLE`.
+     * @dev By default the admin role for all roles is `DEFAULT_ADMIN_ROLE`. Cannot change DEFAULT_ADMIN_ROLE admin role.
      * @param role The role whose administrator is being updated
      * @param adminRole The new administrator role for the specified role
      * Emits a {RoleAdminChanged} event
     */
     function setRoleAdmin(bytes32 role, bytes32 adminRole) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(role != DEFAULT_ADMIN_ROLE, Errors.InvalidRole());
+
+        // check to prevent setting same admin role
+        bytes32 currentAdmin = getRoleAdmin(role);
+        require(currentAdmin != adminRole, Errors.InvalidRole());
+
         _setRoleAdmin(role, adminRole);
     }
 
@@ -143,48 +147,82 @@ contract AccessController is AccessControl {
 
 
 // -------------------- HIGH-FREQUENCY ROLE MANAGEMENT ----------------------------------------
+    
+    // note: these roles are not directly managed by DEFAULT_ADMIN_ROLE, but rather by their respective admin roles
+    //       hence they are pausable.
 
     // Monitor role functions
-    function addMonitor(address addr) external noZeroAddress(addr) {
-        grantRole(MONITOR_ROLE, addr);
+    function addMonitor(address addr) external noZeroAddress(addr) whenNotPaused {
+        // returns true if addr does not have role and grants it, false if it already has role
+        // if true emits `emit RoleGranted(role, account, _msgSender());`
+        bool success = grantRole(MONITOR_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.MonitorAdded(addr, msg.sender);
     }
 
-    function removeMonitor(address addr) external noZeroAddress(addr) {
-        revokeRole(MONITOR_ROLE, addr);
+    function removeMonitor(address addr) external noZeroAddress(addr) whenNotPaused {
+        // returns true if addr has role and revokes it, false if it does not have role
+        // if true emits `emit RoleRevoked(role, account, _msgSender());`
+        bool success = revokeRole(MONITOR_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.MonitorRemoved(addr, msg.sender);
     }
 
-    function isMonitor(address addr) external view returns (bool) {
+    function isMonitor(address addr) external view returns (bool) whenNotPaused {
         return hasRole(MONITOR_ROLE, addr);
     }
 
 
     // CronJob role functions
-    function addCronJob(address addr) external noZeroAddress(addr) {
-        grantRole(CRON_JOB_ROLE, addr);
+    function addCronJob(address addr) external noZeroAddress(addr) whenNotPaused {
+        // returns true if addr does not have role and grants it, false if it already has role
+        // if true emits `emit RoleGranted(role, account, _msgSender());`
+        bool success = grantRole(CRON_JOB_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.CronJobAdded(addr, msg.sender);
     }
 
-    function removeCronJob(address addr) external noZeroAddress(addr) {
-        revokeRole(CRON_JOB_ROLE, addr);
+    function removeCronJob(address addr) external noZeroAddress(addr) whenNotPaused {
+        // returns true if addr has role and revokes it, false if it does not have role
+        // if true emits `emit RoleRevoked(role, account, _msgSender());`
+        bool success = revokeRole(CRON_JOB_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.CronJobRemoved(addr, msg.sender);
     }
 
-    function isCronJob(address addr) external view returns (bool) {
+    function isCronJob(address addr) external view returns (bool) whenNotPaused {
         return hasRole(CRON_JOB_ROLE, addr);
     }
     
     // --------------- OPERATIONAL ADMIN ROLE MANAGEMENT ---------------
+
+    // note: these roles are not directly managed by DEFAULT_ADMIN_ROLE, but rather by their respective admin roles
+    //       hence they are pausable. 
     
     // Monitor admin functions
     function addMonitorAdmin(address addr) external noZeroAddress(addr) {
-        grantRole(MONITOR_ADMIN_ROLE, addr);
+        // returns true if addr does not have role and grants it, false if it already has role
+        bool success = grantRole(MONITOR_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.MonitorAdminAdded(addr, msg.sender);
     }
 
     function removeMonitorAdmin(address addr) external noZeroAddress(addr) {
-        revokeRole(MONITOR_ADMIN_ROLE, addr);
+        // returns true if addr has role and revokes it, false if it does not have role
+        bool success = revokeRole(MONITOR_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.MonitorAdminRemoved(addr, msg.sender);
     }
 
@@ -194,11 +232,15 @@ contract AccessController is AccessControl {
 
     // CronJob admin functions
     function addCronJobAdmin(address addr) external noZeroAddress(addr) {
+        if (hasRole(CRON_JOB_ADMIN_ROLE, addr)) revert Errors.AlreadyHasRole();
+
         grantRole(CRON_JOB_ADMIN_ROLE, addr);
         emit Events.CronJobAdminAdded(addr, msg.sender);
     }
 
     function removeCronJobAdmin(address addr) external noZeroAddress(addr) {
+        if (!hasRole(CRON_JOB_ADMIN_ROLE, addr)) revert Errors.DoesNotHaveRole();
+
         revokeRole(CRON_JOB_ADMIN_ROLE, addr);
         emit Events.CronJobAdminRemoved(addr, msg.sender);
     }
@@ -211,12 +253,20 @@ contract AccessController is AccessControl {
 
     // ------- IssuerStakingControllerAdmin role functions -------
     function addIssuerStakingControllerAdmin(address addr) external noZeroAddress(addr) {
-        grantRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, addr);
+        // returns true if addr does not have role and grants it, false if it already has role
+        bool success = grantRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.IssuerStakingControllerAdminAdded(addr, msg.sender);
     }
 
     function removeIssuerStakingControllerAdmin(address addr) external noZeroAddress(addr) {
-        revokeRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, addr);
+        // returns true if addr has role and revokes it, false if it does not have role
+        bool success = revokeRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.IssuerStakingControllerAdminRemoved(addr, msg.sender);
     }
 
@@ -228,12 +278,20 @@ contract AccessController is AccessControl {
 
     // ------- PaymentsControllerAdmin role functions -------
     function addPaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
-        grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+        // returns true if addr does not have role and grants it, false if it already has role
+        bool success = grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.PaymentsControllerAdminAdded(addr, msg.sender);
     }
 
     function removePaymentsControllerAdmin(address addr) external noZeroAddress(addr) {
-        revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+        // returns true if addr has role and revokes it, false if it does not have role
+        bool success = revokeRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.PaymentsControllerAdminRemoved(addr, msg.sender);
     }
 
@@ -246,12 +304,20 @@ contract AccessController is AccessControl {
 
     // ------- VotingControllerAdmin role functions -------
     function addVotingControllerAdmin(address addr) external noZeroAddress(addr) {
-        grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+        // returns true if addr does not have role and grants it, false if it already has role
+        bool success = grantRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.VotingControllerAdminAdded(addr, msg.sender);
     }
 
     function removeVotingControllerAdmin(address addr) external noZeroAddress(addr) {
-        revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+        // returns true if addr has role and revokes it, false if it does not have role
+        bool success = revokeRole(VOTING_CONTROLLER_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.VotingControllerAdminRemoved(addr, msg.sender);
     }
 
@@ -263,12 +329,20 @@ contract AccessController is AccessControl {
 
     // ------- VotingEscrowMocaAdmin role functions -------
     function addVotingEscrowMocaAdmin(address addr) external noZeroAddress(addr) {
-        grantRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, addr);
+        // returns true if addr does not have role and grants it, false if it already has role
+        bool success = grantRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.VotingEscrowMocaAdminAdded(addr, msg.sender);
     }
 
     function removeVotingEscrowMocaAdmin(address addr) external noZeroAddress(addr) {
-        revokeRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, addr);
+        // returns true if addr has role and revokes it, false if it does not have role
+        bool success = revokeRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.VotingEscrowMocaAdminRemoved(addr, msg.sender);
     }
 
@@ -279,12 +353,20 @@ contract AccessController is AccessControl {
 
     // ------- EscrowedMocaAdmin role functions -------
     function addEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
-        grantRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
+        // returns true if addr does not have role and grants it, false if it already has role
+        bool success = grantRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.EscrowedMocaAdminAdded(addr, msg.sender);
     }
     
     function removeEscrowedMocaAdmin(address addr) external noZeroAddress(addr) {
-        revokeRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
+        // returns true if addr has role and revokes it, false if it does not have role
+        bool success = revokeRole(ESCROWED_MOCA_ADMIN_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.EscrowedMocaAdminRemoved(addr, msg.sender);
     }
 
@@ -295,12 +377,20 @@ contract AccessController is AccessControl {
 
     // ------- AssetManager role functions ------- | [can only be added by global admin]
     function addAssetManager(address addr) external noZeroAddress(addr) {
-        grantRole(ASSET_MANAGER_ROLE, addr);
+        // returns true if addr does not have role and grants it, false if it already has role
+        bool success = grantRole(ASSET_MANAGER_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.AssetManagerAdded(addr, msg.sender);
     }
 
     function removeAssetManager(address addr) external noZeroAddress(addr) {
-        revokeRole(ASSET_MANAGER_ROLE, addr);
+        // returns true if addr has role and revokes it, false if it does not have role
+        bool success = revokeRole(ASSET_MANAGER_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.AssetManagerRemoved(addr, msg.sender);
     }
 
@@ -311,12 +401,20 @@ contract AccessController is AccessControl {
 
     // ------- EmergencyExitHandler role functions -------
     function addEmergencyExitHandler(address addr) external noZeroAddress(addr) {
-        grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+        // returns true if addr does not have role and grants it, false if it already has role
+        bool success = grantRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.AlreadyHasRole());
         emit Events.EmergencyExitHandlerAdded(addr, msg.sender);
     }
     
     function removeEmergencyExitHandler(address addr) external noZeroAddress(addr) {
-        revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+        // returns true if addr has role and revokes it, false if it does not have role
+        bool success = revokeRole(EMERGENCY_EXIT_HANDLER_ROLE, addr);
+        
+        // if false, revert
+        require(success, Errors.DoesNotHaveRole());
         emit Events.EmergencyExitHandlerRemoved(addr, msg.sender);
     }
 
@@ -336,6 +434,28 @@ contract AccessController is AccessControl {
     modifier noZeroAddress(address addr) {
         require(addr != address(0), Errors.InvalidAddress());
         _;
+    }
+
+// -------------------- RISK MANAGEMENT --------------------------------
+
+       
+    /**
+     * @notice Pause contract. 
+     * @dev Only callable by the Monitor role or DEFAULT_ADMIN_ROLE
+     */
+    function pause() external onlyRole(MONITOR_ROLE) whenNotPaused {
+        if(!hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || !hasRole(MONITOR_ROLE, msg.sender)) {
+            revert Errors.OnlyCallableByMonitorOrGlobalAdmin();
+        }
+        _pause();
+    }
+
+    /**
+     * @notice Unpause contract.
+     * @dev Only callable by the DEFAULT_ADMIN_ROLE
+     */
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) whenPaused {
+        _unpause();
     }
 
 }

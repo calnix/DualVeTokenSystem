@@ -58,10 +58,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     // gas limit for moca transfer
     uint256 public MOCA_TRANSFER_GAS_LIMIT;
 
-    // risk management
-    uint256 public isFrozen;
-
-
 //-------------------------------mappings-----------------------------------------------------
     
     // issuer, verifier, schema
