@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
+import {IAccessControl} from "./../lib/openzeppelin-contracts/contracts/access/IAccessControl.sol";
+
 /**
  * @title IAccessController
  * @author Calnix
  * @notice Interface for AccessController, managing all system roles and permissions.
  */
-interface IAccessController {
-    // ---- RISK MANAGEMENT ----
-
-    function isFrozen() external view returns (uint256);
+interface IAccessController is IAccessControl {
 
     // ---- TREASURY ADDRESSES ----
 

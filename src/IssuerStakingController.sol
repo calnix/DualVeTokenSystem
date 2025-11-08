@@ -55,8 +55,8 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
     constructor(address accessController_, uint256 unstakeDelay, uint256 maxStakeAmount, address wMoca_, uint256 mocaTransferGasLimit) {
        
         // check: access controller is set [not frozen]
+        require(accessController_ != address(0), Errors.InvalidAddress());
         accessController = IAccessController(accessController_);
-        require(accessController.isFrozen() == 0, Errors.InvalidAddress());
         
         // unstakeDelay
         require(unstakeDelay > 0, Errors.InvalidDelayPeriod());
