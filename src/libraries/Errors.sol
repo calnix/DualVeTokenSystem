@@ -116,8 +116,7 @@ library Errors {
 
 // --------- AccessController.sol ---------
     error InvalidRole();
-    error AlreadyHasRole();
-    error DoesNotHaveRole();
+    error OnlyCallableByMonitorOrGlobalAdmin();
     error CallerNotRiskOrPoolAdmin();
     error OnlyCallableByAssetManager();
     error OnlyCallableByMonitor();
