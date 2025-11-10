@@ -5,12 +5,14 @@ import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 
 // External: OZ
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+// access control
+import {AccessControlEnumerable, AccessControl} from "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {IAccessControlEnumerable, IAccessControl} from "openzeppelin-contracts/contracts/access/extensions/IAccessControlEnumerable.sol";
 
 // import all contracts
-import {AccessController} from "../../src/AccessController.sol";
 import {IssuerStakingController} from "../../src/IssuerStakingController.sol";
 import {PaymentsController} from "../../src/PaymentsController.sol";
-import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
+//import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
 //import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
 //import {VotingController} from "../../src/VotingController.sol";
 
@@ -27,20 +29,18 @@ import {MockWMoca} from "./MockWMoca.sol";
 import {MockUSD8} from "./MockUSD8.sol";
 
 // interfaces
-import {IAccessController} from "../../src/interfaces/IAccessController.sol";
+import {IIssuerStakingController} from "../../src/interfaces/IIssuerStakingController.sol";
 import {IPaymentsController} from "../../src/interfaces/IPaymentsController.sol";
 import {IVotingEscrowMoca} from "../../src/interfaces/IVotingEscrowMoca.sol";
 import {IEscrowedMoca} from "../../src/interfaces/IEscrowedMoca.sol";
-import {IIssuerStakingController} from "../../src/interfaces/IIssuerStakingController.sol";
 
 abstract contract TestingHarness is Test {
     using stdStorage for StdStorage;
     
     // actual contracts
-    AccessController public accessController;
     IssuerStakingController public issuerStakingController;
     PaymentsController public paymentsController;
-    EscrowedMoca public esMoca;
+    //EscrowedMoca public esMoca;
     //VotingEscrowMoca public veMoca;
     //VotingController public votingController;
     
@@ -133,35 +133,21 @@ abstract contract TestingHarness is Test {
         mockWMoca = new MockWMoca();
         mockUSD8 = new MockUSD8();
 
-        // 1. Deploy access controller
-        accessController = new AccessController(globalAdmin, paymentsTreasury, votingTreasury, esMocaTreasury);
-
-        // 2. Initialize roles
-        vm.startPrank(globalAdmin);
-            accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), globalAdmin);
-            accessController.grantRole(accessController.MONITOR_ADMIN_ROLE(), monitorAdmin);
-            accessController.grantRole(accessController.CRON_JOB_ADMIN_ROLE(), cronJobAdmin);
-            accessController.grantRole(accessController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE(), issuerStakingControllerAdmin);
-            accessController.grantRole(accessController.PAYMENTS_CONTROLLER_ADMIN_ROLE(), paymentsControllerAdmin);
-            accessController.grantRole(accessController.VOTING_CONTROLLER_ADMIN_ROLE(), votingControllerAdmin);
-            accessController.grantRole(accessController.VOTING_ESCROW_MOCA_ADMIN_ROLE(), votingEscrowMocaAdmin);
-            accessController.grantRole(accessController.ESCROWED_MOCA_ADMIN_ROLE(), escrowedMocaAdmin);
-            accessController.grantRole(accessController.ASSET_MANAGER_ROLE(), assetManager);
-            accessController.grantRole(accessController.EMERGENCY_EXIT_HANDLER_ROLE(), emergencyExitHandler);
-        vm.stopPrank();
-
-        vm.prank(monitorAdmin);
-            accessController.addMonitor(monitor);
-        vm.prank(cronJobAdmin);
-            accessController.addCronJob(cronJob);
-
-        // 4. Deploy IssuerStakingController
-        issuerStakingController = new IssuerStakingController(address(accessController), 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+        // 1. Deploy IssuerStakingController
+        issuerStakingController = new IssuerStakingController(
+            globalAdmin, 
+            issuerStakingControllerAdmin, 
+            monitorAdmin, 
+            monitor, 
+            emergencyExitHandler, 
+            7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
 
 
         // 5. Deploy PaymentsController
-        paymentsController = new PaymentsController(address(accessController), protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
-             address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
+        paymentsController = new PaymentsController(
+            globalAdmin, paymentsControllerAdmin, monitorAdmin, cronJobAdmin, monitor, paymentsTreasury, emergencyExitHandler, 
+            protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
+            address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
  
 
         // 6. Deploy EscrowedMoca

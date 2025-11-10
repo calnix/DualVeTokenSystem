@@ -43,9 +43,7 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
     bytes32 public constant ISSUER_STAKING_CONTROLLER_ADMIN_ROLE = Constants.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE;
     bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = Constants.EMERGENCY_EXIT_HANDLER_ROLE;
     bytes32 public constant MONITOR_ADMIN_ROLE = Constants.MONITOR_ADMIN_ROLE;
-    bytes32 public constant CRON_JOB_ADMIN_ROLE = Constants.CRON_JOB_ADMIN_ROLE;
     bytes32 public constant MONITOR_ROLE = Constants.MONITOR_ROLE;
-    bytes32 public constant CRON_JOB_ROLE = Constants.CRON_JOB_ROLE;
 
 
     // risk management
@@ -62,8 +60,7 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
 //------------------------------- Constructor---------------------------------------------------------------------
 
     constructor(
-        address globalAdmin, address issuerStakingControllerAdmin, address monitorAdmin, address cronJobAdmin, 
-        address monitorBot, address emergencyExitHandler, 
+        address globalAdmin, address issuerStakingControllerAdmin, address monitorAdmin, address monitorBot, address emergencyExitHandler, 
         uint256 unstakeDelay, uint256 maxStakeAmount, address wMoca_, uint256 mocaTransferGasLimit) {
        
         // unstakeDelay
@@ -84,17 +81,16 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
 
         // setup roles
-        _setupRoles(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler);
+        _setupRoles(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, monitorBot, emergencyExitHandler);
     }
 
     // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
-    function _setupRoles(address globalAdmin, address issuerStakingControllerAdmin, address monitorAdmin, address cronJobAdmin, address monitorBot, address emergencyExitHandler) internal {
+    function _setupRoles(address globalAdmin, address issuerStakingControllerAdmin, address monitorAdmin, address monitorBot, address emergencyExitHandler) internal {
 
         // sanity check: all addresses are not zero address
         require(globalAdmin != address(0), Errors.InvalidAddress());
         require(issuerStakingControllerAdmin != address(0), Errors.InvalidAddress());
         require(monitorAdmin != address(0), Errors.InvalidAddress());
-        require(cronJobAdmin != address(0), Errors.InvalidAddress());
         require(monitorBot != address(0), Errors.InvalidAddress());
         require(emergencyExitHandler != address(0), Errors.InvalidAddress());
 
@@ -102,7 +98,6 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);    
         _grantRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, issuerStakingControllerAdmin);
         _grantRole(MONITOR_ADMIN_ROLE, monitorAdmin);
-        _grantRole(CRON_JOB_ADMIN_ROLE, cronJobAdmin);
         _grantRole(EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
 
         // there should at least 1 bot address for monitoring at deployment
@@ -114,10 +109,8 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
         _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
 
         _setRoleAdmin(MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
-        _setRoleAdmin(CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         // High-frequency roles managed by their dedicated admins
         _setRoleAdmin(MONITOR_ROLE, MONITOR_ADMIN_ROLE);
-        _setRoleAdmin(CRON_JOB_ROLE, CRON_JOB_ADMIN_ROLE);
     }
 
 //------------------------------- External functions---------------------------------------------------------------

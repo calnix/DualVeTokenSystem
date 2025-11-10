@@ -18,46 +18,66 @@ abstract contract StateT0_Deploy is TestingHarness {
 contract StateT0_Deploy_Test is StateT0_Deploy {
 
     function test_Deploy() public {
-        // Check IssuerStakingController addressBook is set correctly
-        assertEq(address(issuerStakingController.accessController()), address(accessController), "accessController not set correctly");
-        assertEq(address(issuerStakingController.WMOCA()), address(mockWMoca), "wMoca not set correctly");
+        // Check correct deployment parameters
+        assertEq(issuerStakingController.UNSTAKE_DELAY(), 7 days, "UNSTAKE_DELAY not set correctly");
+        assertEq(issuerStakingController.MAX_SINGLE_STAKE_AMOUNT(), 1000 ether, "MAX_SINGLE_STAKE_AMOUNT not set correctly");
+        
+        assertEq(address(issuerStakingController.WMOCA()), address(mockWMoca), "WMOCA address not set correctly");
+
         assertEq(issuerStakingController.MOCA_TRANSFER_GAS_LIMIT(), MOCA_TRANSFER_GAS_LIMIT, "MOCA_TRANSFER_GAS_LIMIT not set correctly");
 
-        // Check unstake delay
-        assertEq(issuerStakingController.UNSTAKE_DELAY(), 7 days, "unstake delay not set correctly");
-
-        // Check max stake amount
-        assertEq(issuerStakingController.MAX_SINGLE_STAKE_AMOUNT(), 1000 ether, "max stake amount not set correctly");
-        
-        // check admin
-        assertTrue(accessController.isIssuerStakingControllerAdmin(issuerStakingControllerAdmin), "issuerStakingControllerAdmin not set correctly");
-    }
-
-    //note: addressBook and accessController were not set correctly; constructor reverts 
-    function testRevert_Constructor_InvalidAddressBook() public {
-        vm.expectRevert();
-        new IssuerStakingController(address(0), 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+        // Check role admin assignments
+        assertTrue(issuerStakingController.hasRole(issuerStakingController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE(), issuerStakingControllerAdmin), "issuerStakingControllerAdmin should have admin role");
+        assertTrue(issuerStakingController.hasRole(issuerStakingController.EMERGENCY_EXIT_HANDLER_ROLE(), emergencyExitHandler), "emergencyExitHandler should have emergency exit handler role");
+        assertTrue(issuerStakingController.hasRole(issuerStakingController.MONITOR_ADMIN_ROLE(), monitorAdmin), "monitorAdmin should have monitor admin role");
+        assertTrue(issuerStakingController.hasRole(issuerStakingController.MONITOR_ROLE(), monitor), "monitor should have monitor role");
     }
 
     function testRevert_Constructor_InvalidUnstakeDelay() public {
         vm.expectRevert(Errors.InvalidDelayPeriod.selector);
-        new IssuerStakingController(address(accessController), 0, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+        new IssuerStakingController(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, monitor, emergencyExitHandler, 0, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
     }
 
     function testRevert_Constructor_InvalidMaxStakeAmount() public {
         vm.expectRevert(Errors.InvalidAmount.selector);
-        new IssuerStakingController(address(accessController), 7 days, 0, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+        new IssuerStakingController(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, monitor, emergencyExitHandler, 7 days, 0, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
     }
 
     function testRevert_Constructor_InvalidWMoca() public {
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new IssuerStakingController(address(accessController), 7 days, 1000 ether, address(0), MOCA_TRANSFER_GAS_LIMIT);
+        new IssuerStakingController(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, monitor, emergencyExitHandler, 7 days, 1000 ether, address(0), MOCA_TRANSFER_GAS_LIMIT);
     }
 
     function testRevert_Constructor_InvalidMocaTransferGasLimit() public {
         vm.expectRevert(Errors.InvalidGasLimit.selector);
-        new IssuerStakingController(address(accessController), 7 days, 1000 ether, address(mockWMoca), 0);
+        new IssuerStakingController(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, monitor, emergencyExitHandler, 7 days, 1000 ether, address(mockWMoca), 0);
     }
+
+    function testRevert_Constructor_InvalidGlobalAdmin() public {
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        new IssuerStakingController(address(0), issuerStakingControllerAdmin, monitorAdmin, monitor, emergencyExitHandler, 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+    }
+
+    function testRevert_Constructor_InvalidIssuerStakingControllerAdmin() public {
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        new IssuerStakingController(globalAdmin, address(0), monitorAdmin, monitor, emergencyExitHandler, 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+    }
+
+    function testRevert_Constructor_InvalidMonitorAdmin() public {
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        new IssuerStakingController(globalAdmin, issuerStakingControllerAdmin, address(0), monitor, emergencyExitHandler, 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+    }
+
+    function testRevert_Constructor_InvalidMonitorBot() public {
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        new IssuerStakingController(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, address(0), emergencyExitHandler, 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+    }
+
+    function testRevert_Constructor_InvalidEmergencyExitHandler() public {
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        new IssuerStakingController(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, monitor, address(0), 7 days, 1000 ether, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT);
+    }
+
 
     // state transition: issuer can stake moca
     function testCan_StakeMoca() public {
@@ -84,6 +104,7 @@ contract StateT0_Deploy_Test is StateT0_Deploy {
 
     }
 }
+
 
 abstract contract StateT1_Issuer1Staked is StateT0_Deploy {
 
@@ -177,6 +198,7 @@ contract StateT1_Issuer1Staked_Test is StateT1_Issuer1Staked {
     }
 }
 
+
 abstract contract StateT1_InitiateUnstake_Partial is StateT1_Issuer1Staked {
 
     uint256 public firstClaimableTimestamp;
@@ -233,6 +255,7 @@ contract StateT1_InitiateUnstake_Partial_Test is StateT1_InitiateUnstake_Partial
 
 }
 
+
 abstract contract StateT1_UpdateUnstakeDelay is StateT1_InitiateUnstake_Partial {
 
     function setUp() public virtual override {
@@ -263,8 +286,8 @@ contract StateT1_UpdateUnstakeDelay_Test is StateT1_UpdateUnstakeDelay {
     }
 
     function testRevert_UserCannotUpdateUnstakeDelay() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuer1Asset, issuerStakingController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE()));
         vm.prank(issuer1Asset);
-        vm.expectRevert(Errors.OnlyCallableByIssuerStakingControllerAdmin.selector);
         issuerStakingController.setUnstakeDelay(1 days);
     }
 
@@ -311,6 +334,8 @@ contract StateT1_UpdateUnstakeDelay_Test is StateT1_UpdateUnstakeDelay {
     }
 }
 
+
+
 abstract contract StateT2_InitiateUnstake_Full is StateT1_UpdateUnstakeDelay {
 
     uint256 public secondClaimableTimestamp;
@@ -327,7 +352,6 @@ abstract contract StateT2_InitiateUnstake_Full is StateT1_UpdateUnstakeDelay {
         secondClaimableTimestamp = block.timestamp + issuerStakingController.UNSTAKE_DELAY();
     }
 }
-
 
 contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
 
@@ -495,6 +519,8 @@ contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
     }
 }
 
+
+
 // note: since admin reduced unstake delay, we need to warp to second claimable timestamp to test available for first claim
 // firstClaimableTimestamp: 604,801 > secondClaimableTimestamp: 8,6402
 abstract contract StateT86402_FirstAvailableUnstakeClaim is StateT2_InitiateUnstake_Full {
@@ -565,6 +591,7 @@ contract StateT86402_FirstAvailableUnstakeClaim_Test is StateT86402_FirstAvailab
         assertEq(address(issuer1Asset).balance, ISSUER1_MOCA/4 * 3, "issuer moca balance not correct after claimUnstake");
     }
 }
+
 
 abstract contract StateT604801_SecondAvailableUnstakeClaim is StateT86402_FirstAvailableUnstakeClaim {
     function setUp() public virtual override {
@@ -664,8 +691,8 @@ contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount_Test i
     }
 
     function testRevert_UserCannotSetMaxSingleStakeAmount() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuer1Asset, issuerStakingController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE()));
         vm.prank(issuer1Asset);
-        vm.expectRevert(Errors.OnlyCallableByIssuerStakingControllerAdmin.selector);
         issuerStakingController.setMaxSingleStakeAmount(10 ether);
     }
 
@@ -706,14 +733,14 @@ contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount_Test i
 
     // --- state transition: pause ---
     function testRevert_UserCannotCallPause() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuer1Asset, issuerStakingController.MONITOR_ROLE()));
         vm.prank(issuer1Asset);
-        vm.expectRevert(Errors.OnlyCallableByMonitor.selector);
         issuerStakingController.pause();
     }
 
     function testRevert_IssuerStakingControllerAdmin_CannotPause() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuerStakingControllerAdmin, issuerStakingController.MONITOR_ROLE()));
         vm.prank(issuerStakingControllerAdmin);
-        vm.expectRevert(Errors.OnlyCallableByMonitor.selector);
         issuerStakingController.pause();
     }
 
@@ -791,20 +818,20 @@ contract StateT604801_Paused_Test is StateT604801_Paused {
 // --------- state transition: unpause ---------
 
     function testRevert_UserCannotCallUnpause_WhenPaused() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuer1Asset, issuerStakingController.DEFAULT_ADMIN_ROLE()));
         vm.prank(issuer1Asset);
-        vm.expectRevert(Errors.OnlyCallableByGlobalAdmin.selector);
         issuerStakingController.unpause();
     }
 
     function testRevert_MonitorCannotCallUnpause_WhenPaused() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, monitor, issuerStakingController.DEFAULT_ADMIN_ROLE()));
         vm.prank(monitor);
-        vm.expectRevert(Errors.OnlyCallableByGlobalAdmin.selector);
         issuerStakingController.unpause();
     }
 
     function testRevert_IssuerStakingControllerAdminCannotCallUnpause_WhenPaused() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuerStakingControllerAdmin, issuerStakingController.DEFAULT_ADMIN_ROLE()));
         vm.prank(issuerStakingControllerAdmin);
-        vm.expectRevert(Errors.OnlyCallableByGlobalAdmin.selector);
         issuerStakingController.unpause();
     }
 
@@ -909,20 +936,20 @@ contract StateT604801_Paused_Again_Test is StateT604801_Paused_Again {
 
     // state transition: freeze
     function testRevert_UserCannotCallFreeze() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuer1Asset, issuerStakingController.DEFAULT_ADMIN_ROLE()));
         vm.prank(issuer1Asset);
-        vm.expectRevert(Errors.OnlyCallableByGlobalAdmin.selector);
         issuerStakingController.freeze();
     }
 
     function testRevert_MonitorCannotCallFreeze() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, monitor, issuerStakingController.DEFAULT_ADMIN_ROLE()));
         vm.prank(monitor);
-        vm.expectRevert(Errors.OnlyCallableByGlobalAdmin.selector);
         issuerStakingController.freeze();
     }
 
     function testRevert_IssuerStakingControllerAdminCannotCallFreeze() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuerStakingControllerAdmin, issuerStakingController.DEFAULT_ADMIN_ROLE()));
         vm.prank(issuerStakingControllerAdmin);
-        vm.expectRevert(Errors.OnlyCallableByGlobalAdmin.selector);
         issuerStakingController.freeze();
     }
 
