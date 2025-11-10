@@ -669,7 +669,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
         // Pool-specific updates [for VotingController]
         {
-            if(votingPools[poolId]) {
+            if(_votingPools[poolId]) {
                 _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
                 
                 // Batch pool fee updates
@@ -1307,5 +1307,14 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      */
     function getCallerNonce(address caller, DataTypes.EntityType entityType) external view returns (uint256) {
         return _callerNonces[caller][entityType];
+    }
+
+    /**
+     * @notice Returns true if the pool is whitelisted, false otherwise.
+     * @param poolId The pool id.
+     * @return isWhitelisted True if the pool is whitelisted, false otherwise.
+     */
+    function checkIfPoolIsWhitelisted(bytes32 poolId) external view returns (bool) {
+        return _votingPools[poolId];
     }
 }
