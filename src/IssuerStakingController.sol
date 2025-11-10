@@ -3,13 +3,14 @@ pragma solidity 0.8.27;
 
 // External: OZ
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+// access control
+import {AccessControlEnumerable, AccessControl} from "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {IAccessControlEnumerable, IAccessControl} from "openzeppelin-contracts/contracts/access/extensions/IAccessControlEnumerable.sol";
 
 // libraries
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
-
-// interfaces
-import {IAccessController} from "./interfaces/IAccessController.sol";
+import {Constants} from "./libraries/Constants.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";
@@ -23,10 +24,9 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
  */
 
 
-contract IssuerStakingController is Pausable, LowLevelWMoca {
+contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumerable {
     
     // Contracts
-    IAccessController public immutable accessController;
     address public immutable WMOCA;
 
     // Global params
@@ -61,12 +61,11 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
 
 //------------------------------- Constructor---------------------------------------------------------------------
 
-    constructor(address accessController_, uint256 unstakeDelay, uint256 maxStakeAmount, address wMoca_, uint256 mocaTransferGasLimit) {
+    constructor(
+        address globalAdmin, address issuerStakingControllerAdmin, address monitorAdmin, address cronJobAdmin, 
+        address monitorBot, address emergencyExitHandler, 
+        uint256 unstakeDelay, uint256 maxStakeAmount, address wMoca_, uint256 mocaTransferGasLimit) {
        
-        // check: access controller is set [not frozen]
-        require(accessController_ != address(0), Errors.InvalidAddress());
-        accessController = IAccessController(accessController_);
-        
         // unstakeDelay
         require(unstakeDelay > 0, Errors.InvalidDelayPeriod());
         require(unstakeDelay <= 90 days, Errors.InvalidDelayPeriod());
@@ -83,6 +82,42 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
+
+        // setup roles
+        _setupRoles(globalAdmin, issuerStakingControllerAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler);
+    }
+
+    // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
+    function _setupRoles(address globalAdmin, address issuerStakingControllerAdmin, address monitorAdmin, address cronJobAdmin, address monitorBot, address emergencyExitHandler) internal {
+
+        // sanity check: all addresses are not zero address
+        require(globalAdmin != address(0), Errors.InvalidAddress());
+        require(issuerStakingControllerAdmin != address(0), Errors.InvalidAddress());
+        require(monitorAdmin != address(0), Errors.InvalidAddress());
+        require(cronJobAdmin != address(0), Errors.InvalidAddress());
+        require(monitorBot != address(0), Errors.InvalidAddress());
+        require(emergencyExitHandler != address(0), Errors.InvalidAddress());
+
+        // grant roles to addresses
+        _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);    
+        _grantRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, issuerStakingControllerAdmin);
+        _grantRole(MONITOR_ADMIN_ROLE, monitorAdmin);
+        _grantRole(CRON_JOB_ADMIN_ROLE, cronJobAdmin);
+        _grantRole(EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
+
+        // there should at least 1 bot address for monitoring at deployment
+        _grantRole(MONITOR_ROLE, monitorBot);
+
+        // --------------- Set role admins ------------------------------
+        // Operational role administrators managed by global admin
+        _setRoleAdmin(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
+
+        _setRoleAdmin(MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        // High-frequency roles managed by their dedicated admins
+        _setRoleAdmin(MONITOR_ROLE, MONITOR_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ROLE, CRON_JOB_ADMIN_ROLE);
     }
 
 //------------------------------- External functions---------------------------------------------------------------
@@ -177,7 +212,7 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
      * @dev Only callable by the IssuerStakingController admin. Must be > 0 and <= 90 days.
      * @param newUnstakeDelay The new unstake delay.
      */
-    function setUnstakeDelay(uint256 newUnstakeDelay) external onlyIssuerStakingControllerAdmin whenNotPaused {
+    function setUnstakeDelay(uint256 newUnstakeDelay) external onlyRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(newUnstakeDelay > 0, Errors.InvalidDelayPeriod());
         require(newUnstakeDelay <= 90 days, Errors.InvalidDelayPeriod());
 
@@ -194,7 +229,7 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
      * @param newMaxSingleStakeAmount The new maximum single stake amount.
      */
 
-    function setMaxSingleStakeAmount(uint256 newMaxSingleStakeAmount) external onlyIssuerStakingControllerAdmin whenNotPaused {
+    function setMaxSingleStakeAmount(uint256 newMaxSingleStakeAmount) external onlyRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(newMaxSingleStakeAmount > 0, Errors.InvalidAmount());
 
         // cache old + update to new max stake amount
@@ -209,7 +244,7 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
      * @dev Only callable by the IssuerStakingController admin.
      * @param newMocaTransferGasLimit The new gas limit for moca transfer.
      */
-    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyIssuerStakingControllerAdmin whenNotPaused {
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyRole(ISSUER_STAKING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
 
         // cache old + update to new gas limit
@@ -219,36 +254,21 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
     }
 
-//------------------------------- Modifiers -------------------------------------------------------
 
-    modifier onlyMonitor() {
-        require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
-        _;
-    }
-
-    modifier onlyGlobalAdmin() {
-        require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
-        _;
-    } 
-
-    modifier onlyIssuerStakingControllerAdmin() {
-        require(accessController.isIssuerStakingControllerAdmin(msg.sender), Errors.OnlyCallableByIssuerStakingControllerAdmin());
-        _;
-    }
 
 //------------------------------- Risk-related functions ---------------------------------------------------------
    
     /**
      * @notice Pause contract. Cannot pause once frozen
      */
-    function pause() external onlyMonitor whenNotPaused {
+    function pause() external onlyRole(MONITOR_ROLE) whenNotPaused {
         _pause();
     }
 
     /**
      * @notice Unpause pool. Cannot unpause once frozen
      */
-    function unpause() external onlyGlobalAdmin whenPaused {
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) whenPaused {
         require(isFrozen == 0, Errors.IsFrozen()); 
         _unpause();
     }
@@ -259,7 +279,7 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
      *      Nothing to be updated. Freeze as is.
      *      Enables emergencyExit() to be called.
      */
-    function freeze() external onlyGlobalAdmin whenPaused {
+    function freeze() external onlyRole(DEFAULT_ADMIN_ROLE) whenPaused {
         require(isFrozen == 0, Errors.IsFrozen());
         isFrozen = 1;
         emit Events.ContractFrozen();
@@ -285,10 +305,8 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
             address issuerAddress = issuerAddresses[i];
             
             // check: if NOT emergency exit handler, AND NOT, the issuer themselves: revert
-            if (!accessController.isEmergencyExitHandler(msg.sender)) {
-                if (msg.sender != issuerAddress) {
-                    revert Errors.OnlyCallableByEmergencyExitHandlerOrIssuer();
-                }
+            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != issuerAddress) {
+                revert Errors.OnlyCallableByEmergencyExitHandlerOrIssuer();
             }
 
             // get issuer's total moca: staked and pending unstake
