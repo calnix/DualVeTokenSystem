@@ -102,7 +102,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     mapping(address callerAddress => mapping(DataTypes.EntityType entityType => uint256 nonce)) internal _callerNonces;
 
     // whitelist of pools [pseudo verification that poolId actually exists in VotingController]
-    mapping(bytes32 poolId => bool isWhitelisted) public votingPools;
+    mapping(bytes32 poolId => bool isWhitelisted) internal _votingPools;
 
 
 //------------------------------- Constructor---------------------------------------------------------------------
@@ -809,7 +809,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         require(schemaPtr.issuerId != bytes32(0), Errors.InvalidSchema());
         
         // pool must be whitelisted
-        require(votingPools[poolId], Errors.PoolNotWhitelisted());
+        require(_votingPools[poolId], Errors.PoolNotWhitelisted());
 
         // update pool id
         schemaPtr.poolId = poolId;
@@ -824,9 +824,9 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param isWhitelisted The new whitelist status.
      */
     function whitelistPool(bytes32 poolId, bool isWhitelisted) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
-        require(votingPools[poolId] != isWhitelisted, Errors.PoolWhitelistedStatusUnchanged());
+        require(_votingPools[poolId] != isWhitelisted, Errors.PoolWhitelistedStatusUnchanged());
 
-        votingPools[poolId] = isWhitelisted;
+        _votingPools[poolId] = isWhitelisted;
         emit Events.PoolWhitelistedUpdated(poolId, isWhitelisted);
     }
 
