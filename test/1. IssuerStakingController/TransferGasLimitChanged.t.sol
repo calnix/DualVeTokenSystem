@@ -19,7 +19,7 @@ contract StateT2_TransferGasLimitChanged_Test is StateT2_TransferGasLimitChanged
 
 
     function testRevert_SetTransferGasLimit_NotIssuerStakingControllerAdmin() public {
-        vm.expectRevert(Errors.OnlyCallableByIssuerStakingControllerAdmin.selector);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, issuer1Asset, issuerStakingController.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE()));
         vm.prank(issuer1Asset);
         issuerStakingController.setMocaTransferGasLimit(MOCA_TRANSFER_GAS_LIMIT * 2);
     }
