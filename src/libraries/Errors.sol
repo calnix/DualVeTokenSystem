@@ -48,6 +48,8 @@ library Errors {
     error InvalidSubsidyPercentageTierOrder();
     error DuplicateTierIndex();
     error OnlyCallableByEmergencyExitHandlerOrVerifier();
+    error PoolNotWhitelisted();
+    error PoolWhitelistedStatusUnchanged();
 
 // --------- VotingEscrowMoca.sol ---------
     error InvalidLockDuration();
@@ -113,24 +115,6 @@ library Errors {
     error OnlyCallableByWhitelistedAddress();
     error TotalMocaEscrowedExceeded();
     error OnlyCallableByEmergencyExitHandlerOrUser();
-
-// --------- AccessController.sol ---------
-    error InvalidRole();
-    error OnlyCallableByMonitorOrGlobalAdmin();
-    error CallerNotRiskOrPoolAdmin();
-    error OnlyCallableByAssetManager();
-    error OnlyCallableByMonitor();
-    error OnlyCallableByCronJob();
-    error OnlyCallableByGlobalAdmin();
-    error OnlyCallableByEmergencyExitHandler();
-    error OnlyCallableByEscrowedMocaAdmin();
-    error OnlyCallableByVotingControllerAdmin();
-    error OnlyCallableByPaymentsControllerAdmin();
-    error OnlyCallableByVotingControllerContract();
-    error OnlyCallableByIssuerStakingControllerAdmin();
-    // transferGlobalAdminFromAddressBook
-    error OnlyCallableByAddressBook();
-    error OldAdminDoesNotHaveRole();
 
 // --------- IssuerStakingController.sol ---------
     error TransferFailed();

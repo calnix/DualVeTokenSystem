@@ -48,6 +48,9 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     // gas limit for moca transfer
     uint256 public MOCA_TRANSFER_GAS_LIMIT;
 
+    // treasury address for escrowed moca
+    address public ESCROWED_MOCA_TREASURY;
+
     // risk
     uint256 public isFrozen;
 

@@ -24,4 +24,26 @@ library Constants {
     // signature for PaymentsController::deductBalanceZeroFee() | does not include amount
     bytes32 internal constant DEDUCT_BALANCE_ZERO_FEE_TYPEHASH = keccak256("DeductBalanceZeroFee(bytes32 issuerId,bytes32 verifierId,bytes32 schemaId,address userAddress,uint256 expiry,uint256 nonce)"); 
 
+
+    // ------------------------------------------- ROLES --------------------------------------
+    // ______ HIGH-FREQUENCY ROLES [AUTOMATED OPERATIONAL FUNCTIONS] ______
+    bytes32 public constant MONITOR_ROLE = keccak256("MONITOR_ROLE");      // Pause only
+    bytes32 public constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");    // Automated tasks: createLockFor, finalizeEpoch, depositSubsidies
+    
+    // Role admins for operational roles [Dedicated role admins for operational efficiency]
+    bytes32 public constant MONITOR_ADMIN_ROLE = keccak256("MONITOR_ADMIN_ROLE"); 
+    bytes32 public constant CRON_JOB_ADMIN_ROLE = keccak256("CRON_JOB_ADMIN_ROLE");
+
+    // ______ LOW-FREQUENCY STRATEGIC ROLES: NO DEDICATED ADMINS [MANAGED BY GLOBAL ADMIN] ______
+    // Roles for making changes to contract parameters + configuration [multi-sig]
+    bytes32 public constant PAYMENTS_CONTROLLER_ADMIN_ROLE = keccak256("PAYMENTS_CONTROLLER_ADMIN_ROLE");
+    bytes32 public constant VOTING_CONTROLLER_ADMIN_ROLE = keccak256("VOTING_CONTROLLER_ADMIN_ROLE");
+    bytes32 public constant VOTING_ESCROW_MOCA_ADMIN_ROLE = keccak256("VOTING_ESCROW_MOCA_ADMIN_ROLE");
+    bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = keccak256("ESCROWED_MOCA_ADMIN_ROLE");
+    bytes32 public constant ISSUER_STAKING_CONTROLLER_ADMIN_ROLE = keccak256("ISSUER_STAKING_CONTROLLER_ADMIN_ROLE");
+
+    // For multiple contracts: depositing/withdrawing/converting assets [PaymentsController, VotingController, esMoca]
+    bytes32 public constant ASSET_MANAGER_ROLE = keccak256("ASSET_MANAGER_ROLE");                   // withdraw fns on PaymentsController, VotingController
+    bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = keccak256("EMERGENCY_EXIT_HANDLER_ROLE"); 
+    
 }

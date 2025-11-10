@@ -9,15 +9,16 @@ import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 import "openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker, ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/SignatureChecker.sol";
 
+// access control
+import {AccessControlEnumerable, AccessControl} from "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {IAccessControlEnumerable, IAccessControl} from "openzeppelin-contracts/contracts/access/extensions/IAccessControlEnumerable.sol";
+
 // libraries
 import {DataTypes} from "./libraries/DataTypes.sol";
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
 import {Constants} from "./libraries/Constants.sol";
 import {EpochMath} from "./libraries/EpochMath.sol";
-
-// interfaces
-import {IAccessController} from "./interfaces/IAccessController.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";
@@ -29,12 +30,11 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
  * @dev Integrates with external controllers and enforces protocol-level access and safety checks. 
  */
 
-contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
+contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnumerable {
     using SafeERC20 for IERC20;
     using SignatureChecker for address;
 
     // Contracts
-    IAccessController public immutable accessController;
     address public immutable WMOCA;
     IERC20 public immutable USD8;
 
@@ -51,17 +51,30 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     // staked by verifiers
     uint256 public TOTAL_MOCA_STAKED;
 
+
     // total fees unclaimed: for emergency withdrawal [USD8 terms]
     uint256 public TOTAL_PROTOCOL_FEES_UNCLAIMED;
     uint256 public TOTAL_VOTING_FEES_UNCLAIMED;
 
     // gas limit for moca transfer
     uint256 public MOCA_TRANSFER_GAS_LIMIT;
+    
+    // Roles
+    bytes32 public constant PAYMENTS_CONTROLLER_ADMIN_ROLE = Constants.PAYMENTS_CONTROLLER_ADMIN_ROLE;
+    bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = Constants.EMERGENCY_EXIT_HANDLER_ROLE;
+    bytes32 public constant MONITOR_ADMIN_ROLE = Constants.MONITOR_ADMIN_ROLE;
+    bytes32 public constant CRON_JOB_ADMIN_ROLE = Constants.CRON_JOB_ADMIN_ROLE;
+    bytes32 public constant MONITOR_ROLE = Constants.MONITOR_ROLE;
+    bytes32 public constant CRON_JOB_ROLE = Constants.CRON_JOB_ROLE;
+
+    // treasury address for payments controller
+    address public PAYMENTS_CONTROLLER_TREASURY;
+
 
     // risk management
     uint256 public isFrozen;
 
-//-------------------------------mappings-----------------------------------------------------
+//------------------------------- Mappings -----------------------------------------------------
     
     // issuer, verifier, schema
     mapping(bytes32 issuerId => DataTypes.Issuer issuer) internal _issuers;
@@ -88,17 +101,20 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
     // nonce for salt; for deterministic id generation [each caller has a nonce for each entity type]
     mapping(address callerAddress => mapping(DataTypes.EntityType entityType => uint256 nonce)) internal _callerNonces;
 
+    // whitelist of pools [pseudo verification that poolId actually exists in VotingController]
+    mapping(bytes32 poolId => bool isWhitelisted) public votingPools;
+
+
 //------------------------------- Constructor---------------------------------------------------------------------
 
     // name: PaymentsController, version: 1
     constructor(
-        address accessController_, uint256 protocolFeePercentage, uint256 voterFeePercentage, uint256 delayPeriod, 
+        address globalAdmin, address paymentsControllerAdmin, address monitorAdmin, address cronJobAdmin, address monitorBot, 
+        address paymentsControllerTreasury, address emergencyExitHandler,
+        uint256 protocolFeePercentage, uint256 voterFeePercentage, uint256 delayPeriod, 
         address wMoca_, address usd8_, uint256 mocaTransferGasLimit,
         string memory name, string memory version) EIP712(name, version) {
 
-        // check: access controller is set
-        require(accessController_ != address(0), Errors.InvalidAddress());
-        accessController = IAccessController(accessController_);
 
         // check: wrapped moca is set
         require(wMoca_ != address(0), Errors.InvalidAddress());
@@ -112,7 +128,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
       
-        // check if fee percentages are valid [both fees can be 0]
+        // check if fee percentages are valid [both fees can be 0, but cannot be 100%]
         require(protocolFeePercentage + voterFeePercentage < Constants.PRECISION_BASE, Errors.InvalidPercentage());
         PROTOCOL_FEE_PERCENTAGE = protocolFeePercentage;
         VOTING_FEE_PERCENTAGE = voterFeePercentage;
@@ -121,6 +137,50 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         require(delayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
         require(EpochMath.isValidEpochTime(delayPeriod), Errors.InvalidDelayPeriod());
         FEE_INCREASE_DELAY_PERIOD = delayPeriod;
+
+
+        _setupRolesAndTreasury(globalAdmin, paymentsControllerAdmin, monitorAdmin, cronJobAdmin, monitorBot, paymentsControllerTreasury, emergencyExitHandler);
+    }
+
+    // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
+    function _setupRolesAndTreasury(
+        address globalAdmin, address paymentsControllerAdmin, address monitorAdmin, address cronJobAdmin, 
+        address monitorBot, address paymentsControllerTreasury, address emergencyExitHandler) internal {
+
+        // sanity check: all addresses are not zero address
+        require(globalAdmin != address(0), Errors.InvalidAddress());
+        require(paymentsControllerAdmin != address(0), Errors.InvalidAddress());
+        require(monitorAdmin != address(0), Errors.InvalidAddress());
+        require(cronJobAdmin != address(0), Errors.InvalidAddress());
+        require(monitorBot != address(0), Errors.InvalidAddress());
+        require(paymentsControllerTreasury != address(0), Errors.InvalidAddress());
+        require(emergencyExitHandler != address(0), Errors.InvalidAddress());
+
+        // grant roles to addresses
+        _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);    
+        _grantRole(PAYMENTS_CONTROLLER_ADMIN_ROLE, paymentsControllerAdmin);
+        _grantRole(MONITOR_ADMIN_ROLE, monitorAdmin);
+        _grantRole(CRON_JOB_ADMIN_ROLE, cronJobAdmin);
+        _grantRole(EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
+
+        // there should at least 1 bot address for monitoring at deployment
+        _grantRole(MONITOR_ROLE, monitorBot);
+
+        // --------------- Set role admins ------------------------------
+        // Operational role administrators managed by global admin
+        _setRoleAdmin(PAYMENTS_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
+
+        _setRoleAdmin(MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        // High-frequency roles managed by their dedicated admins
+        _setRoleAdmin(MONITOR_ROLE, MONITOR_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ROLE, CRON_JOB_ADMIN_ROLE);
+        
+
+        // set treasury address
+        require(paymentsControllerTreasury != address(this), Errors.InvalidAddress());
+        PAYMENTS_CONTROLLER_TREASURY = paymentsControllerTreasury;
     }
 
 //------------------------------- Issuer functions-----------------------------------------------------------------
@@ -517,7 +577,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         return newAssetManagerAddress;
     }
 
-//------------------------------- UniversalVerificationContract functions-----------------------------------------
+//------------------------------- Deduct Balance functions -------------------------------------------------------
 
     /**
      * @notice Deducts the verifier's balance for a verification, distributing protocol and voting fees.
@@ -581,9 +641,14 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         uint128 netFee;
 
         unchecked { // Safe because fees < 100%
-            protocolFee = uint128((amount * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE);
-            votingFee = uint128((amount * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE);
-            netFee = amount - protocolFee - votingFee;
+            
+            // Multiplying by percentage could overflow uint128 → needs uint256 intermediate & cast to uint128 could silently truncate values
+            uint256 protocolFeeCalc = (uint256(amount) * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
+            uint256 votingFeeCalc = (uint256(amount) * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
+    
+            protocolFee = uint128(protocolFeeCalc);
+            votingFee = uint128(votingFeeCalc);
+            netFee = uint128(amount - protocolFee - votingFee);
         }
 
         //----- Batch storage updates -----
@@ -604,8 +669,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
 
         // Pool-specific updates [for VotingController]
         {
-            if(poolId != bytes32(0)) {
-                // amount is uint128, but _bookSubsidy expects uint256 | acceptable since uint128 < uint256
+            if(votingPools[poolId]) {
                 _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
                 
                 // Batch pool fee updates
@@ -653,8 +717,12 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
 
 
         //----- Verify schema has still has zero fee [ NextFee timestamp check ]-----
-        // no need to check if nextFee > 0, since fee decrementations are instantly applied as per updateSchemaFee()
-        if (schema.nextFeeTimestamp <= block.timestamp) revert Errors.InvalidSchemaFee();
+        if (schema.nextFeeTimestamp > 0){
+            // check if next fee timestamp is in the future
+            require(schema.nextFeeTimestamp > block.timestamp, Errors.InvalidSchemaFee());
+
+            // no need to check if nextFee > 0, since fee decrementations are instantly applied as per updateSchemaFee()
+        }
 
 
         // Simplified signature verification: excludes amount/fee from signature check
@@ -687,7 +755,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
 
     // Finds the highest tier the verifier qualifies for (closest largest) and applies that subsidy.
     // expects subsidy tier array to be orders in ascending fashion (from smallest to largest)
-    function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint256 amount, uint256 currentEpoch) internal {
+    function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint128 amount, uint256 currentEpoch) internal {
         // get verifier's moca staked
         uint256 verifierMocaStaked = _verifiers[verifierId].mocaStaked;
         
@@ -740,18 +808,33 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param schemaId The unique id of the schema to update.
      * @param poolId The new poolId to associate with the schema (can be zero to remove).
      */
-    function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyPaymentsAdmin whenNotPaused {
+    function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
 
         // sanity check: schema must exist
         require(schemaPtr.issuerId != bytes32(0), Errors.InvalidSchema());
         
+        // pool must be whitelisted
+        require(votingPools[poolId], Errors.PoolNotWhitelisted());
+
         // update pool id
         schemaPtr.poolId = poolId;
 
         emit Events.PoolIdUpdated(schemaId, poolId);
     }
 
+    /**
+     * @notice Whitelists or un-whitelists a pool.
+     * @dev Only callable by PaymentsController admin. [The pool must exist in VotingController]
+     * @param poolId The poolId to whitelist or un-whitelist.
+     * @param isWhitelisted The new whitelist status.
+     */
+    function whitelistPool(bytes32 poolId, bool isWhitelisted) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
+        require(votingPools[poolId] != isWhitelisted, Errors.PoolWhitelistedStatusUnchanged());
+
+        votingPools[poolId] = isWhitelisted;
+        emit Events.PoolWhitelistedUpdated(poolId, isWhitelisted);
+    }
 
     /**
      * @notice Updates the fee increase delay period for schema fee increases.
@@ -759,7 +842,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      *      and a multiple of the epoch duration defined in EpochMath.
      * @param newDelayPeriod The new delay period to set, in seconds. Must be divisible by EpochMath.EPOCH_DURATION.
      */
-    function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyPaymentsAdmin whenNotPaused {
+    function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(newDelayPeriod > 0, Errors.InvalidDelayPeriod());
         require(newDelayPeriod % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
 
@@ -774,7 +857,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      *      The new total fee percentage cannot be greater than 100% [10_000].
      * @param protocolFeePercentage The new protocol fee percentage to set.
      */
-    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyPaymentsAdmin whenNotPaused {
+    function updateProtocolFeePercentage(uint256 protocolFeePercentage) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         // total fee percentage cannot be greater than 100%
         require(protocolFeePercentage + VOTING_FEE_PERCENTAGE < Constants.PRECISION_BASE, Errors.InvalidPercentage());
 
@@ -789,7 +872,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      *      The new total fee percentage cannot be greater than 100% [10_000].
      * @param votingFeePercentage The new voting fee percentage to set.
      */
-    function updateVotingFeePercentage(uint256 votingFeePercentage) external onlyPaymentsAdmin whenNotPaused {
+    function updateVotingFeePercentage(uint256 votingFeePercentage) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         // total fee percentage cannot be greater than 100%
         require(votingFeePercentage + PROTOCOL_FEE_PERCENTAGE < Constants.PRECISION_BASE, Errors.InvalidPercentage());
         
@@ -804,7 +887,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param mocaStaked The moca staked for each tier.
      * @param subsidyPercentages The subsidy percentage for each tier. [Can be 100%, but not 0. If 0, no reason to setup a tier]
      */
-    function setVerifierSubsidyTiers(uint128[] calldata mocaStaked, uint128[] calldata subsidyPercentages) external onlyPaymentsAdmin whenNotPaused {
+    function setVerifierSubsidyTiers(uint128[] calldata mocaStaked, uint128[] calldata subsidyPercentages) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         uint256 length = mocaStaked.length;
         require(length > 0 && length <= 10, Errors.InvalidArray());
         require(length == subsidyPercentages.length, Errors.MismatchedArrayLengths());
@@ -846,7 +929,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @notice Clears all verifier subsidy tiers.
      * @dev Only callable by the PaymentsController admin.
      */
-    function clearVerifierSubsidyTiers() external onlyPaymentsAdmin whenNotPaused {
+    function clearVerifierSubsidyTiers() external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         delete _subsidyTiers;
         emit Events.VerifierStakingTiersCleared();
     }
@@ -857,7 +940,7 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @dev Only callable by the PaymentsController admin.
      * @param newMocaTransferGasLimit The new gas limit for moca transfer.
      */
-    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyPaymentsAdmin whenNotPaused {
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
 
         // cache old + update to new gas limit
@@ -879,11 +962,11 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      *      Assets are sent to payments controller treasury.
      * @param epoch The epoch number for which to withdraw protocol fees.
      */
-    function withdrawProtocolFees(uint256 epoch) external onlyCronJob whenNotPaused {
+    function withdrawProtocolFees(uint256 epoch) external onlyRole(CRON_JOB_ROLE) whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
 
         // get payments controller treasury address
-        address paymentsControllerTreasury = accessController.PAYMENTS_CONTROLLER_TREASURY();
+        address paymentsControllerTreasury = PAYMENTS_CONTROLLER_TREASURY;
         require(paymentsControllerTreasury != address(0), Errors.InvalidAddress());
 
         // cache pointer
@@ -911,11 +994,11 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      *      Assets are sent to payments controller treasury.
      * @param epoch The epoch number for which to withdraw voters fees.
      */
-    function withdrawVotersFees(uint256 epoch) external onlyCronJob whenNotPaused {
+    function withdrawVotersFees(uint256 epoch) external onlyRole(CRON_JOB_ROLE) whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
 
         // get payments controller treasury address
-        address paymentsControllerTreasury = accessController.PAYMENTS_CONTROLLER_TREASURY();
+        address paymentsControllerTreasury = PAYMENTS_CONTROLLER_TREASURY;
         require(paymentsControllerTreasury != address(0), Errors.InvalidAddress());
 
         // cache pointer
@@ -935,20 +1018,40 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         USD8.safeTransfer(paymentsControllerTreasury, votersFees);
     }
 
+//------------------------------- DEFAULT_ADMIN_ROLE: update treasury address ------------------------------------------
+    
+    /**
+     * @notice Sets the payments controller treasury address
+     * @dev Only callable by the DEFAULT_ADMIN_ROLE
+     * @param newPaymentsControllerTreasury The new payments controller treasury address
+    */
+    function setPaymentsControllerTreasury(address newPaymentsControllerTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        // sanity check: new treasury address is not zero address or the same address
+        require(newPaymentsControllerTreasury != address(0), Errors.InvalidAddress());
+        require(newPaymentsControllerTreasury != address(this), Errors.InvalidAddress());
+        require(newPaymentsControllerTreasury != PAYMENTS_CONTROLLER_TREASURY, Errors.InvalidAddress());
+
+        // update treasury address
+        address oldPaymentsControllerTreasury = PAYMENTS_CONTROLLER_TREASURY;
+        PAYMENTS_CONTROLLER_TREASURY = newPaymentsControllerTreasury;
+
+        emit Events.PaymentsControllerTreasuryUpdated(oldPaymentsControllerTreasury, newPaymentsControllerTreasury);
+    }
+
 //------------------------------- Risk-related functions ---------------------------------------------------------
 
     /**
      * @notice Pause contract. Cannot pause once frozen
      */
-    function pause() external onlyMonitor whenNotPaused {
+    function pause() external onlyRole(MONITOR_ROLE) whenNotPaused {
         _pause();
     }
 
     /**
      * @notice Unpause pool. Cannot unpause once frozen
      */
-    function unpause() external onlyGlobalAdmin whenPaused {
-        if(isFrozen == 1) revert Errors.IsFrozen(); 
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) whenPaused {
+        require(isFrozen == 0, Errors.IsFrozen()); 
         _unpause();
     }
 
@@ -958,8 +1061,8 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      *      Nothing to be updated. Freeze as is.
      *      Enables emergencyExit() to be called.
      */
-    function freeze() external onlyGlobalAdmin whenPaused {
-        if(isFrozen == 1) revert Errors.IsFrozen();
+    function freeze() external onlyRole(DEFAULT_ADMIN_ROLE) whenPaused {
+        require(isFrozen == 0, Errors.IsFrozen());
         isFrozen = 1;
         emit Events.ContractFrozen();
     }  
@@ -974,8 +1077,8 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param verifierIds Array of verifier identifiers whose balances will be exfil'd.
      */
     function emergencyExitVerifiers(bytes32[] calldata verifierIds) external payable {
-        if(isFrozen == 0) revert Errors.NotFrozen();
-        if(verifierIds.length == 0) revert Errors.InvalidArray();
+        require(isFrozen == 1, Errors.NotFrozen());
+        require(verifierIds.length > 0, Errors.InvalidArray());
    
         // if anything other than a valid verifierId is given, will retrieve either empty struct and skip
         for(uint256 i; i < verifierIds.length; ++i) {
@@ -984,10 +1087,8 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
             DataTypes.Verifier storage verifierPtr = _verifiers[verifierIds[i]];
 
             // check: if NOT emergency exit handler, AND NOT, the verifier themselves: revert
-            if (!accessController.isEmergencyExitHandler(msg.sender)) {
-                if (msg.sender != verifierPtr.adminAddress) {
-                    revert Errors.OnlyCallableByEmergencyExitHandlerOrVerifier();
-                }
+            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != verifierPtr.adminAddress) {
+                revert Errors.OnlyCallableByEmergencyExitHandlerOrVerifier();
             }
 
             // get balance: if 0, skip
@@ -1001,6 +1102,9 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
             // reset balance and moca staked
             delete verifierPtr.currentBalance;
             delete verifierPtr.mocaStaked;
+
+            // decrement total moca staked
+            TOTAL_MOCA_STAKED -= verifierMocaStaked;
 
             // transfer balance and moca to verifier
             if(verifierBalance > 0) USD8.safeTransfer(verifierAssetManagerAddress, verifierBalance);
@@ -1020,8 +1124,8 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      * @param issuerIds Array of issuer identifiers whose unclaimed fees will be exfil'd.
      */
     function emergencyExitIssuers(bytes32[] calldata issuerIds) external {
-        if(isFrozen == 0) revert Errors.NotFrozen();
-        if(issuerIds.length == 0) revert Errors.InvalidArray();
+        require(isFrozen == 1, Errors.NotFrozen());
+        require(issuerIds.length > 0, Errors.InvalidArray());
 
         // if anything other than a valid issuerId is given, will retrieve either empty struct and skip
         for(uint256 i; i < issuerIds.length; ++i) {
@@ -1030,10 +1134,8 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
             DataTypes.Issuer storage issuerPtr = _issuers[issuerIds[i]];
 
             // check: if NOT emergency exit handler, AND NOT, the issuer themselves: revert
-            if (!accessController.isEmergencyExitHandler(msg.sender)) {
-                if (msg.sender != issuerPtr.adminAddress) {
-                    revert Errors.OnlyCallableByEmergencyExitHandlerOrIssuer();
-                }
+            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != issuerPtr.adminAddress) {
+                revert Errors.OnlyCallableByEmergencyExitHandlerOrIssuer();
             }
 
             // get unclaimed fees: if 0, skip
@@ -1056,16 +1158,17 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
      *      Transfers the sum of unclaimed fees to payments controller treasury address.
      *      Resets the unclaimed fee counters to zero after transfer.
      */
-    function emergencyExitFees() external onlyEmergencyExitHandler {
-        if(isFrozen == 0) revert Errors.NotFrozen();
+    function emergencyExitFees() external onlyRole(EMERGENCY_EXIT_HANDLER_ROLE) {
+        require(isFrozen == 1, Errors.NotFrozen());
 
         // get treasury address
-        address paymentsControllerTreasury = accessController.PAYMENTS_CONTROLLER_TREASURY();
+        address paymentsControllerTreasury = PAYMENTS_CONTROLLER_TREASURY;
         require(paymentsControllerTreasury != address(0), Errors.InvalidAddress());
-
+        require(paymentsControllerTreasury != address(this), Errors.InvalidAddress());
+        
         // sanity check: there must be unclaimed fees to claim
         uint256 totalUnclaimedFees = TOTAL_PROTOCOL_FEES_UNCLAIMED + TOTAL_VOTING_FEES_UNCLAIMED;
-        if(totalUnclaimedFees == 0) revert Errors.NoFeesToClaim();
+        require(totalUnclaimedFees > 0, Errors.NoFeesToClaim());
 
         // reset counters
         delete TOTAL_PROTOCOL_FEES_UNCLAIMED;
@@ -1077,34 +1180,6 @@ contract PaymentsController is EIP712, Pausable, LowLevelWMoca {
         emit Events.EmergencyExitFees(paymentsControllerTreasury, totalUnclaimedFees);
     }
     
-
-//------------------------------- Modifiers ----------------------------------------------------------------------
-
-    modifier onlyMonitor() {
-        require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
-        _;
-    }
-
-    modifier onlyPaymentsAdmin() {
-        require(accessController.isPaymentsControllerAdmin(msg.sender), Errors.OnlyCallableByPaymentsControllerAdmin());
-        _;
-    }
-
-    modifier onlyGlobalAdmin() {
-        require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
-        _;
-    }   
-
-    modifier onlyCronJob() {
-        require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
-        _;
-    }
-
-    modifier onlyEmergencyExitHandler() {
-        require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
-        _;
-    }
-
 
 //------------------------------- View functions ------------------------------------------------------------------
    

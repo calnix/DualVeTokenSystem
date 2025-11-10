@@ -39,6 +39,15 @@ contract IssuerStakingController is Pausable, LowLevelWMoca {
     // gas limit for moca transfer
     uint256 public MOCA_TRANSFER_GAS_LIMIT;
 
+    // Roles
+    bytes32 public constant ISSUER_STAKING_CONTROLLER_ADMIN_ROLE = Constants.ISSUER_STAKING_CONTROLLER_ADMIN_ROLE;
+    bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = Constants.EMERGENCY_EXIT_HANDLER_ROLE;
+    bytes32 public constant MONITOR_ADMIN_ROLE = Constants.MONITOR_ADMIN_ROLE;
+    bytes32 public constant CRON_JOB_ADMIN_ROLE = Constants.CRON_JOB_ADMIN_ROLE;
+    bytes32 public constant MONITOR_ROLE = Constants.MONITOR_ROLE;
+    bytes32 public constant CRON_JOB_ROLE = Constants.CRON_JOB_ROLE;
+
+
     // risk management
     uint256 public isFrozen;
 

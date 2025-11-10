@@ -141,19 +141,30 @@ library Events {
     event SchemaVerified(bytes32 indexed schemaId);
     event SchemaVerifiedZeroFee(bytes32 indexed schemaId);
 
-    // admin update fns
+    // --- admin update fns ---
+    // update poolId for schema
     event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);
+    // whitelist pool
+    event PoolWhitelistedUpdated(bytes32 indexed poolId, bool isWhitelisted);
+    // update fee increase delay period
     event FeeIncreaseDelayPeriodUpdated(uint256 newDelayPeriod);
+    // update protocol fee percentage
     event ProtocolFeePercentageUpdated(uint256 protocolFeePercentage);
+    // update voting fee percentage
     event VotingFeePercentageUpdated(uint256 voterFeePercentage);
+    // set verifier staking tiers
     event VerifierStakingTiersSet(uint128[] mocaStaked, uint128[] subsidyPercentages);
+    // clear verifier staking tiers
     event VerifierStakingTiersCleared();
-    // updateVerifierContract
-    event VerifierContractUpdated(address oldVerifierContract, address newVerifierContract);
-        
-    // withdrawProtocolFees, withdrawVotersFees
+
+    // --- cronJob events ---
+    // cronJob: withdrawProtocolFees, withdrawVotersFees
     event ProtocolFeesWithdrawn(uint256 epoch, uint256 protocolFees);
     event VotersFeesWithdrawn(uint256 epoch, uint256 votersFees);
+
+    // --- default admin events ---
+    // setPaymentsControllerTreasury
+    event PaymentsControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
 
     // emergencyExit
     event EmergencyExitIssuers(bytes32[] issuerIds);
@@ -162,7 +173,6 @@ library Events {
 
 // --------- AccessController.sol ---------
     // Treasury
-    event PaymentsControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
     event VotingControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
     event EsMocaTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
     // Monitor admin functions
