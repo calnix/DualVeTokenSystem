@@ -715,15 +715,9 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         bytes32 issuerId = schema.issuerId;
         require(issuerId != bytes32(0), Errors.InvalidIssuer());
 
-
+    
         //----- Verify schema has still has zero fee [ NextFee timestamp check ]-----
-        if (schema.nextFeeTimestamp > 0){
-            // check if next fee timestamp is in the future
-            require(schema.nextFeeTimestamp > block.timestamp, Errors.InvalidSchemaFee());
-
-            // no need to check if nextFee > 0, since fee decrementations are instantly applied as per updateSchemaFee()
-        }
-
+        if (schema.nextFee > 0 && schema.nextFeeTimestamp <= block.timestamp) revert Errors.InvalidSchemaFee();
 
         // Simplified signature verification: excludes amount/fee from signature check
         address signerAddress = _verifiers[verifierId].signerAddress;
