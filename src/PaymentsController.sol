@@ -837,8 +837,9 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param newDelayPeriod The new delay period to set, in seconds. Must be divisible by EpochMath.EPOCH_DURATION.
      */
     function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
-        require(newDelayPeriod > 0, Errors.InvalidDelayPeriod());
-        require(newDelayPeriod % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
+        // min. delay period is 1 epoch; value must be in epoch intervals
+        require(newDelayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
+        require(EpochMath.isValidEpochTime(newDelayPeriod), Errors.InvalidDelayPeriod());
 
         FEE_INCREASE_DELAY_PERIOD = newDelayPeriod;
 
@@ -1074,6 +1075,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         require(isFrozen == 1, Errors.NotFrozen());
         require(verifierIds.length > 0, Errors.InvalidArray());
    
+        uint256 totalAssets;
+        
         // if anything other than a valid verifierId is given, will retrieve either empty struct and skip
         for(uint256 i; i < verifierIds.length; ++i) {
             
@@ -1088,7 +1091,10 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             // get balance: if 0, skip
             uint256 verifierBalance = verifierPtr.currentBalance;
             uint256 verifierMocaStaked = verifierPtr.mocaStaked;
-            if(verifierBalance == 0 && verifierMocaStaked == 0) continue;
+            
+            // check if total assets is 0; if so, skip
+            totalAssets += verifierBalance + verifierMocaStaked;
+            if(totalAssets == 0) continue;
 
             // get asset manager address
             address verifierAssetManagerAddress = verifierPtr.assetManagerAddress;
@@ -1097,15 +1103,23 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             delete verifierPtr.currentBalance;
             delete verifierPtr.mocaStaked;
 
-            // decrement total moca staked
-            TOTAL_MOCA_STAKED -= verifierMocaStaked;
-
-            // transfer balance and moca to verifier
+            
+            // transfer usd8 balance to verifier
             if(verifierBalance > 0) USD8.safeTransfer(verifierAssetManagerAddress, verifierBalance);
-            if(verifierMocaStaked > 0) _transferMocaAndWrapIfFailWithGasLimit(WMOCA, verifierAssetManagerAddress, verifierMocaStaked, MOCA_TRANSFER_GAS_LIMIT);
+            
+            // transfer moca to verifier
+            if(verifierMocaStaked > 0) {
+
+                // decrement total moca staked
+                TOTAL_MOCA_STAKED -= verifierMocaStaked;
+
+                // transfer moca to verifier
+                _transferMocaAndWrapIfFailWithGasLimit(WMOCA, verifierAssetManagerAddress, verifierMocaStaked, MOCA_TRANSFER_GAS_LIMIT);
+            }
         }
 
-        emit Events.EmergencyExitVerifiers(verifierIds);
+        // emit event if total assets is > 0
+        if(totalAssets > 0) emit Events.EmergencyExitVerifiers(verifierIds, totalAssets);
     }
 
     /**
@@ -1120,6 +1134,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     function emergencyExitIssuers(bytes32[] calldata issuerIds) external {
         require(isFrozen == 1, Errors.NotFrozen());
         require(issuerIds.length > 0, Errors.InvalidArray());
+
+        uint256 totalAssets;
 
         // if anything other than a valid issuerId is given, will retrieve either empty struct and skip
         for(uint256 i; i < issuerIds.length; ++i) {
@@ -1139,11 +1155,15 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             // increment total claimed fees
             issuerPtr.totalClaimed = issuerPtr.totalNetFeesAccrued;
 
+            // increment counter
+            totalAssets += unclaimedFees;
+
             // transfer fees to issuer
             USD8.safeTransfer(issuerPtr.assetManagerAddress, unclaimedFees);
         }
 
-        emit Events.EmergencyExitIssuers(issuerIds);
+        // emit event if total assets is > 0
+        if(totalAssets > 0) emit Events.EmergencyExitIssuers(issuerIds, totalAssets);   
     }
 
     /**
