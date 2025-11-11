@@ -1197,6 +1197,20 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         assertEq(address(issuerStakingController).balance, 0, "contract balance should be zero after emergency exit");
     }
 
+    function test_Issuer_RepeatedlyCallSEmergencyExit_NoEventEmitted() public {
+        test_Issuer_CanEmergencyExit_ForThemselves();
+
+        address[] memory issuerAddresses = new address[](1);
+        issuerAddresses[0] = issuer1Asset;
+
+        vm.expectEmit(true, true, false, true, address(issuerStakingController));
+        emit Events.EmergencyExit(issuerAddresses, 0);
+
+        vm.prank(issuer1Asset);
+        issuerStakingController.emergencyExit(issuerAddresses);
+    }
+
+
     // --------- Others ---------
 
     function testRevert_Unpause_WhenFrozen() public {        

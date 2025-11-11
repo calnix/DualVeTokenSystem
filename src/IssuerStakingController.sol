@@ -327,7 +327,7 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
         if(totalMocaPendingUnstake > 0) TOTAL_MOCA_PENDING_UNSTAKE -= totalMocaPendingUnstake; 
 
         // emit event if total moca amount is > 0
-        uint256 totalMocaAmount = totalMocaStaked + totalMocaPendingUnstake;
-        if(totalMocaAmount > 0) emit Events.EmergencyExit(issuerAddresses, totalMocaAmount); 
+        uint256 totalMocaAmountToExit = totalMocaStaked + totalMocaPendingUnstake;
+        if(totalMocaAmountToExit > 0) emit Events.EmergencyExit(issuerAddresses, totalMocaAmountToExit); 
     }
 }
