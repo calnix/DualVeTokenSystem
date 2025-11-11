@@ -195,7 +195,7 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
         // transfer moca to issuer [wraps if transfer fails within gas limit]
         _transferMocaAndWrapIfFailWithGasLimit(WMOCA, msg.sender, totalClaimable, MOCA_TRANSFER_GAS_LIMIT);
 
-        emit Events.UnstakeClaimed(msg.sender, totalClaimable);
+        emit Events.UnstakeClaimed(msg.sender, totalClaimable); 
     }
 
 //------------------------------- Admin: setUnstakeDelay -------------------------------------------------------------

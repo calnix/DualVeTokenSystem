@@ -1203,11 +1203,15 @@ contract StateT604801_Frozen_Test is StateT604801_Frozen {
         address[] memory issuerAddresses = new address[](1);
         issuerAddresses[0] = issuer1Asset;
 
-        vm.expectEmit(true, true, false, true, address(issuerStakingController));
-        emit Events.EmergencyExit(issuerAddresses, 0);
-
         vm.prank(issuer1Asset);
         issuerStakingController.emergencyExit(issuerAddresses);
+
+        // Verify state remains unchanged (all balances still 0)
+        assertEq(issuerStakingController.TOTAL_MOCA_STAKED(), 0, "TOTAL_MOCA_STAKED should remain 0");
+        assertEq(issuerStakingController.TOTAL_MOCA_PENDING_UNSTAKE(), 0, "TOTAL_MOCA_PENDING_UNSTAKE should remain 0");
+        assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's staked balance should remain 0");
+        assertEq(issuerStakingController.totalPendingUnstakedMoca(issuer1Asset), 0, "issuer's pending unstake balance should remain 0");
+        assertEq(address(issuerStakingController).balance, 0, "contract balance should remain 0");
     }
 
 
