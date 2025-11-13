@@ -439,7 +439,7 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             paymentsController.createVerifier(address(0), verifier1Asset);
         }
 
-        function testCan_CreateVerifier() public {
+        function testCan_CreateVerifier() public returns (bytes32) {
             bytes32 expectedVerifierId = generateUnusedVerifierId(verifier1);
 
             // Expect the VerifierCreated event to be emitted with correct parameters
@@ -459,6 +459,29 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             assertEq(verifier.assetManagerAddress, verifier1Asset, "assetManagerAddress mismatch");
             assertEq(verifier.currentBalance, 0, "currentBalance should be 0");
             assertEq(verifier.totalExpenditure, 0, "totalExpenditure should be 0");
+
+            return verifierId;
+        }
+
+        function testCan_CreateVerifier_NewIdIssued_ForSameAdminAddress() public {
+            bytes32 verifierId_1 = testCan_CreateVerifier();
+
+            bytes32 expectedVerifierId_2 = generateUnusedVerifierId(verifier1);
+
+            assertTrue(verifierId_1 != expectedVerifierId_2, "verifierId should be different");
+
+
+            // Expect the VerifierCreated event to be emitted with correct parameters
+            vm.expectEmit(true, false, false, false, address(paymentsController));
+            emit Events.VerifierCreated(expectedVerifierId_2, verifier1, verifier1Signer, verifier1Asset);
+
+
+            vm.prank(verifier1);
+            bytes32 verifierId_2 = paymentsController.createVerifier(verifier1Signer, verifier1Asset);
+
+            // new verifier id generated for same admin address
+            assertEq(verifierId_2, expectedVerifierId_2, "verifierId not set correctly");
+            assertTrue(verifierId_1 != verifierId_2, "verifierId should be different");
         }
 }
 
@@ -1236,19 +1259,13 @@ contract StateT7_IssuerIncreasedFee_FeeNotYetApplied_Test is StateT7_IssuerIncre
         vm.prank(verifier1Asset);
         paymentsController.deductBalance(verifier1_Id, user1, schemaId1, amount, expiry, signature);
         
-        // Record verifier's state before deduction
-        DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
-        
-        // Record issuer's state before deduction
-        DataTypes.Issuer memory issuerAfter = paymentsController.getIssuer(issuer1_Id);
-        
-        // Record schema's state before deduction
-        DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
+        // Calculate fee splits using helper
+        (uint128 protocolFee, uint128 votingFee, uint128 netFee) = calculateFeeSplits(amount);
 
-        // calc. fee splits
-        uint128 protocolFee = uint128((amount * paymentsController.PROTOCOL_FEE_PERCENTAGE()) / Constants.PRECISION_BASE);
-        uint128 votingFee = uint128((amount * paymentsController.VOTING_FEE_PERCENTAGE()) / Constants.PRECISION_BASE);
-        uint128 netFee = amount - protocolFee - votingFee;
+        // Record states after
+        DataTypes.Verifier memory verifierAfter = paymentsController.getVerifier(verifier1_Id);
+        DataTypes.Issuer memory issuerAfter = paymentsController.getIssuer(issuer1_Id);
+        DataTypes.Schema memory schemaAfter = paymentsController.getSchema(schemaId1);
 
         // Check verifier state: balance should be deducted
         assertEq(verifierAfter.currentBalance, verifierBefore.currentBalance - amount, "Balance should be deducted by current fee amount");

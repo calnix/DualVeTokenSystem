@@ -594,98 +594,37 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         
         // cache schema in memory (saves ~800 gas)
         DataTypes.Schema storage schemaStorage = _schemas[schemaId];
-        DataTypes.Schema memory schema = schemaStorage; // Load once into memory
-        
+
         // get issuer id from schema + check if schema is valid
-        bytes32 issuerId = schema.issuerId;
+        bytes32 issuerId = schemaStorage.issuerId;
         require(issuerId != bytes32(0), Errors.InvalidIssuer());
 
         //----- NextFee check -----
-        uint128 currentFee = schema.currentFee;
-        if (schema.nextFee > 0 && schema.nextFeeTimestamp <= block.timestamp) {
-            // cache old fee + update currentFee
-            uint128 oldFee = currentFee;
-            currentFee = schema.nextFee;
+        uint128 currentFee = _updateSchemaFeeIfNeeded(schemaStorage, schemaId);
 
-            // Batch storage updates
-            schemaStorage.currentFee = currentFee;
-            delete schemaStorage.nextFee;
-            delete schemaStorage.nextFeeTimestamp;
-            emit Events.SchemaFeeIncreased(schemaId, oldFee, currentFee);
-        }
 
         // Cache verifier data
         DataTypes.Verifier storage verifierStorage = _verifiers[verifierId];
-        uint128 verifierBalance = verifierStorage.currentBalance;
-
 
         // ----- Verify signature + Update nonce -----
-        {   
-            address signerAddress = verifierStorage.signerAddress;
-            
-            bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(Constants.DEDUCT_BALANCE_TYPEHASH, issuerId, verifierId, schemaId, userAddress, amount, expiry, _verifierNonces[signerAddress][userAddress])));
-            // handles both EOA and contract signatures | returns true if signature is valid
-            require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature()); 
-            ++_verifierNonces[signerAddress][userAddress];
-
-            // check if amount matches latest schema fee
-            require(amount == currentFee, Errors.InvalidSchemaFee());
-        }
+        _verifyDeductBalanceSignature(verifierStorage, issuerId, verifierId, schemaId, userAddress, amount, expiry, signature, currentFee);
 
 
         // ----- Combined fee calculation -----
+        (uint128 protocolFee, uint128 votingFee, uint128 netFee) = _calculateFees(amount);
+
+
+        // update verifier, issuer, and schema
+        _updateBalancesAndCounters(verifierStorage, schemaStorage, issuerId, amount, netFee);
+
+        // Pool-specific updates [for VotingController]    
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
-        uint128 protocolFee;
-        uint128 votingFee;
-        uint128 netFee;
 
-        unchecked { // Safe because fees < 100%
-            
-            // Multiplying by percentage could overflow uint128 → needs uint256 intermediate & cast to uint128 could silently truncate values
-            uint256 protocolFeeCalc = (uint256(amount) * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
-            uint256 votingFeeCalc = (uint256(amount) * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
-    
-            protocolFee = uint128(protocolFeeCalc);
-            votingFee = uint128(votingFeeCalc);
-            netFee = uint128(amount - protocolFee - votingFee);
-        }
-
-        //----- Batch storage updates -----
-        bytes32 poolId = schema.poolId;
-
-        // update verifier 
-        require(verifierBalance >= amount, Errors.InsufficientBalance());
-        verifierStorage.currentBalance = verifierBalance - amount;
-        verifierStorage.totalExpenditure += amount;
-        
-        // update issuer
-        DataTypes.Issuer storage issuerStorage = _issuers[issuerId];
-        issuerStorage.totalNetFeesAccrued += netFee;
-        unchecked { ++issuerStorage.totalVerified; }
-
-        // update schema counters
-        schemaStorage.totalGrossFeesAccrued += amount;
-
-        // Pool-specific updates [for VotingController]
         {
-            if(_votingPools[poolId]) {
-                _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
-                
-                // Batch pool fee updates
-                DataTypes.FeesAccrued storage poolFees = _epochPoolFeesAccrued[currentEpoch][poolId];
-                poolFees.feesAccruedToProtocol += protocolFee;
-                poolFees.feesAccruedToVoters += votingFee;
-            }
+            bytes32 poolId = schemaStorage.poolId;
+            // book fees: pool-specific and epoch-level
+            _bookFees(verifierId, poolId, schemaId, amount, currentEpoch, protocolFee, votingFee);
         }
-
-
-        // Book fees: global + epoch [for AssetManager]
-        DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[currentEpoch];
-        epochFees.feesAccruedToProtocol += protocolFee;
-        epochFees.feesAccruedToVoters += votingFee;
-        // for emergency withdrawal
-        TOTAL_PROTOCOL_FEES_UNCLAIMED += protocolFee;
-        TOTAL_VOTING_FEES_UNCLAIMED += votingFee;
 
         emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
         
@@ -792,7 +731,165 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         // no qualifying tier found
         return 0;
     }
+
+    /**
+     * @notice Calculates protocol fee, voting fee, and net fee from an amount.
+     * @dev Internal function to reduce stack depth in deductBalance.
+     * @param amount The amount to calculate fees from.
+     * @return protocolFee The protocol fee amount.
+     * @return votingFee The voting fee amount.
+     * @return netFee The net fee amount after deducting protocol and voting fees.
+     */
+    function _calculateFees(uint128 amount) internal view returns (uint128 protocolFee, uint128 votingFee, uint128 netFee) {
+        // Multiplying by percentage could overflow uint128 → needs uint256 intermediate & cast to uint128 could silently truncate values
+        uint256 protocolFeeCalc = (uint256(amount) * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
+        uint256 votingFeeCalc = (uint256(amount) * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
+
+        protocolFee = uint128(protocolFeeCalc);
+        votingFee = uint128(votingFeeCalc);
+        netFee = uint128(amount - protocolFee - votingFee);
+    }
+
+    /**
+     * @notice Updates schema fee if nextFee timestamp has passed.
+     * @dev Internal function to reduce stack depth in deductBalance.
+     * @param schemaStorage Storage pointer to the schema.
+     * @param schemaId The schema identifier for event emission.
+     * @return currentFee The current fee after potential update.
+     */
+    function _updateSchemaFeeIfNeeded(DataTypes.Schema storage schemaStorage, bytes32 schemaId) internal returns (uint128) {
+        uint128 currentFee = schemaStorage.currentFee;
+        if (schemaStorage.nextFee > 0 && schemaStorage.nextFeeTimestamp <= block.timestamp) {
+            uint128 oldFee = currentFee;
+            currentFee = schemaStorage.nextFee;
+
+            // Batch storage updates
+            schemaStorage.currentFee = currentFee;
+            delete schemaStorage.nextFee;
+            delete schemaStorage.nextFeeTimestamp;
+            emit Events.SchemaFeeIncreased(schemaId, oldFee, currentFee);
+        }
+        return currentFee;
+    }
     
+
+    /**
+     * @notice Verifies the EIP-712 signature for deductBalance and updates nonce.
+     * @dev Internal function to reduce stack depth in deductBalance.
+     * @param verifierStorage Storage pointer to the verifier.
+     * @param issuerId The issuer identifier.
+     * @param verifierId The verifier identifier.
+     * @param schemaId The schema identifier.
+     * @param userAddress The user address.
+     * @param amount The amount to verify.
+     * @param expiry The signature expiry timestamp.
+     * @param signature The EIP-712 signature.
+     * @param currentFee The current schema fee to validate against.
+     */
+    function _verifyDeductBalanceSignature(
+        DataTypes.Verifier storage verifierStorage,
+        bytes32 issuerId,
+        bytes32 verifierId,
+        bytes32 schemaId,
+        address userAddress,
+        uint128 amount,
+        uint256 expiry,
+        bytes calldata signature,
+        uint128 currentFee
+    ) internal {
+        address signerAddress = verifierStorage.signerAddress;
+        
+        bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(
+            Constants.DEDUCT_BALANCE_TYPEHASH,
+            issuerId,
+            verifierId,
+            schemaId,
+            userAddress,
+            amount,
+            expiry,
+            _verifierNonces[signerAddress][userAddress]
+        )));
+        
+        // handles both EOA and contract signatures | returns true if signature is valid
+        require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature()); 
+        ++_verifierNonces[signerAddress][userAddress];
+
+        // check if amount matches latest schema fee
+        require(amount == currentFee, Errors.InvalidSchemaFee());
+    }
+
+
+    /**
+     * @notice Updates verifier, issuer, and schema balances and counters.
+     * @dev Internal function to reduce stack depth in deductBalance.
+     * @param verifierStorage Storage pointer to the verifier.
+     * @param schemaStorage Storage pointer to the schema.
+     * @param issuerId The issuer identifier.
+     * @param amount The amount being deducted.
+     * @param netFee The net fee after protocol and voting fees.
+     */
+    function _updateBalancesAndCounters(
+        DataTypes.Verifier storage verifierStorage,
+        DataTypes.Schema storage schemaStorage,
+        bytes32 issuerId,
+        uint128 amount,
+        uint128 netFee
+    ) internal {
+        uint128 verifierBalance = verifierStorage.currentBalance;
+        require(verifierBalance >= amount, Errors.InsufficientBalance());
+        
+        verifierStorage.currentBalance = verifierBalance - amount;
+        verifierStorage.totalExpenditure += amount;
+        
+        // update issuer
+        DataTypes.Issuer storage issuerStorage = _issuers[issuerId];
+        issuerStorage.totalNetFeesAccrued += netFee;
+        unchecked { ++issuerStorage.totalVerified; }
+
+        // update schema counters
+        schemaStorage.totalGrossFeesAccrued += amount;
+    }
+
+    /**
+     * @notice Books fees for pool-specific and epoch-level tracking.
+     * @dev Internal function to reduce stack depth in deductBalance.
+     * @param verifierId The verifier identifier.
+     * @param poolId The pool identifier.
+     * @param schemaId The schema identifier.
+     * @param amount The amount for subsidy calculation.
+     * @param currentEpoch The current epoch number.
+     * @param protocolFee The protocol fee amount.
+     * @param votingFee The voting fee amount.
+     */
+    function _bookFees(
+        bytes32 verifierId,
+        bytes32 poolId,
+        bytes32 schemaId,
+        uint128 amount,
+        uint256 currentEpoch,
+        uint128 protocolFee,
+        uint128 votingFee
+    ) internal {
+        // Pool-specific updates [for VotingController]
+        if(_votingPools[poolId]) {
+            _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
+            
+            // Batch pool fee updates
+            DataTypes.FeesAccrued storage poolFees = _epochPoolFeesAccrued[currentEpoch][poolId];
+            poolFees.feesAccruedToProtocol += protocolFee;
+            poolFees.feesAccruedToVoters += votingFee;
+        }
+
+        // Book fees: global + epoch [for AssetManager]
+        DataTypes.FeesAccrued storage epochFees = _epochFeesAccrued[currentEpoch];
+        epochFees.feesAccruedToProtocol += protocolFee;
+        epochFees.feesAccruedToVoters += votingFee;
+        
+        // for emergency withdrawal
+        TOTAL_PROTOCOL_FEES_UNCLAIMED += protocolFee;
+        TOTAL_VOTING_FEES_UNCLAIMED += votingFee;
+    }
+
 //------------------------------- PaymentsControllerAdmin: update functions---------------------------------------
 
     /**

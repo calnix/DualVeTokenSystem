@@ -19,7 +19,7 @@ contract StateT11_TransferGasLimitChanged_Test is StateT11_TransferGasLimitChang
 
 
     function testRevert_SetTransferGasLimit_NotPaymentsControllerAdmin() public {
-        vm.expectRevert(Errors.OnlyCallableByPaymentsControllerAdmin.selector);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, verifier1Asset, paymentsController.PAYMENTS_CONTROLLER_ADMIN_ROLE()));
         vm.prank(verifier1Asset);
         paymentsController.setMocaTransferGasLimit(MOCA_TRANSFER_GAS_LIMIT * 2);
     }

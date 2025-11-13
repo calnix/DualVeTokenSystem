@@ -343,6 +343,22 @@ abstract contract TestingHarness is Test {
         }
     }
 
+    /**
+     * @notice Helper function to calculate fee splits from an amount.
+     * @dev Reduces stack depth in test functions.
+     * @param amount The amount to calculate fees from.
+     * @return protocolFee The protocol fee amount.
+     * @return votingFee The voting fee amount.
+     * @return netFee The net fee amount after deducting protocol and voting fees.
+     */
+    function calculateFeeSplits(uint128 amount) public view returns (uint128 protocolFee, uint128 votingFee, uint128 netFee) {
+        uint256 protocolFeeCalc = (uint256(amount) * paymentsController.PROTOCOL_FEE_PERCENTAGE()) / Constants.PRECISION_BASE;
+        uint256 votingFeeCalc = (uint256(amount) * paymentsController.VOTING_FEE_PERCENTAGE()) / Constants.PRECISION_BASE;
+        protocolFee = uint128(protocolFeeCalc);
+        votingFee = uint128(votingFeeCalc);
+        netFee = amount - protocolFee - votingFee;
+    }
+
 }
 
 // Contract with expensive receive function
