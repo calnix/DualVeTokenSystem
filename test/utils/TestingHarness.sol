@@ -61,24 +61,24 @@ abstract contract TestingHarness is Test {
     address public issuer3Asset = makeAddr("issuer3Asset");
 
     // ------------ verifiers ------------
-    //verifier1
-    address public verifier1 = makeAddr("verifier1");
-    address public verifier1Asset = makeAddr("verifier1Asset");
-    address public verifier1Signer;
-    uint256 public verifier1SignerPrivateKey;
-    //verifier2
-    address public verifier2 = makeAddr("verifier2");
-    address public verifier2Asset = makeAddr("verifier2Asset");
-    address public verifier2Signer;
-    uint256 public verifier2SignerPrivateKey;
-    //verifier3
-    address public verifier3 = makeAddr("verifier3");
-    address public verifier3Asset = makeAddr("verifier3Asset");
-    address public verifier3Signer;
-    uint256 public verifier3SignerPrivateKey;
+        //verifier1
+        address public verifier1 = makeAddr("verifier1");
+        address public verifier1Asset = makeAddr("verifier1Asset");
+        address public verifier1Signer;
+        uint256 public verifier1SignerPrivateKey;
+        //verifier2
+        address public verifier2 = makeAddr("verifier2");
+        address public verifier2Asset = makeAddr("verifier2Asset");
+        address public verifier2Signer;
+        uint256 public verifier2SignerPrivateKey;
+        //verifier3
+        address public verifier3 = makeAddr("verifier3");
+        address public verifier3Asset = makeAddr("verifier3Asset");
+        address public verifier3Signer;
+        uint256 public verifier3SignerPrivateKey;
 
     // ------------ misc. ------------
-    address public paymentsTreasury = makeAddr("paymentsTreasury");
+    address public paymentsControllerTreasury = makeAddr("paymentsTreasury");
     address public votingTreasury = makeAddr("votingTreasury");
     address public esMocaTreasury = makeAddr("esMocaTreasury");
 
@@ -145,7 +145,7 @@ abstract contract TestingHarness is Test {
 
         // 5. Deploy PaymentsController
         paymentsController = new PaymentsController(
-            globalAdmin, paymentsControllerAdmin, monitorAdmin, cronJobAdmin, monitor, paymentsTreasury, emergencyExitHandler, 
+            globalAdmin, paymentsControllerAdmin, monitorAdmin, cronJobAdmin, monitor, paymentsControllerTreasury, emergencyExitHandler, 
             protocolFeePercentage, voterFeePercentage, feeIncreaseDelayPeriod,
             address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
  
@@ -191,16 +191,18 @@ abstract contract TestingHarness is Test {
      * @param issuerId The unique identifier of the issuer
      * @param verifierId The unique identifier of the verifier
      * @param schemaId The unique identifier of the schema
+     * @param userAddress The address of the user for verification
      * @param amount The fee amount to deduct
      * @param expiry The signature expiry timestamp
      * @param nonce The current nonce for the signer address
      * @return signature The EIP-712 signature
      */
-/*    function generateDeductBalanceSignature(
+    function generateDeductBalanceSignature(
         uint256 signerPrivateKey,
         bytes32 issuerId,
         bytes32 verifierId,
         bytes32 schemaId,
+        address userAddress,
         uint128 amount,
         uint256 expiry,
         uint256 nonce
@@ -223,6 +225,7 @@ abstract contract TestingHarness is Test {
                 issuerId,
                 verifierId,
                 schemaId,
+                userAddress,
                 amount,
                 expiry,
                 nonce
@@ -243,15 +246,17 @@ abstract contract TestingHarness is Test {
      * @param issuerId The unique identifier of the issuer
      * @param verifierId The unique identifier of the verifier
      * @param schemaId The unique identifier of the schema
+     * @param userAddress The address of the user for verification
      * @param expiry The signature expiry timestamp
      * @param nonce The current nonce for the signer address
      * @return signature The EIP-712 signature
      */
-/*    function generateDeductBalanceZeroFeeSignature(
+    function generateDeductBalanceZeroFeeSignature(
         uint256 signerPrivateKey,
         bytes32 issuerId,
         bytes32 verifierId,
         bytes32 schemaId,
+        address userAddress,
         uint256 expiry,
         uint256 nonce
     ) public view returns (bytes memory) {
@@ -273,6 +278,7 @@ abstract contract TestingHarness is Test {
                 issuerId,
                 verifierId,
                 schemaId,
+                userAddress,
                 expiry,
                 nonce
             )
@@ -291,57 +297,52 @@ abstract contract TestingHarness is Test {
      * @param signerAddress The signer address of the verifier
      * @return nonce The current nonce
      */
-/*    function getVerifierNonce(address signerAddress) public view returns (uint256) {
-        return paymentsController.getVerifierNonce(signerAddress);
+    function getVerifierNonce(address signerAddress, address userAddress) public view returns (uint256) {
+        return paymentsController.getVerifierNonce(signerAddress, userAddress);
     }
 
 
-    /// @notice Deterministically generates an unused issuerId based on issuer and salt, similar to PaymentsController
+    /// @notice Deterministically generates an unused issuerId based on issuer and salt
     /// @dev Tries salt, salt+1, salt+2, ... until an unused id is found.
-    function generateUnusedIssuerId(address issuer) public view returns (bytes32 issuerId) {
-        uint256 salt = block.number;
-
-        issuerId = keccak256(abi.encode("ISSUER", issuer, salt));
-        // Check if id is used in any mapping
+    function generateUnusedIssuerId(address caller) public view returns (bytes32 issuerId) {
+        uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.ISSUER); 
+        issuerId = keccak256(abi.encode("ISSUER", caller, salt));
         while (
-            paymentsController.getIssuer(issuerId).issuerId != bytes32(0) ||
-            paymentsController.getVerifier(issuerId).verifierId != bytes32(0) ||
-            paymentsController.getSchema(issuerId).schemaId != bytes32(0)
+            paymentsController.getIssuer(issuerId).adminAddress != address(0) ||
+            paymentsController.getVerifier(issuerId).adminAddress != address(0) ||
+            paymentsController.getSchema(issuerId).issuerId != bytes32(0)
         ) {
-            issuerId = keccak256(abi.encode("ISSUER", issuer, ++salt));
+            issuerId = keccak256(abi.encode("ISSUER", caller, ++salt));
         }
     }
 
-    function generateUnusedVerifierId(address verifier) public view returns (bytes32 verifierId) {
-        uint256 salt = block.number;
-        
-        verifierId = keccak256(abi.encode("VERIFIER", verifier, salt));
-        // Check if id is used in any mapping
+    function generateUnusedVerifierId(address caller) public view returns (bytes32 verifierId) {
+        uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.VERIFIER); 
+        verifierId = keccak256(abi.encode("VERIFIER", caller, salt));
         while (
-            paymentsController.getIssuer(verifierId).issuerId != bytes32(0) ||
-            paymentsController.getVerifier(verifierId).verifierId != bytes32(0) ||
-            paymentsController.getSchema(verifierId).schemaId != bytes32(0)
+            paymentsController.getIssuer(verifierId).adminAddress != address(0) ||
+            paymentsController.getVerifier(verifierId).adminAddress != address(0) ||
+            paymentsController.getSchema(verifierId).issuerId != bytes32(0)
         ) {
-            verifierId = keccak256(abi.encode("VERIFIER", verifier, ++salt));
+            verifierId = keccak256(abi.encode("VERIFIER", caller, ++salt));
         }
     }
-
-    function generateUnusedSchemaId(bytes32 issuerId) public view returns (bytes32 schemaId) {
-        // get totalSchemas for this issuer
+    
+    // Mimic PaymentsController's createSchema salt logic
+    function generateUnusedSchemaId(address caller, bytes32 issuerId) public view returns (bytes32 schemaId) {
+        uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.SCHEMA); 
         uint256 totalSchemas = paymentsController.getIssuer(issuerId).totalSchemas;
-        uint256 salt = block.number;
 
         schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, salt));
-        // Check if id is used in any mapping
         while (
-            paymentsController.getIssuer(schemaId).issuerId != bytes32(0) ||
-            paymentsController.getVerifier(schemaId).verifierId != bytes32(0) ||
-            paymentsController.getSchema(schemaId).schemaId != bytes32(0)
+            paymentsController.getIssuer(schemaId).adminAddress != address(0)
+            || paymentsController.getVerifier(schemaId).adminAddress != address(0)
+            || paymentsController.getSchema(schemaId).issuerId != bytes32(0)
         ) {
             schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, ++salt));
         }
     }
-    */
+
 }
 
 // Contract with expensive receive function

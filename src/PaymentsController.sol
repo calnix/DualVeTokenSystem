@@ -179,7 +179,6 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         
 
         // set treasury address
-        require(paymentsControllerTreasury != address(this), Errors.InvalidAddress());
         PAYMENTS_CONTROLLER_TREASURY = paymentsControllerTreasury;
     }
 
@@ -1119,7 +1118,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         }
 
         // emit event if total assets is > 0
-        if(totalAssets > 0) emit Events.EmergencyExitVerifiers(verifierIds, totalAssets);
+        if(totalAssets > 0) emit Events.EmergencyExitVerifiers(verifierIds);
     }
 
     /**
@@ -1163,7 +1162,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         }
 
         // emit event if total assets is > 0
-        if(totalAssets > 0) emit Events.EmergencyExitIssuers(issuerIds, totalAssets);   
+        if(totalAssets > 0) emit Events.EmergencyExitIssuers(issuerIds);   
     }
 
     /**
