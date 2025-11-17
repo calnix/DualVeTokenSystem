@@ -425,6 +425,15 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             assertEq(issuer.totalNetFeesAccrued, 0, "totalNetFeesAccrued should be 0");
             assertEq(issuer.totalClaimed, 0, "totalClaimed should be 0");
         }
+        
+        function testRevert_SameAdminAddress_CannotCreateMultipleIssuerIds() public {
+            testCan_CreateIssuer();
+
+            vm.expectRevert(Errors.IssuerAlreadyExists.selector);
+            vm.prank(issuer1);
+            paymentsController.createIssuer(issuer1Asset);
+        }
+
 
     // ---- verifier fns ----
         function testCannot_CreateVerifier_WhenAssetAddressIsZeroAddress() public {
@@ -463,25 +472,12 @@ contract StateT1_SubsidyTiersCreated_Test is StateT1_SubsidyTiersCreated {
             return verifierId;
         }
 
-        function testCan_CreateVerifier_NewIdIssued_ForSameAdminAddress() public {
-            bytes32 verifierId_1 = testCan_CreateVerifier();
+        function testRevert_SameAdminAddress_CannotCreateMultipleVerifierIds() public {
+            testCan_CreateVerifier();
 
-            bytes32 expectedVerifierId_2 = generateUnusedVerifierId(verifier1);
-
-            assertTrue(verifierId_1 != expectedVerifierId_2, "verifierId should be different");
-
-
-            // Expect the VerifierCreated event to be emitted with correct parameters
-            vm.expectEmit(true, false, false, false, address(paymentsController));
-            emit Events.VerifierCreated(expectedVerifierId_2, verifier1, verifier1Signer, verifier1Asset);
-
-
+            vm.expectRevert(Errors.VerifierAlreadyExists.selector);
             vm.prank(verifier1);
-            bytes32 verifierId_2 = paymentsController.createVerifier(verifier1Signer, verifier1Asset);
-
-            // new verifier id generated for same admin address
-            assertEq(verifierId_2, expectedVerifierId_2, "verifierId not set correctly");
-            assertTrue(verifierId_1 != verifierId_2, "verifierId should be different");
+            paymentsController.createVerifier(verifier1Signer, verifier1Asset);
         }
 }
 
@@ -3569,7 +3565,7 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
     // ------ Functions that should NOT revert when paused -------
 
         // View functions should still work when paused
-        function test_ViewFunctions_WorkWhenPaused() public view {
+        function test_ViewFunctions_WorkWhenPaused() public {
             // These should not revert
             paymentsController.getIssuer(issuer1_Id);
             paymentsController.getSchema(schemaId1);
@@ -3577,13 +3573,48 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             paymentsController.getVerifierNonce(verifier1Signer, user1);
             paymentsController.getEligibleSubsidyPercentage(10 ether);
             paymentsController.getAllSubsidyTiers();
-            paymentsController.getSubsidyTier(0);
-            paymentsController.getEpochPoolSubsidies(0, bytes32("pool1"));
-            paymentsController.getEpochPoolVerifierSubsidies(0, bytes32("pool1"), verifier1_Id);
-            paymentsController.getEpochPoolFeesAccrued(0, bytes32("pool1"));
-            paymentsController.getEpochFeesAccrued(0);
-            paymentsController.getCallerNonce(verifier1Signer, DataTypes.EntityType.VERIFIER);
-            paymentsController.checkIfPoolIsWhitelisted(bytes32("pool1"));
+            
+            // getSubsidyTier
+            DataTypes.SubsidyTier memory subsidyTier = paymentsController.getSubsidyTier(0);
+            assertEq(subsidyTier.mocaStaked, 10 ether, "mocaStaked mismatch");
+            assertEq(subsidyTier.subsidyPercentage, 1100, "subsidyPercentage mismatch");
+            
+            vm.expectRevert(Errors.InvalidIndex.selector);
+            paymentsController.getSubsidyTier(11);
+
+            // getEpochPoolSubsidies
+            uint256 epochPoolSubsidies = paymentsController.getEpochPoolSubsidies(0, poolId1);
+            assertEq(epochPoolSubsidies, 0, "epochPoolSubsidies mismatch");
+
+            // getEpochPoolVerifierSubsidies
+            uint256 epochPoolVerifierSubsidies = paymentsController.getEpochPoolVerifierSubsidies(0, poolId1, verifier1_Id);
+            assertEq(epochPoolVerifierSubsidies, 0, "epochPoolVerifierSubsidies mismatch");
+
+            // getEpochPoolFeesAccrued
+            DataTypes.FeesAccrued memory epochPoolFeesAccrued = paymentsController.getEpochPoolFeesAccrued(0, poolId1);
+            assertEq(epochPoolFeesAccrued.feesAccruedToProtocol, 0, "feesAccruedToProtocol mismatch");
+            assertEq(epochPoolFeesAccrued.feesAccruedToVoters, 0, "feesAccruedToVoters mismatch");
+
+            // getEpochFeesAccrued
+            DataTypes.FeesAccrued memory epochFeesAccrued = paymentsController.getEpochFeesAccrued(0);
+            assertEq(epochFeesAccrued.feesAccruedToProtocol, 500000, "feesAccruedToProtocol mismatch");
+            assertEq(epochFeesAccrued.feesAccruedToVoters, 1000000, "feesAccruedToVoters mismatch");
+            
+            // getCallerNonce
+            uint256 callerNonce = paymentsController.getCallerNonce(verifier1Signer, DataTypes.EntityType.VERIFIER);
+            assertEq(callerNonce, 0, "callerNonce mismatch");
+            
+            // checkIfPoolIsWhitelisted
+            bool isWhitelisted = paymentsController.checkIfPoolIsWhitelisted(poolId1);
+            assertEq(isWhitelisted, true, "isWhitelisted mismatch");  // This should be true, not false
+
+            //getIssuerIdByAdmin
+            bytes32 issuerId = paymentsController.getIssuerIdByAdmin(issuer1);
+            assertEq(issuerId, issuer1_Id, "issuerId mismatch");
+
+            //getVerifierIdByAdmin
+            bytes32 verifierId = paymentsController.getVerifierIdByAdmin(verifier1);
+            assertEq(verifierId, verifier1_Id, "verifierId mismatch");
             
             // Also check immutable/state variables can be read
             paymentsController.PROTOCOL_FEE_PERCENTAGE();

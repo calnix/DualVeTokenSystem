@@ -320,9 +320,9 @@ abstract contract TestingHarness is Test {
         uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.VERIFIER); 
         verifierId = keccak256(abi.encode("VERIFIER", caller, salt));
         while (
-            paymentsController.getIssuer(verifierId).adminAddress != address(0) ||
-            paymentsController.getVerifier(verifierId).adminAddress != address(0) ||
-            paymentsController.getSchema(verifierId).issuerId != bytes32(0)
+            paymentsController.getIssuer(verifierId).adminAddress != address(0) 
+            || paymentsController.getVerifier(verifierId).adminAddress != address(0)
+            || paymentsController.getSchema(verifierId).issuerId != bytes32(0)
         ) {
             verifierId = keccak256(abi.encode("VERIFIER", caller, ++salt));
         }
@@ -330,7 +330,7 @@ abstract contract TestingHarness is Test {
     
     // Mimic PaymentsController's createSchema salt logic
     function generateUnusedSchemaId(address caller, bytes32 issuerId) public view returns (bytes32 schemaId) {
-        uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.SCHEMA); 
+        uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.SCHEMA) + 1; 
         uint256 totalSchemas = paymentsController.getIssuer(issuerId).totalSchemas;
 
         schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, salt));

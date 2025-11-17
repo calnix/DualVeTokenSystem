@@ -98,12 +98,16 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     // for correct withdrawal of fees and rewards
     mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) internal _epochFeesAccrued;    
 
-    // nonce for salt; for deterministic id generation [each caller has a nonce for each entity type]
-    mapping(address callerAddress => mapping(DataTypes.EntityType entityType => uint256 nonce)) internal _callerNonces;
+    // logs nonce for salt used for deterministic id generation [each caller has a nonce for each entity type]
+    // nonce stored is used to generate the previous id for the entity [instead of incrementing for the next id; to standardize the id generation process]
+    mapping(address callerAddress => mapping(DataTypes.EntityType entityType => uint256 nonce)) internal _adminNonces;
 
+    // track issuer/verifier IDs per admin address [enforces one-to-one relationship between admin and issuer/verifier IDs]
+    mapping(address adminAddress => mapping(DataTypes.EntityType entityType => bytes32 id)) internal _adminToEntityId;
+
+    
     // whitelist of pools [pseudo verification that poolId actually exists in VotingController]
     mapping(bytes32 poolId => bool isWhitelisted) internal _votingPools;
-
 
 //------------------------------- Constructor---------------------------------------------------------------------
 
@@ -188,18 +192,22 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     /**
      * @notice Generates and registers a new issuer with a unique issuerId.
      * @dev The issuerId is derived from msg.sender, ensuring uniqueness across issuers, verifiers, and schemas.
+     *      Each address can only be the admin of a single issuer [and a single verifier]
      * @param assetManagerAddress The address where issuer fees will be claimed.
      * @return issuerId The unique identifier assigned to the new issuer.
      */
     function createIssuer(address assetManagerAddress) external whenNotPaused returns (bytes32) {
         require(assetManagerAddress != address(0), Errors.InvalidAddress());
+        
+        // check if issuer already exists
+        require(_adminToEntityId[msg.sender][DataTypes.EntityType.ISSUER] == bytes32(0), Errors.IssuerAlreadyExists());
 
         bytes32 issuerId;
         uint256 salt;
         // deterministic id generation: check if id already exists in ANY of the three mappings
         {
             // get current nonce
-            salt = _callerNonces[msg.sender][DataTypes.EntityType.ISSUER];
+            salt = _adminNonces[msg.sender][DataTypes.EntityType.ISSUER];
 
             issuerId = keccak256(abi.encode("ISSUER", msg.sender, salt));
             while (
@@ -212,9 +220,11 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             }
         }
 
-        // Update nonce: increment nonce for next caller
-        _callerNonces[msg.sender][DataTypes.EntityType.ISSUER] = salt + 1;
+        // log nonce used for id generation [for deterministic id generation]
+        _adminNonces[msg.sender][DataTypes.EntityType.ISSUER] = salt;
 
+        // track issuer ID for msg.sender [adminAddress]
+        _adminToEntityId[msg.sender][DataTypes.EntityType.ISSUER] = issuerId;
 
         // STORAGE: setup issuer
         DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
@@ -248,7 +258,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         uint256 salt;
         {
             // get current nonce
-            salt = _callerNonces[msg.sender][DataTypes.EntityType.SCHEMA];
+            salt = _adminNonces[msg.sender][DataTypes.EntityType.SCHEMA] + 1;
             
             schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, salt));
             while (
@@ -261,8 +271,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             }
         }
 
-        // Update nonce: increment nonce for next caller
-        _callerNonces[msg.sender][DataTypes.EntityType.SCHEMA] = salt + 1;
+        // log nonce used for id generation [for deterministic id generation]
+        _adminNonces[msg.sender][DataTypes.EntityType.SCHEMA] = salt;
 
         // Increment schema count for issuer
         ++_issuers[issuerId].totalSchemas;
@@ -361,6 +371,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     /**
      * @notice Generates and registers a new verifier with a unique verifierId.
      * @dev The verifierId is derived from msg.sender, ensuring uniqueness across issuers, verifiers, and schemas.
+     *      Each address can only be the admin of a single verifier [and a single issuer]
      * @param signerAddress The address of the signer of the verifier.
      * @param assetManagerAddress The address where verifier fees will be claimed.
      * @return verifierId The unique identifier assigned to the new verifier.
@@ -369,12 +380,15 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         require(signerAddress != address(0), Errors.InvalidAddress());
         require(assetManagerAddress != address(0), Errors.InvalidAddress());
 
+        // check if caller already has a verifier
+        require(_adminToEntityId[msg.sender][DataTypes.EntityType.VERIFIER] == bytes32(0), Errors.VerifierAlreadyExists());
+
         bytes32 verifierId;
         uint256 salt;
         // deterministic id generation: check if id already exists in ANY of the three mappings
         {
             // increment nonce and generate new id
-            salt = _callerNonces[msg.sender][DataTypes.EntityType.VERIFIER];
+            salt = _adminNonces[msg.sender][DataTypes.EntityType.VERIFIER];
 
             verifierId = keccak256(abi.encode("VERIFIER", msg.sender, salt));
             while (
@@ -387,8 +401,11 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             }
         }
 
-        // Update nonce: increment nonce for next caller
-        _callerNonces[msg.sender][DataTypes.EntityType.VERIFIER] = salt + 1;
+        // log nonce used for id generation [for deterministic id generation]
+        _adminNonces[msg.sender][DataTypes.EntityType.VERIFIER] = salt;
+
+        // track verifier ID for msg.sender [adminAddress]
+        _adminToEntityId[msg.sender][DataTypes.EntityType.VERIFIER] = verifierId;
 
         // STORAGE: create verifier
         DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
@@ -1370,7 +1387,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @return tier The subsidy tier at the specified index.
      */
     function getSubsidyTier(uint256 tierIndex) external view returns (DataTypes.SubsidyTier memory) {
-        require(tierIndex < 10, Errors.InvalidAmount());
+        require(tierIndex < 10, Errors.InvalidIndex());
         return _subsidyTiers[tierIndex];
     }
 
@@ -1422,7 +1439,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @return nonce The nonce for the caller and entity type.
      */
     function getCallerNonce(address caller, DataTypes.EntityType entityType) external view returns (uint256) {
-        return _callerNonces[caller][entityType];
+        return _adminNonces[caller][entityType];
     }
 
     /**
@@ -1432,5 +1449,23 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      */
     function checkIfPoolIsWhitelisted(bytes32 poolId) external view returns (bool) {
         return _votingPools[poolId];
+    }
+
+    /**
+     * @notice Returns the issuer ID for a given admin address.
+     * @param adminAddress The admin address to query.
+     * @return issuerId The issuer ID associated with the admin address, or bytes32(0) if none exists.
+     */
+    function getIssuerIdByAdmin(address adminAddress) external view returns (bytes32) {
+        return _adminToEntityId[adminAddress][DataTypes.EntityType.ISSUER];
+    }
+
+    /**
+     * @notice Returns the verifier ID for a given admin address.
+     * @param adminAddress The admin address to query.
+     * @return verifierId The verifier ID associated with the admin address, or bytes32(0) if none exists.
+     */
+    function getVerifierIdByAdmin(address adminAddress) external view returns (bytes32) {
+        return _adminToEntityId[adminAddress][DataTypes.EntityType.VERIFIER];
     }
 }

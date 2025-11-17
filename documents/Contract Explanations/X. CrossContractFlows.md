@@ -1,6 +1,6 @@
 # Cross-contract flows
 
-## Every Epoch: `PaymentsController` + `VotingController`
+## Every Epoch: `PaymentsController` + `VotingController  + EscrowedMoca`
 
 ### 1. PaymentsController
 
@@ -20,28 +20,40 @@
 ```
 Now both verifiers can Voters can claim subsidies and rewards respectively for the prior epoch.
 
-### 3. Routine airdrop distribution: users + validators [EscrowedMoca.sol]
+### 3. EscrowedMoca
 
-1. `cronJob` calls `escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts)`, depositing native Moca, minting esMoca to the addresses
-2. this is expected to occur on a weekly/bi-weekly basis.
+**Routine airdrop distribution [users + validators]**
 
-**Every epoch: claimPenalties [EscrowedMoca.sol]**
+- `cronJob` calls `escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts)`, depositing native Moca, minting esMoca to the addresses
+- this is expected to occur on a weekly/bi-weekly basis.
 
-1. `cronJob` will call `claimPenalties()` to collect accrued esMoca penalties.
+**Every epoch: `claimPenalties()`**
+
+1. `cronJob` will call `claimPenalties()` to collect accrued penalties [in native MOCA].
 2. Claimed asset will be either native moca or wrapped moca - `_transferMocaAndWrapIfFailWithGasLimit`
 3. Assets are transferred to `ESCROWED_MOCA_TREASURY`
 
-
 --- 
 
-## Ad-hoc: CreateLockFor [VotingEscrowMoca.sol]
+## Ad-hoc: `EscrowedMoca` + `VotingController`+ `VotingEscrowMoca`
+
+### EscrowedMoca 
+
+**`releaseEscrowedMoca(uint256 amount)`**
+
+- CronJob function to release esMOCA → MOCA
+- Burns esMOCA and transfers native MOCA (or wMOCA) to caller
+- Asset flow: esMOCA (burned) → MOCA (transferred)
+
+### VotingEscrowMoca
+
+**`createLockFor()`**
 
 1. `cronJob` calls `createLockFor(address user, uint128 expiry, uint128 moca, uint128 esMoca)`
 2. allows protocol to create locks for users using either moca/esMoca or both, for a specified expiry.
 3. if esMoca is used users will have to content with redemption options once lock expires. 
 
-
-## Ad-hoc: [VotingEscrowMoca.sol]
+**Misc:**
 
 1. `withdrawUnclaimedRewards`   ->  esMoca is transferred 
 2. `withdrawUnclaimedSubsidies` ->  esMoca is transferred 
@@ -54,15 +66,58 @@ All claimed assets are sent to `VOTING_CONTROLLER_TREASURY`.
 
 ## EmergencyExit
 
-1. `PaymentsController.emergencyExitFees()`
+### IssuerStakingController
+
+`emergencyExit(address[] calldata issuerAddresses)`
+
+- Exfiltrates issuer staked MOCA and pending unstake amounts to issuers
+- Callable by EmergencyExitHandler or issuer themselves
+- Assets transferred: native MOCA (falls back to wMOCA if transfer fails)
+
+### `PaymentsController`
+
+1. `emergencyExitFees()`
 
 - called by `EmergencyExitHandler`; assets sent to `PAYMENTS_CONTROLLER_TREASURY`
 
-2. `EscrowedMoca.emergencyExitPenalties()`
+2. `emergencyExitVerifiers(bytes32[] calldata verifierIds)`
 
-- called by `EmergencyExitHandler`; assets sent to `ESCROWED_MOCA_TREASURY`
+- Exfiltrates verifier USD8 balances + staked MOCA → verifier asset managers
+- Callable by EmergencyExitHandler or verifier themselves
+- Assets: USD8 + native MOCA (or wMOCA if transfer fails)
 
-3. `VotingController.emergencyExit()`
+3. `emergencyExitIssuers(bytes32[] calldata issuerIds)`
+
+- Exfiltrates issuer unclaimed USD8 fees → issuer asset managers
+- Callable by EmergencyExitHandler or issuer themselves
+- Assets: USD8
+
+### `EscrowedMoca`
+
+1. `claimPenalties()` [doubles up as emergency exit as well]
+
+- called by `cronJob`
+- assets sent to `ESCROWED_MOCA_TREASURY`
+
+2. `emergencyExit(address[] calldata users)`
+
+- Exfiltrates user esMOCA balances + pending redemptions → users (as MOCA)
+- Callable by EmergencyExitHandler or users themselves
+- Assets: native MOCA (or wMOCA if transfer fails)
+- Note: Returns user esMOCA + pending redemptions, not penalties
+
+### VotingEscrowMoca
+
+1. `emergencyExit(bytes32[] calldata lockIds)`
+
+- Returns locked MOCA/esMOCA principals to lock owners
+- Callable by EmergencyExitHandler only
+- Assets: native MOCA + esMOCA returned
+- Note: Burns veMOCA and returns principals; no state updates
+
+### VotingController
+
+1. `emergencyExit()`
 
 - Exfiltrate all contract-held assets (rewards + subsidies + registration fees) 
 - `esMoca` and native `moca` (else `wMoca`), transferred to `VOTING_CONTROLLER_TREASURY`

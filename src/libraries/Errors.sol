@@ -35,6 +35,8 @@ library Errors {
 // --------- PaymentsController.sol ---------
     error InvalidCaller();
     error InvalidIssuer();
+    error IssuerAlreadyExists();
+    error VerifierAlreadyExists();
     error InvalidSchema();
     error SignatureExpired();
     error NoClaimableFees();
