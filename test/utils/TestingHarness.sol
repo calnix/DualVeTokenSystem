@@ -12,7 +12,7 @@ import {IAccessControlEnumerable, IAccessControl} from "openzeppelin-contracts/c
 // import all contracts
 import {IssuerStakingController} from "../../src/IssuerStakingController.sol";
 import {PaymentsController} from "../../src/PaymentsController.sol";
-//import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
+import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
 //import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
 //import {VotingController} from "../../src/VotingController.sol";
 
@@ -40,7 +40,7 @@ abstract contract TestingHarness is Test {
     // actual contracts
     IssuerStakingController public issuerStakingController;
     PaymentsController public paymentsController;
-    //EscrowedMoca public esMoca;
+    EscrowedMoca public esMoca;
     //VotingEscrowMoca public veMoca;
     //VotingController public votingController;
     
@@ -150,8 +150,8 @@ abstract contract TestingHarness is Test {
             address(mockWMoca), address(mockUSD8), MOCA_TRANSFER_GAS_LIMIT, "PaymentsController", "1");
  
 
-        // 6. Deploy EscrowedMoca
-        //esMoca = new EscrowedMoca(address(accessController), 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); // 10% penalty split
+        // 6. Deploy EscrowedMoca [10% penalty split for voters, 90% for treasury]
+        esMoca = new EscrowedMoca(globalAdmin, escrowedMocaAdmin, monitorAdmin, cronJobAdmin, monitor, esMocaTreasury, emergencyExitHandler, assetManager, 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); 
 
 
         // 7. Deploy VotingEscrowMoca

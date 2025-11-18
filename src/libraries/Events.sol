@@ -42,9 +42,6 @@ library Events {
     event PenaltyClaimed(address indexed treasury, uint256 totalClaimable);
     // emergencyExit
     event EmergencyExitEscrowedMoca(address[] users, uint256 totalMoca);
-    event EmergencyExitPenalties(address indexed treasury, uint256 totalClaimable);
-
-
 
 // --------- VotingEscrowMoca.sol ---------
     event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);

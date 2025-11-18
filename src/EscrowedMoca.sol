@@ -5,15 +5,16 @@ pragma solidity 0.8.27;
 import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+// Access control
+import {AccessControlEnumerable, AccessControl} from "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {IAccessControlEnumerable, IAccessControl} from "openzeppelin-contracts/contracts/access/extensions/IAccessControlEnumerable.sol";
+
 
 // libraries
 import {DataTypes} from "./libraries/DataTypes.sol";
 import {Constants} from "./libraries/Constants.sol";
 import {Errors} from "./libraries/Errors.sol";
 import {Events} from "./libraries/Events.sol";
-
-// interfaces
-import {IAccessController} from "./interfaces/IAccessController.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";
@@ -26,11 +27,10 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
  *      which can be redeemed under various options—similar to early bond redemption—with penalties applied based on the chosen redemption method.
 */
 
-contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
+contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable {
     using SafeERC20 for IERC20;
 
     // Contracts
-    IAccessController public immutable accessController;
     address public immutable WMOCA;
 
     uint256 public TOTAL_MOCA_PENDING_REDEMPTION;         // tracks the total MOCA balance pending redemption 
@@ -47,6 +47,17 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
 
     // gas limit for moca transfer
     uint256 public MOCA_TRANSFER_GAS_LIMIT;
+
+
+    // Roles
+    bytes32 public constant ESCROWED_MOCA_ADMIN_ROLE = Constants.ESCROWED_MOCA_ADMIN_ROLE;
+    bytes32 public constant EMERGENCY_EXIT_HANDLER_ROLE = Constants.EMERGENCY_EXIT_HANDLER_ROLE;
+    bytes32 public constant MONITOR_ADMIN_ROLE = Constants.MONITOR_ADMIN_ROLE;
+    bytes32 public constant CRON_JOB_ADMIN_ROLE = Constants.CRON_JOB_ADMIN_ROLE;
+    bytes32 public constant MONITOR_ROLE = Constants.MONITOR_ROLE;
+    bytes32 public constant CRON_JOB_ROLE = Constants.CRON_JOB_ROLE;
+    bytes32 public constant ASSET_MANAGER_ROLE = Constants.ASSET_MANAGER_ROLE;
+
 
     // treasury address for escrowed moca
     address public ESCROWED_MOCA_TREASURY;
@@ -70,11 +81,10 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
 
 //-------------------------------Constructor------------------------------------------
 
-    constructor(address accessController_, uint256 votersPenaltyPct, address wMoca_, uint256 mocaTransferGasLimit) ERC20("esMoca", "esMOCA") {    
-        
-        // check: access controller is set [not frozen]
-        accessController = IAccessController(accessController_);
-        require(accessController.isFrozen() == 0, Errors.InvalidAddress());
+    constructor(
+        address globalAdmin, address escrowedMocaAdmin, address monitorAdmin, address cronJobAdmin, address monitorBot,
+        address escrowedMocaTreasury, address emergencyExitHandler, address assetManager,
+        uint256 votersPenaltyPct, address wMoca_, uint256 mocaTransferGasLimit) ERC20("esMoca", "esMOCA") {    
 
         // sanity check: <= 100%; can be 0 [all penalties to treasury]       
         require(votersPenaltyPct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
@@ -87,6 +97,49 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
+
+        _setupRolesAndTreasury(globalAdmin, escrowedMocaAdmin, monitorAdmin, cronJobAdmin, monitorBot, escrowedMocaTreasury, emergencyExitHandler, assetManager);
+    }
+
+    function _setupRolesAndTreasury(
+        address globalAdmin, address escrowedMocaAdmin, address monitorAdmin, address cronJobAdmin, 
+        address monitorBot, address escrowedMocaTreasury, address emergencyExitHandler, address assetManager) internal {
+            
+        // sanity check: all addresses are not zero address
+        require(globalAdmin != address(0), Errors.InvalidAddress());
+        require(escrowedMocaAdmin != address(0), Errors.InvalidAddress());
+        require(monitorAdmin != address(0), Errors.InvalidAddress());
+        require(cronJobAdmin != address(0), Errors.InvalidAddress());
+        require(monitorBot != address(0), Errors.InvalidAddress());
+        require(escrowedMocaTreasury != address(0), Errors.InvalidAddress());
+        require(emergencyExitHandler != address(0), Errors.InvalidAddress());
+        require(assetManager != address(0), Errors.InvalidAddress());
+
+        // grant roles to addresses
+        _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);
+        _grantRole(ESCROWED_MOCA_ADMIN_ROLE, escrowedMocaAdmin);
+        _grantRole(MONITOR_ADMIN_ROLE, monitorAdmin);
+        _grantRole(CRON_JOB_ADMIN_ROLE, cronJobAdmin);
+        _grantRole(EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
+        _grantRole(ASSET_MANAGER_ROLE, assetManager);
+        
+        // there should at least 1 bot address for monitoring at deployment
+        _grantRole(MONITOR_ROLE, monitorBot);
+
+        // --------------- Set role admins ------------------------------
+        // Operational role administrators managed by global admin
+        _setRoleAdmin(ESCROWED_MOCA_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
+
+        _setRoleAdmin(MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        // High-frequency roles managed by their dedicated admins
+        _setRoleAdmin(MONITOR_ROLE, MONITOR_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ROLE, CRON_JOB_ADMIN_ROLE);
+        
+
+        // set treasury address
+        ESCROWED_MOCA_TREASURY = escrowedMocaTreasury;
     }
 
 //-------------------------------User functions------------------------------------------
@@ -138,7 +191,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
             penaltyAmount = redemptionAmount - mocaReceivable;
 
             // sanity checks: ensure penaltyAmount & mocaReceivable are > 0 [flooring]
-            require(mocaReceivable > minExpectedReceivable, Errors.InvalidAmount()); 
+            require(mocaReceivable >= minExpectedReceivable, Errors.InvalidAmount()); 
             require(penaltyAmount > 0, Errors.InvalidAmount()); 
 
             // we block cases where penaltyAmount is floored to 0,
@@ -256,8 +309,6 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
 
 //-------------------------------CronJob functions-----------------------------------------
 
-    //note: P wants this to be scripted via cronjob, instead of AssetManager.
-
     /**
      * @notice Escrows native Moca on behalf of multiple users.
      * @dev Transfers native Moca from the caller to the contract and mints esMoca to each user. 
@@ -267,7 +318,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @param users Array of user addresses to escrow for.
      * @param amounts Array of amounts to escrow for each user.
      */
-    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external payable onlyCronJob whenNotPaused {
+    function escrowMocaOnBehalf(address[] calldata users, uint256[] calldata amounts) external payable onlyRole(CRON_JOB_ROLE) whenNotPaused {
         uint256 length = users.length;
         require(length == amounts.length, Errors.MismatchedArrayLengths());
         
@@ -302,9 +353,9 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      *      Note: potential tiny dust from rounding.
      *      Also to be used in case of emergency exit scenario, to exfiltrate penalties to the esMoca treasury.
      */
-    function claimPenalties() external payable onlyCronJob {
+    function claimPenalties() external payable onlyRole(CRON_JOB_ROLE) {
         // get treasury address
-        address esMocaTreasury = accessController.ESCROWED_MOCA_TREASURY();
+        address esMocaTreasury = ESCROWED_MOCA_TREASURY;
         require(esMocaTreasury != address(0), Errors.InvalidAddress());
 
         // check: is there anything to claim?
@@ -322,13 +373,14 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         emit Events.PenaltyClaimed(esMocaTreasury, totalClaimable);
     }
 
+//-------------------------------AssetManager: releaseEscrowedMoca -----------------------------------------
 
     /**
      * @notice Allows caller to release their esMoca to moca instantly.
      * @dev Only callable by EscrowedMocaAdmin.
      * @param amount The amount of esMoca to release to the admin caller.
      */
-    function releaseEscrowedMoca(uint256 amount) external payable onlyCronJob whenNotPaused {
+    function releaseEscrowedMoca(uint256 amount) external payable onlyRole(ASSET_MANAGER_ROLE) whenNotPaused {
         // sanity check: amount + balance
         require(amount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= amount, Errors.InsufficientBalance());
@@ -343,7 +395,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
     }
 
 
-//-------------------------------Admin: update functions-------------------------------------------------
+//-------------------------------ESCROWED_MOCA_ADMIN_ROLE: update functions-------------------------------------------------
 
 
     /**
@@ -352,7 +404,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      *      Only callable by EscrowedMocaAdmin.
      * @param votersPenaltyPct The new penalty percentage for voters (2dp precision, e.g., 100 = 1%).
      */
-    function setVotersPenaltyPct(uint256 votersPenaltyPct) external whenNotPaused onlyEscrowedMocaAdmin {
+    function setVotersPenaltyPct(uint256 votersPenaltyPct) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) whenNotPaused {
         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
         require(votersPenaltyPct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
 
@@ -371,7 +423,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @param lockDuration The lock duration for the redemption option. [0 for instant redemption]
      * @param receivablePct The conversion rate for the redemption option. [> 0 for redemption w/ penalty]
      */
-    function setRedemptionOption(uint256 redemptionOption, uint128 lockDuration, uint128 receivablePct) external whenNotPaused onlyEscrowedMocaAdmin {
+    function setRedemptionOption(uint256 redemptionOption, uint128 lockDuration, uint128 receivablePct) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) whenNotPaused {
         // range:[0,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
         require(receivablePct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
         require(receivablePct > 0, Errors.InvalidPercentage());
@@ -395,7 +447,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @param redemptionOption Index of the redemption option to update.
      * @param enable Set to true to enable, false to disable the redemption option.
      */
-    function setRedemptionOptionStatus(uint256 redemptionOption, bool enable) external whenNotPaused onlyEscrowedMocaAdmin {
+    function setRedemptionOptionStatus(uint256 redemptionOption, bool enable) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) whenNotPaused {
         DataTypes.RedemptionOption storage optionPtr = redemptionOptions[redemptionOption];
 
         if (enable) {
@@ -418,7 +470,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @param addresses The addresses to update whitelist status for.
      * @param isWhitelisted True to whitelist, false to remove from whitelist.
      */
-    function setWhitelistStatus(address[] calldata addresses, bool isWhitelisted) external whenNotPaused onlyEscrowedMocaAdmin {
+    function setWhitelistStatus(address[] calldata addresses, bool isWhitelisted) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) whenNotPaused {
         uint256 length = addresses.length;
         require(length > 0, Errors.InvalidArray());
 
@@ -439,10 +491,10 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
 
     /**
      * @notice Sets the gas limit for moca transfer.
-     * @dev Only callable by the IssuerStakingController admin.
+     * @dev Only callable by the EscrowedMocaAdmin.
      * @param newMocaTransferGasLimit The new gas limit for moca transfer.
      */
-    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external whenNotPaused onlyEscrowedMocaAdmin {
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) whenNotPaused {
         require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
 
         // cache old + update to new gas limit
@@ -450,39 +502,6 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
         MOCA_TRANSFER_GAS_LIMIT = newMocaTransferGasLimit;
 
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
-    }
-
-
-//-------------------------------Modifiers---------------------------------------------------------------
-    
-    // for setting contract params
-    modifier onlyEscrowedMocaAdmin() {
-        require(accessController.isEscrowedMocaAdmin(msg.sender), Errors.OnlyCallableByEscrowedMocaAdmin());
-        _;
-    }
-
-    // for depositing/withdrawing assets [stakeOnBehalf(), ]
-    modifier onlyCronJob() {
-        require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
-        _;
-    }
-
-    // pause
-    modifier onlyMonitor() {
-        require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
-        _;
-    }
-
-    // for unpause + freeze 
-    modifier onlyGlobalAdmin() {
-        require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
-        _;
-    }   
-    
-    // to exfil assets, when frozen
-    modifier onlyEmergencyExitHandler() {
-        require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
-        _;
     }
 
 
@@ -519,7 +538,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @notice Pause the contract.
      * @dev Only callable by the Monitor [bot script].
      */
-    function pause() external whenNotPaused onlyMonitor {
+    function pause() external onlyRole(MONITOR_ROLE) whenNotPaused {
         _pause();
     }
 
@@ -527,7 +546,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @notice Unpause the contract.
      * @dev Only callable by the Global Admin [multi-sig].
      */
-    function unpause() external whenPaused onlyGlobalAdmin {
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) whenPaused {
         require(isFrozen == 0, Errors.IsFrozen()); 
         _unpause();
     }
@@ -537,7 +556,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
      * @dev Only callable by the Global Admin [multi-sig].
      *      This is a kill switch function
      */
-    function freeze() external whenPaused onlyGlobalAdmin {
+    function freeze() external onlyRole(DEFAULT_ADMIN_ROLE) whenPaused {
         require(isFrozen == 0, Errors.IsFrozen());
         isFrozen = 1;
         emit Events.ContractFrozen();
@@ -560,7 +579,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca {
             address user = users[i];
 
             // check: if NOT emergency exit handler, AND NOT, the user themselves: revert
-            if (!accessController.isEmergencyExitHandler(msg.sender)) {
+            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
                 if (msg.sender != user) {
                     revert Errors.OnlyCallableByEmergencyExitHandlerOrUser();
                 }

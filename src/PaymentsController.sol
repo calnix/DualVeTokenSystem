@@ -149,7 +149,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
     function _setupRolesAndTreasury(
         address globalAdmin, address paymentsControllerAdmin, address monitorAdmin, address cronJobAdmin, 
-        address monitorBot, address paymentsControllerTreasury, address emergencyExitHandler) internal {
+        address monitorBot, address paymentsControllerTreasury, address emergencyExitHandler) 
+    internal {
 
         // sanity check: all addresses are not zero address
         require(globalAdmin != address(0), Errors.InvalidAddress());

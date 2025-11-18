@@ -18,7 +18,7 @@
 - esMoca subsidies are financed from the USD8 fees paid in step 1. [verifiers get a cut of paid fees back]
 - esMoca rewards are financed from treasury; these are ecosystem incentives are giving out. [users are incentivized by us bankrolling it]
 ```
-Now both verifiers can Voters can claim subsidies and rewards respectively for the prior epoch.
+Now both Verifiers and Voters can claim subsidies and rewards respectively for the prior epoch.
 
 ### 3. EscrowedMoca
 

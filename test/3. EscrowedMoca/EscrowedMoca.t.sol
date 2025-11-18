@@ -15,32 +15,84 @@ abstract contract StateT0_Deploy is TestingHarness {
 contract StateT0_Deploy_Test is StateT0_Deploy {
 
     function test_Constructor() public {
-        assertEq(address(esMoca.accessController()), address(accessController), "accessController not set correctly");
-        assertEq(address(esMoca.WMOCA()), address(mockWMoca), "WMOCA not set correctly");
+        // Check treasury address
+        assertEq(esMoca.ESCROWED_MOCA_TREASURY(), esMocaTreasury, "ESCROWED_MOCA_TREASURY not set correctly");
+        // Check evenwMoca address
+        assertEq(esMoca.WMOCA(), address(mockWMoca), "WMOCA not set correctly");
+        // Check moca transfer gas limit
         assertEq(esMoca.MOCA_TRANSFER_GAS_LIMIT(), 2300, "MOCA_TRANSFER_GAS_LIMIT not set correctly");
+        // Check voters penalty pct
         assertEq(esMoca.VOTERS_PENALTY_PCT(), 1000, "VOTERS_PENALTY_PCT not set correctly");
-        
-        // erc20
-        assertEq(esMoca.name(), "esMoca", "name not set correctly");
-        assertEq(esMoca.symbol(), "esMOCA", "symbol not set correctly");
+
+        // ERC20 metadata
+        assertEq(esMoca.name(), "esMoca", "ERC20: incorrect name");
+        assertEq(esMoca.symbol(), "esMOCA", "ERC20: incorrect symbol");
     }
 
     function testRevert_ConstructorChecks() public {
-        // accessController: static check
-        vm.expectRevert();
-        new EscrowedMoca(address(0), 1000, address(mockWMoca), 2300);
+        // globalAdmin: must not be zero address
+        vm.expectRevert(Errors.InvalidAddress.selector);
+        new EscrowedMoca(
+            address(0), 
+            escrowedMocaAdmin, 
+            monitorAdmin, 
+            cronJobAdmin, 
+            monitor, 
+            esMocaTreasury, 
+            emergencyExitHandler, 
+            assetManager, 
+            1000, 
+            address(mockWMoca), 
+            2300
+        );
 
         // votersPenaltyPct > 100%
         vm.expectRevert(Errors.InvalidPercentage.selector);
-        new EscrowedMoca(address(accessController), Constants.PRECISION_BASE + 1, address(mockWMoca), 2300);
+        new EscrowedMoca(
+            globalAdmin, 
+            escrowedMocaAdmin, 
+            monitorAdmin, 
+            cronJobAdmin, 
+            monitor, 
+            esMocaTreasury, 
+            emergencyExitHandler, 
+            assetManager, 
+            Constants.PRECISION_BASE + 1, 
+            address(mockWMoca), 
+            2300
+        );
 
-        //wMoca: invalid address
+        // wMoca: invalid address
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new EscrowedMoca(address(accessController), 1000, address(0), 2300);
+        new EscrowedMoca(
+            globalAdmin, 
+            escrowedMocaAdmin, 
+            monitorAdmin, 
+            cronJobAdmin, 
+            monitor, 
+            esMocaTreasury, 
+            emergencyExitHandler, 
+            assetManager, 
+            1000, 
+            address(0), 
+            2300
+        );
 
         // mocaTransferGasLimit < 2300
         vm.expectRevert(Errors.InvalidGasLimit.selector);
-        new EscrowedMoca(address(accessController), 1000, address(mockWMoca), 2300 - 1);
+        new EscrowedMoca(
+            globalAdmin, 
+            escrowedMocaAdmin, 
+            monitorAdmin, 
+            cronJobAdmin, 
+            monitor, 
+            esMocaTreasury, 
+            emergencyExitHandler, 
+            assetManager, 
+            1000, 
+            address(mockWMoca), 
+            2299
+        );
     }
 
     function testRevert_CannotEscrowZeroMoca_InvalidAmount() public {
@@ -133,7 +185,7 @@ contract StateT0_EscrowedMoca_Test is StateT0_EscrowedMoca {
     // --------- state transition: set redemption options ---------
 
         function testRevert_UserCannot_SetRedemptionOptions() public {
-            vm.expectRevert(Errors.OnlyCallableByEscrowedMocaAdmin.selector);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.ESCROWED_MOCA_ADMIN_ROLE()));
             vm.prank(user1);
             esMoca.setRedemptionOption(1, 30 days, 5_000); // 50% penalty
         }
@@ -197,10 +249,15 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
         }
 
         // no penalties to claim
-        function testRevert_AssetManagerCannot_ClaimPenalties_WhenZero() public {
+        function testRevert_CronJobCannot_ClaimPenalties_WhenZero() public {
+            // give cronJob role
+            vm.startPrank(cronJobAdmin);
+                esMoca.grantRole(esMoca.CRON_JOB_ROLE(), cronJob);
+            vm.stopPrank();
+
             vm.expectRevert(Errors.NothingToClaim.selector);
 
-            vm.prank(assetManager);
+            vm.prank(cronJob);
             esMoca.claimPenalties();
         }
     
@@ -213,6 +270,7 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
             (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(optionId);
             
             // Execute and verify
+            uint256 expectedMocaReceivable;
             {
                 uint256 esMocaBalBefore = esMoca.balanceOf(user1);
                 uint256 mocaBalBefore = user1.balance;
@@ -224,7 +282,7 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
 
                 
                 // calculation for receivable/penalty
-                uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
+                expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
                 uint256 expectedPenalty = redemptionAmount - expectedMocaReceivable;
                 
                 // calculate penalty amount
@@ -240,7 +298,7 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
                     vm.expectEmit(true, true, false, true, address(esMoca));
                     emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
                     
-                    esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount);
+                    esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount, expectedMocaReceivable);
                 vm.stopPrank();
                 
                 // --- assert ---
@@ -265,10 +323,8 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
                 uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
                 uint256 expectedPenalty = redemptionAmount - expectedMocaReceivable;
                 
-                (uint256 mocaReceivable, uint256 penalty, uint256 claimed) = esMoca.redemptionSchedule(user1, block.timestamp + lockDuration);
+                uint256 mocaReceivable = esMoca.redemptionSchedule(user1, block.timestamp + lockDuration);
                 assertEq(mocaReceivable, expectedMocaReceivable, "stored mocaReceivable incorrect");
-                assertEq(claimed, 0, "claimed should be 0");
-                assertEq(penalty, expectedPenalty, "penalty incorrect");
             }
         }
 
@@ -308,7 +364,7 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
                 emit Events.RedemptionScheduled(user2, redemptionAmount, 0, block.timestamp + lockDuration);
 
                 // full redemption with no penalty | 60 days lock
-                esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount); 
+                esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount, redemptionAmount); 
 
             vm.stopPrank();
 
@@ -330,10 +386,8 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
             assertEq(user2.balance, mocaBalBefore, "MOCA balance should not increment until claimRedemption");
 
             // Redemption schedule created for user2 
-            (uint256 mocaReceivable, uint256 penalty, uint256 claimed) = esMoca.redemptionSchedule(user2, block.timestamp + lockDuration);
+            uint256 mocaReceivable = esMoca.redemptionSchedule(user2, block.timestamp + lockDuration);
             assertEq(mocaReceivable, redemptionAmount, "stored mocaReceivable incorrect");
-            assertEq(claimed, 0, "claimed should be 0");
-            assertEq(penalty, 0, "penalty incorrect");
         }
 }
 
@@ -343,14 +397,14 @@ abstract contract StateT0_UsersScheduleTheirRedemptions is StateT0_RedemptionOpt
     function setUp() public virtual override {
         super.setUp();
 
-        // user1 schedules a redemption: penalties booked + redemption scheduled
+        // user1 schedules a redemption: penalties booked + redemption scheduled 
         vm.startPrank(user1);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount / 2);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount / 2, user1Amount / 4);
         vm.stopPrank();
 
         // user2 schedules a redemption: penalties booked + redemption scheduled
         vm.startPrank(user2);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption2_60Days, user2Amount);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption2_60Days, user2Amount, user2Amount);
         vm.stopPrank();
     }
 }
@@ -364,14 +418,14 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
         function testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsZero() public {
             vm.startPrank(user1);
             vm.expectRevert(Errors.InvalidAmount.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, 0);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, 0, 0);
             vm.stopPrank();
         }
 
         function testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsGreaterThanBalance() public {
             vm.startPrank(user1);
             vm.expectRevert(Errors.InsufficientBalance.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount + 1);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount + 1, user1Amount + 1);
             vm.stopPrank();
         }
 
@@ -389,7 +443,7 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
             vm.startPrank(user3);
             vm.expectRevert(Errors.TotalMocaEscrowedExceeded.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, 10 ether);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, 10 ether, 10 ether);
             vm.stopPrank();
         }
 
@@ -397,7 +451,7 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
         function testRevert_UserCannot_SelectRedemptionOption_WhenRedemptionOptionIsDisabled() public {
             vm.startPrank(user1);
             vm.expectRevert(Errors.RedemptionOptionAlreadyDisabled.selector);
-            esMoca.selectRedemptionOption{value: 0}(5, user1Amount/2);
+            esMoca.selectRedemptionOption{value: 0}(5, user1Amount/2, user1Amount/2);
             vm.stopPrank();
         }
 
@@ -436,7 +490,7 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
     // --------- positive test: claimRedemptions() for instant redemption ---------
 
-    function test_User3Can_RedeemInstant_ReceivesMocaImmediately() public {
+    function test_User3Can_SelectRedemptionOptionInstant_ReceivesMocaImmediately() public {
         // Setup
         uint256 instantRedeemAmount = user3Amount / 2;
         (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption3_Instant);
@@ -471,11 +525,11 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
 
             vm.expectEmit(true, false, false, false, address(esMoca));
-            emit Events.Redeemed(user3, expectedMocaReceivable, block.timestamp);
+            emit Events.Redeemed(user3, expectedMocaReceivable, expectedPenalty);
 
             // Execute
             vm.prank(user3);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption3_Instant, instantRedeemAmount);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption3_Instant, instantRedeemAmount, expectedMocaReceivable);
 
             // --- assert ---
             
@@ -498,35 +552,29 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
         }
 
         // Verify redemption schedule
-        {
-            uint256 expectedMocaReceivable = instantRedeemAmount * receivablePct / Constants.PRECISION_BASE;
-            uint256 expectedPenalty = instantRedeemAmount - expectedMocaReceivable;
-
-            (uint256 mocaReceivableAfter, uint256 penaltyAfter, uint256 claimedAfter) = esMoca.redemptionSchedule(user3, block.timestamp);
-            assertEq(mocaReceivableAfter, expectedMocaReceivable, "mocaReceivable in schedule should equal amount received");
-            assertEq(claimedAfter, expectedMocaReceivable, "claimed in redemptionSchedule should match mocaReceivable for instant");
-            assertEq(penaltyAfter, expectedPenalty, "penalty should be stored in schedule");
-
-            assertEq(mocaReceivableAfter, claimedAfter, "mocaReceivable should be equal to claimed");
-        }
+        uint256 mocaReceivableAfter = esMoca.redemptionSchedule(user3, block.timestamp);
+        assertEq(mocaReceivableAfter, 0, "mocaReceivable in schedule should equal amount received");
     }
 
     // --------- positive test: claimRedemptions() for multiple timestamps ---------
 
-    function test_UserCan_ClaimRedemptions_MultipleTimestamps() public {
+    function test_User1Can_ClaimRedemptions_MultipleTimestamps() public {
         // Get lock duration for the redemption option
-        (uint128 lockDuration,,) = esMoca.redemptionOptions(redemptionOption1_30Days);
+        (uint128 lockDuration,uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption1_30Days);
         
+        // calculation for receivable/penalty
+        uint256 amountForRedemption = user1Amount / 4; 
+        uint256 expectedMocaReceivable = amountForRedemption * receivablePct / Constants.PRECISION_BASE;
+        uint256 expectedPenalty = amountForRedemption - expectedMocaReceivable;
+
         // --- Setup: user1 creates multiple redemptions ---
         vm.startPrank(user1);
-            uint256 amount1 = user1Amount / 4; 
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amount1);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable);
             // Store the redemption timestamp
             uint256 timestamp1 = block.timestamp + lockDuration; 
         
             skip(1 days);
-            uint256 amount2 = user1Amount / 4;
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amount2);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable);
             // Store the redemption timestamp
             uint256 timestamp2 = block.timestamp + lockDuration; 
         vm.stopPrank();
@@ -535,8 +583,8 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
         skip(timestamp2 + 1);
         
         // --- Calculate total claimable ---
-        (uint256 mocaReceivable1,,) = esMoca.redemptionSchedule(user1, timestamp1);
-        (uint256 mocaReceivable2,,) = esMoca.redemptionSchedule(user1, timestamp2);
+        uint256 mocaReceivable1 = esMoca.redemptionSchedule(user1, timestamp1);
+        uint256 mocaReceivable2 = esMoca.redemptionSchedule(user1, timestamp2);
         uint256 totalClaimable = mocaReceivable1 + mocaReceivable2;
         
         // --- Before state ---
@@ -549,10 +597,13 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
         uint256[] memory timestamps = new uint256[](2);
             timestamps[0] = timestamp1;
             timestamps[1] = timestamp2;
-
+        uint256[] memory mocaReceivables = new uint256[](2);
+            mocaReceivables[0] = mocaReceivable1;
+            mocaReceivables[1] = mocaReceivable2;
+            
         // --- Events ---
         vm.expectEmit(true, true, false, true, address(esMoca));
-        emit Events.RedemptionsClaimed(user1, timestamps, totalClaimable);
+        emit Events.RedemptionsClaimed(user1, timestamps, mocaReceivables);
 
         // --- Execute ---
         vm.prank(user1);
@@ -569,12 +620,19 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
         function testRevert_UserCannot_ClaimPenalties() public {
             vm.startPrank(user1);
-            vm.expectRevert(Errors.OnlyCallableByAssetManager.selector);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.CRON_JOB_ROLE()));
             esMoca.claimPenalties();
             vm.stopPrank();
         }
 
-        function test_AssetManagerCan_ClaimPenalties_AssetsSentToTreasury() public {
+        function test_CronJobCan_ClaimPenalties_AssetsSentToTreasury() public {
+            
+            // give role to cronJob
+            vm.startPrank(cronJobAdmin);
+                esMoca.grantRole(esMoca.CRON_JOB_ROLE(), cronJob);
+            vm.stopPrank();
+
+
             // Get before state
             uint256 esMocaTreasuryMocaBefore = esMocaTreasury.balance;
             uint256 contractMocaBefore = address(esMoca).balance;
@@ -595,7 +653,7 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
                 emit Events.PenaltyClaimed(esMocaTreasury, totalClaimable);
                 
                 // Claim penalties
-                vm.prank(assetManager);
+                vm.prank(cronJob);
                 esMoca.claimPenalties();
                 
                 // Verify after-state
@@ -618,8 +676,13 @@ abstract contract StateT30Days_UserOneHasRedemptionScheduled_PenaltiesAreClaimed
         // fast forward to 30 days
         skip(30 days);
 
+        // give cronJob role
+        vm.startPrank(cronJobAdmin);
+            esMoca.grantRole(esMoca.CRON_JOB_ROLE(), cronJob);
+        vm.stopPrank();
+
         // claim penalties
-        vm.prank(assetManager);
+        vm.prank(cronJob);
         esMoca.claimPenalties();
     }
 }
@@ -629,7 +692,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
 
     // --------- tests: claimPenalties() ---------
 
-        function test_AssetManagerHas_ClaimedPenalties_AssetsWithTreasury() public {
+        function test_CronJobHas_ClaimedPenalties_AssetsWithTreasury() public {
             uint256 totalClaimable = esMoca.ACCRUED_PENALTY_TO_VOTERS() + esMoca.ACCRUED_PENALTY_TO_TREASURY();
 
             assertEq(esMoca.ACCRUED_PENALTY_TO_VOTERS(), esMoca.CLAIMED_PENALTY_FROM_VOTERS());
@@ -638,8 +701,8 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
             assertEq(esMocaTreasury.balance, totalClaimable);
         }
 
-        function test_AssetManagerCannot_ClaimPenalties_WhenZero() public {
-            vm.prank(assetManager);
+        function test_CronJobCannot_ClaimPenalties_WhenZero() public {
+            vm.prank(cronJob);
             vm.expectRevert(Errors.NothingToClaim.selector);
             esMoca.claimPenalties();
         }
@@ -648,7 +711,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
 
         function testRevert_UserCannot_ReleaseEscrowedMoca() public {
             vm.startPrank(user1);
-            vm.expectRevert(Errors.OnlyCallableByAssetManager.selector);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.ASSET_MANAGER_ROLE()));
             esMoca.releaseEscrowedMoca{value: 0}(1);
             vm.stopPrank();
         }
@@ -730,15 +793,19 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
             
             // user1's redemption schedule
             uint256 redemptionTimestamp = block.timestamp;
-            (uint256 mocaReceivableBefore, uint256 penaltyBefore, uint256 claimedBefore) = esMoca.redemptionSchedule(user1, redemptionTimestamp);
+            uint256 mocaReceivableBefore = esMoca.redemptionSchedule(user1, redemptionTimestamp);
 
             // array of timestamps to claim
             uint256[] memory timestamps = new uint256[](1);
             timestamps[0] = redemptionTimestamp;
 
+            // array of moca receivables to claim
+            uint256[] memory mocaReceivables = new uint256[](1);
+            mocaReceivables[0] = mocaReceivableBefore;
+            
             // events
             vm.expectEmit(true, true, false, true, address(esMoca));
-            emit Events.RedemptionsClaimed(user1, timestamps, mocaReceivableBefore);
+            emit Events.RedemptionsClaimed(user1, timestamps, mocaReceivables);
 
             // --- Execute ---
             vm.startPrank(user1);
@@ -751,7 +818,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
             uint256 totalSupplyAfter = esMoca.totalSupply();
 
             // user1's redemption schedule after claimRedemptions
-            (uint256 mocaReceivableAfter, uint256 penaltyAfter, uint256 claimedAfter) = esMoca.redemptionSchedule(user1, redemptionTimestamp);
+            uint256 mocaReceivableAfter = esMoca.redemptionSchedule(user1, redemptionTimestamp);
             
             // check token balances after claimRedemptions
             assertEq(user1MocaAfter, user1MocaBefore + mocaReceivableBefore, "MOCA balance not transferred correctly");
@@ -762,9 +829,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
             assertEq(esMoca.userTotalMocaPendingRedemption(user1), userTotalMocaPendingRedemption_before - mocaReceivableBefore, "userTotalMocaPendingRedemption should be decremented");
 
             // check redemption schedule updates
-            assertEq(mocaReceivableAfter, mocaReceivableBefore, "mocaReceivable in redemptionSchedule should not change");
-            assertEq(claimedAfter, mocaReceivableBefore, "claimed should be updated to full amount");
-            assertEq(penaltyAfter, penaltyBefore, "penalty in redemptionSchedule should not change");
+            assertEq(mocaReceivableAfter, 0, "mocaReceivable in redemptionSchedule should be 0");
         }
     
     // --------- tests: escrowMocaOnBehalf() ---------
@@ -780,7 +845,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
             vm.deal(user1, 1 ether);
             
             vm.startPrank(user1);
-                vm.expectRevert(Errors.OnlyCallableByCronJob.selector);
+                vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.CRON_JOB_ROLE()));
                 esMoca.escrowMocaOnBehalf{value: 1 ether}(users, amounts);
             vm.stopPrank();
         }
@@ -923,26 +988,31 @@ contract StateT60Days_UserTwoHasRedemptionScheduled_Test is StateT60Days_UserTwo
 
             // user2's redemption schedule
             uint256 redemptionTimestamp = block.timestamp;
-            (uint256 mocaReceivableBefore, uint256 penaltyBefore, uint256 claimedBefore) = esMoca.redemptionSchedule(user2, redemptionTimestamp);
+            uint256 mocaReceivableBefore = esMoca.redemptionSchedule(user2, redemptionTimestamp);
 
             // deal native MOCA to contract to cover redemption
             vm.deal(address(esMoca), mocaReceivableBefore);
 
-            // events
-            vm.expectEmit(true, true, false, true, address(esMoca));
-            uint256[] memory timestamps = new uint256[](1);
-            timestamps[0] = redemptionTimestamp;
-            emit Events.RedemptionsClaimed(user2, timestamps, mocaReceivableBefore);
+            // arrays
+            uint256[] memory redemptionTimestamps = new uint256[](1);
+            redemptionTimestamps[0] = redemptionTimestamp;
+            uint256[] memory mocaReceivables = new uint256[](1);
+            mocaReceivables[0] = mocaReceivableBefore;
 
+            // expect event emission
+            vm.expectEmit(true, true, false, true, address(esMoca));
+            emit Events.RedemptionsClaimed(user2, redemptionTimestamps, mocaReceivables);
+
+            // claimRedemptions
             vm.startPrank(user2);
-            esMoca.claimRedemptions{value: 0}(timestamps);
+            esMoca.claimRedemptions{value: 0}(redemptionTimestamps);
             vm.stopPrank();
 
             // --- after balances & state ---
             uint256 user2MocaAfter = user2.balance;
             uint256 user2EsMocaAfter = esMoca.balanceOf(user2);
             uint256 totalSupplyAfter = esMoca.totalSupply();
-            (uint256 mocaReceivableAfter, uint256 penaltyAfter, uint256 claimedAfter) = esMoca.redemptionSchedule(user2, redemptionTimestamp);
+            uint256 mocaReceivableAfter = esMoca.redemptionSchedule(user2, redemptionTimestamp);
 
             // check token balances after claimRedemptions
             assertEq(user2MocaAfter, user2MocaBefore + mocaReceivableBefore, "MOCA balance not transferred correctly");
@@ -958,14 +1028,13 @@ contract StateT60Days_UserTwoHasRedemptionScheduled_Test is StateT60Days_UserTwo
             assertEq(esMoca.TOTAL_MOCA_PENDING_REDEMPTION(), TOTAL_MOCA_PENDING_REDEMPTION_before - mocaReceivableBefore, "TOTAL_MOCA_PENDING_REDEMPTION should be decremented");
             
             // check redemption schedule updates
-            assertEq(mocaReceivableAfter, mocaReceivableBefore, "mocaReceivable in redemptionSchedule should not change");
-            assertEq(claimedAfter, mocaReceivableBefore, "claimed should be updated to full amount");
+            assertEq(mocaReceivableAfter, 0, "mocaReceivable in redemptionSchedule should be 0");
         }
 
     // --------- state transition: change penalty split ---------
         function test_UserCannot_SetPenaltyToVoters() public {
             vm.startPrank(user2);
-            vm.expectRevert(Errors.OnlyCallableByEscrowedMocaAdmin.selector);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user2, esMoca.ESCROWED_MOCA_ADMIN_ROLE()));
             esMoca.setVotersPenaltyPct(5000); 
             vm.stopPrank();
         }
@@ -1049,7 +1118,7 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
                     vm.expectEmit(true, true, false, true, address(esMoca));
                     emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
 
-                    esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount);
+                    esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount, expectedMocaReceivable);
                 vm.stopPrank();
                 
                 // --- Assert immediate effects ---
@@ -1071,17 +1140,15 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
                 uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
                 uint256 expectedPenalty = redemptionAmount - expectedMocaReceivable;
                 
-                (uint256 mocaReceivable, uint256 penalty, uint256 claimed) = esMoca.redemptionSchedule(user1, block.timestamp + lockDuration);
+                uint256 mocaReceivable = esMoca.redemptionSchedule(user1, block.timestamp + lockDuration);
                 assertEq(mocaReceivable, expectedMocaReceivable, "redemption schedule: mocaReceivable wrong");
-                assertEq(claimed, 0, "redemption schedule: claimed should be 0");
-                assertEq(penalty, expectedPenalty, "redemption schedule: penalty wrong");
             }
         }
     
     // --------- state transition: disable redemption option ---------
         function test_UserCannot_DisableRedemptionOption() public {
             vm.startPrank(user1);
-            vm.expectRevert(Errors.OnlyCallableByEscrowedMocaAdmin.selector);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.ESCROWED_MOCA_ADMIN_ROLE()));
             esMoca.setRedemptionOptionStatus(redemptionOption1_30Days, false);
             vm.stopPrank();
         }
@@ -1108,7 +1175,7 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
     // --------- tests: setMocaTransferGasLimit() ---------
         function testRevert_UserCannot_SetMocaTransferGasLimit() public {
             vm.startPrank(user1);
-            vm.expectRevert(Errors.OnlyCallableByEscrowedMocaAdmin.selector);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.ESCROWED_MOCA_ADMIN_ROLE()));
             esMoca.setMocaTransferGasLimit(3000);
             vm.stopPrank();
         }
@@ -1155,7 +1222,7 @@ contract StateT60Days_DisableRedemptionOption_Test is StateT60Days_DisableRedemp
         function testRevert_UserCannot_SelectRedemptionOption() public {
             vm.startPrank(user1);
             vm.expectRevert(Errors.RedemptionOptionAlreadyDisabled.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount/4);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount/4, user1Amount/4);
             vm.stopPrank();
         }
 
@@ -1217,7 +1284,7 @@ contract StateT60Days_EnableRedemptionOption_Test is StateT60Days_EnableRedempti
             {
                 uint256 userEsMocaBalanceBefore = esMoca.balanceOf(user1);
                 uint256 esMocaTotalSupplyBefore = esMoca.totalSupply();
-                (uint256 mocaReceivableBefore, uint256 penaltyBefore, uint256 claimedBefore) = esMoca.redemptionSchedule(user1, redemptionTimestamp);
+                uint256 mocaReceivableBefore = esMoca.redemptionSchedule(user1, redemptionTimestamp);
                 uint256 TOTAL_MOCA_PENDING_REDEMPTION_before = esMoca.TOTAL_MOCA_PENDING_REDEMPTION();
                 
                 // Calculate expected
@@ -1230,19 +1297,17 @@ contract StateT60Days_EnableRedemptionOption_Test is StateT60Days_EnableRedempti
                 
                 // User selects redemption option
                 vm.prank(user1);
-                esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amount);
+                esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amount, expectedMocaReceivable);
                 
                 // After-state checks
                 uint256 userEsMocaBalanceAfter = esMoca.balanceOf(user1);
                 uint256 esMocaTotalSupplyAfter = esMoca.totalSupply();
-                (uint256 mocaReceivableAfter, uint256 penaltyAfter, uint256 claimedAfter) = esMoca.redemptionSchedule(user1, redemptionTimestamp);
+                uint256 mocaReceivableAfter = esMoca.redemptionSchedule(user1, redemptionTimestamp);
                 uint256 TOTAL_MOCA_PENDING_REDEMPTION_after = esMoca.TOTAL_MOCA_PENDING_REDEMPTION();
                 
                 assertEq(userEsMocaBalanceAfter, userEsMocaBalanceBefore - amount, "User esMOCA should decrease by amount");
                 assertEq(esMocaTotalSupplyAfter, esMocaTotalSupplyBefore - amount, "Total supply should decrease by amount");
                 assertEq(mocaReceivableAfter - mocaReceivableBefore, expectedMocaReceivable, "Moca receivable increased as expected");
-                assertEq(penaltyAfter - penaltyBefore, expectedPenalty, "Penalty booked as expected");
-                assertEq(claimedAfter, claimedBefore, "No moca claimed immediately for delayed redemption");
                 assertEq(TOTAL_MOCA_PENDING_REDEMPTION_after, TOTAL_MOCA_PENDING_REDEMPTION_before + expectedMocaReceivable, "TOTAL_MOCA_PENDING_REDEMPTION should increment");
             }
         }
@@ -1250,9 +1315,13 @@ contract StateT60Days_EnableRedemptionOption_Test is StateT60Days_EnableRedempti
     // --------- state transition: setWhitelistStatus() ---------
 
         function testRevert_UserCannot_SetWhitelistStatus() public {
+            address[] memory addrs = new address[](1);
+            addrs[0] = user1;
+            bool isWhitelisted = true;
+
             vm.startPrank(user1);
-            vm.expectRevert(Errors.OnlyCallableByEscrowedMocaAdmin.selector);
-            esMoca.setWhitelistStatus(user1, true);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.ESCROWED_MOCA_ADMIN_ROLE()));
+            esMoca.setWhitelistStatus(addrs, isWhitelisted);
             vm.stopPrank();
         }
 
@@ -1267,16 +1336,21 @@ contract StateT60Days_EnableRedemptionOption_Test is StateT60Days_EnableRedempti
             // Check before-state: user1 should NOT be whitelisted
             assertFalse(esMoca.whitelist(user1), "user1 should not be whitelisted before");
 
+            // array + bool
+            address[] memory addrs = new address[](1);
+            addrs[0] = user1;
+            bool isWhitelisted = true;
+
             // Expect event emission
             vm.expectEmit(true, true, false, true, address(esMoca));
-            emit Events.AddressWhitelisted(user1, true);
+            emit Events.AddressWhitelisted(addrs, isWhitelisted);
 
-            // Set whitelist
+            // set whitelist status
             vm.startPrank(escrowedMocaAdmin);
-            esMoca.setWhitelistStatus(user1, true);
+            esMoca.setWhitelistStatus(addrs, isWhitelisted);
             vm.stopPrank();
 
-            // Check after-state: user2 should now be whitelisted
+            // Check after-state: user1 should now be whitelisted
             assertTrue(esMoca.whitelist(user1), "user1 should be whitelisted after");
         }
 }
@@ -1286,14 +1360,25 @@ abstract contract StateT60Days_SetWhitelistStatus is StateT60Days_EnableRedempti
     function setUp() public virtual override {
         super.setUp();
 
+        // array + bool
+        address[] memory addrs = new address[](1);
+        addrs[0] = user1;
+        bool isWhitelisted = true;
+
         // set whitelist status
         vm.startPrank(escrowedMocaAdmin);
-            esMoca.setWhitelistStatus(user1, true);
+            esMoca.setWhitelistStatus(addrs, isWhitelisted);
         vm.stopPrank();
+
+        // calc. expected receivable
+        uint256 redemptionAmount = user1Amount / 10;
+        (uint128 lockDuration, uint128 receivablePct, ) = esMoca.redemptionOptions(redemptionOption1_30Days);
+        uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
+
 
         // user to selectRedemptionOption, so that there are penalties in frozen state to claim via emergencyExitPenalties()
        vm.startPrank(user1);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount / 10); // 10% of user1's balance
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, redemptionAmount, expectedMocaReceivable); // 10% of user1's balance
         vm.stopPrank();
     }
 }
@@ -1302,16 +1387,26 @@ contract StateT60Days_SetWhitelistStatus_Test is StateT60Days_SetWhitelistStatus
 
     // --------- negative tests: setWhitelistStatus() ---------
         function testRevert_EscrowedMocaAdminCannot_SetWhitelistStatus_ZeroAddress() public {
+            // array + bool
+            address[] memory addrs = new address[](1);
+            addrs[0] = address(0);
+            bool isWhitelisted = true;
+
             vm.startPrank(escrowedMocaAdmin);
             vm.expectRevert(Errors.InvalidAddress.selector);
-            esMoca.setWhitelistStatus(address(0), true);
+            esMoca.setWhitelistStatus(addrs, isWhitelisted);
             vm.stopPrank();
         }
 
-        function testRevert_EscrowedMocaAdmin_WhitelistStatusUnchanged() public {
+        function testRevert_EscrowedMocaAdminCannot_SetWhitelistStatus_WhitelistStatusUnchanged() public {
+            // array + bool
+            address[] memory addrs = new address[](1);
+            addrs[0] = user1;
+            bool isWhitelisted = true;
+
             vm.startPrank(escrowedMocaAdmin);
             vm.expectRevert(Errors.WhitelistStatusUnchanged.selector);
-            esMoca.setWhitelistStatus(user1, true);
+            esMoca.setWhitelistStatus(addrs, isWhitelisted);
             vm.stopPrank();
         }
 
@@ -1321,12 +1416,17 @@ contract StateT60Days_SetWhitelistStatus_Test is StateT60Days_SetWhitelistStatus
             // Check before-state: user1 should be whitelisted
             assertTrue(esMoca.whitelist(user1), "user1 should be whitelisted before");
 
+            // array + bool
+            address[] memory addrs = new address[](1);
+            addrs[0] = user1;
+            bool isWhitelisted = false;
+
             // Expect event emission
             vm.expectEmit(true, true, false, true, address(esMoca));
-            emit Events.AddressWhitelisted(user1, false);
+            emit Events.AddressWhitelisted(addrs, isWhitelisted);
 
             vm.startPrank(escrowedMocaAdmin);
-            esMoca.setWhitelistStatus(user1, false);
+            esMoca.setWhitelistStatus(addrs, isWhitelisted);
             vm.stopPrank();
 
             // Check after-state: user1 should not be whitelisted
@@ -1365,9 +1465,20 @@ contract StateT60Days_SetWhitelistStatus_Test is StateT60Days_SetWhitelistStatus
             uint256 beforeUser2 = esMoca.balanceOf(user2);
             uint256 transferAmount = user1Amount / 4;
 
+
             // 1. whitelist user2 so he can call transferFrom
+                // array + bool
+                address[] memory addrs = new address[](1);
+                addrs[0] = user2;
+                bool isWhitelisted = true;
+
+            // Expect event emission
+            vm.expectEmit(true, true, false, true, address(esMoca));
+            emit Events.AddressWhitelisted(addrs, isWhitelisted);
+
+            // set whitelist status
             vm.startPrank(escrowedMocaAdmin);
-            esMoca.setWhitelistStatus(user2, true);
+            esMoca.setWhitelistStatus(addrs, isWhitelisted);
             vm.stopPrank();
 
             // 2. user1 approves user2 to spend their tokens
@@ -1389,7 +1500,7 @@ contract StateT60Days_SetWhitelistStatus_Test is StateT60Days_SetWhitelistStatus
     // --------- state transition: pause() ---------
         function testRevert_UserCannot_Pause() public {
             vm.startPrank(user1);
-            vm.expectRevert(Errors.OnlyCallableByMonitor.selector);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.MONITOR_ROLE()));
             esMoca.pause();
             vm.stopPrank();
         }
@@ -1424,12 +1535,93 @@ abstract contract StateT60Days_Paused is StateT60Days_SetWhitelistStatus {
 
 
 contract StateT60Days_Paused_Test is StateT60Days_Paused {
+    using stdStorage for StdStorage;
 
     function testRevert_MonitorCannot_Pause_WhenContractIsPaused() public {
         vm.startPrank(monitor);
             vm.expectRevert(Pausable.EnforcedPause.selector);
             esMoca.pause();
         vm.stopPrank();
+    }
+
+    //note: whitelisted addresses can still transfer when paused
+    function test_User1WhoIsWhitelistedCan_Transfer_WhenPaused() public {
+            assertTrue(esMoca.whitelist(user1), "user1 should be whitelisted");
+            assertFalse(esMoca.whitelist(user2), "user2 should be whitelisted");
+
+            // before
+            uint256 user1BalanceBefore = esMoca.balanceOf(user1);
+            uint256 user2BalanceBefore = esMoca.balanceOf(user2);
+            uint256 transferAmount = 1 ether;
+
+            vm.startPrank(user1);
+            esMoca.transfer(user2, transferAmount);
+            vm.stopPrank();
+
+            // after
+            uint256 user1BalanceAfter = esMoca.balanceOf(user1);
+            uint256 user2BalanceAfter = esMoca.balanceOf(user2);
+            assertEq(user1BalanceAfter, user1BalanceBefore - transferAmount, "user1 should have transferred esMoca");
+            assertEq(user2BalanceAfter, user2BalanceBefore + transferAmount, "user2 should have received esMoca");
+    }
+        
+    // note: user2 is not whitelisted and therefore cannot initiate transferFrom()
+    function test_User1WhoIsWhitelistedCan_TransferFrom_WhenPaused() public {
+            assertTrue(esMoca.whitelist(user1), "user1 should be whitelisted");
+            assertFalse(esMoca.whitelist(user2), "user2 should be whitelisted");
+
+            // set user2's balance to 1 ether
+            stdstore.target(address(esMoca)).sig(esMoca.balanceOf.selector).with_key(user2).checked_write(1 ether);
+
+            // before
+            uint256 user1BalanceBefore = esMoca.balanceOf(user1);
+            uint256 user2BalanceBefore = esMoca.balanceOf(user2);
+            uint256 transferAmount = 1 ether;
+
+            assertTrue(user2BalanceBefore > 0, "user2 should have esMoca");           
+
+            // Setup: user2 approves user1 to spend their tokens
+            vm.startPrank(user2);
+            esMoca.approve(user1, transferAmount);
+            vm.stopPrank();
+
+            // Setup: user1 calls transferFrom to transfer from user2 to user1
+            vm.startPrank(user1);
+            esMoca.transferFrom(user2, user1, transferAmount);
+            vm.stopPrank();
+
+            // after
+            uint256 user1BalanceAfter = esMoca.balanceOf(user1);
+            uint256 user2BalanceAfter = esMoca.balanceOf(user2);
+            assertEq(user1BalanceAfter, user1BalanceBefore + transferAmount, "user1 should have received esMoca");
+            assertEq(user2BalanceAfter, user2BalanceBefore - transferAmount, "user2 should have transferred esMoca");
+    }
+
+    function test_CronJobCan_ClaimPenalities_WhenPaused() public {
+            // Get before state
+            uint256 esMocaTreasuryMocaBefore = esMocaTreasury.balance;
+            uint256 contractMocaBefore = address(esMoca).balance;
+            
+            // Verify penalties exist
+            uint256 totalClaimable = esMoca.ACCRUED_PENALTY_TO_VOTERS() + esMoca.ACCRUED_PENALTY_TO_TREASURY() - esMoca.CLAIMED_PENALTY_FROM_VOTERS() - esMoca.CLAIMED_PENALTY_FROM_TREASURY();
+            uint256 penaltyToVoters = esMoca.ACCRUED_PENALTY_TO_VOTERS() - esMoca.CLAIMED_PENALTY_FROM_VOTERS();
+            uint256 penaltyToTreasury = esMoca.ACCRUED_PENALTY_TO_TREASURY() - esMoca.CLAIMED_PENALTY_FROM_TREASURY();
+            assertTrue(totalClaimable > 0, "totalPenaltiesToClaim should be greater than 0");
+            
+            // Expect event emission
+            vm.expectEmit(true, false, false, true, address(esMoca));
+            emit Events.PenaltyClaimed(esMocaTreasury, totalClaimable);
+
+            // claim penalties
+            vm.startPrank(cronJob);
+            esMoca.claimPenalties{value: 0}();
+            vm.stopPrank();
+
+            // Verify after-state
+            assertEq(esMocaTreasury.balance, esMocaTreasuryMocaBefore + totalClaimable, "Treasury should receive all penalties");
+            assertEq(address(esMoca).balance, contractMocaBefore - totalClaimable, "Contract should have less moca after claiming penalties");
+            assertEq(esMoca.ACCRUED_PENALTY_TO_VOTERS(), esMoca.CLAIMED_PENALTY_FROM_VOTERS(), "accrued penalties to voters should be equal to claimed penalties from voters");
+            assertEq(esMoca.ACCRUED_PENALTY_TO_TREASURY(), esMoca.CLAIMED_PENALTY_FROM_TREASURY(), "accrued penalties to treasury should be equal to claimed penalties from treasury");
     }
 
     // --------- negative tests: normal functions cannot be called when contract is paused ---------
@@ -1447,7 +1639,7 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
         function testRevert_UserCannot_SelectRedemptionOption_WhenPaused() public {
             vm.startPrank(user1);
             vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption2_60Days, 50 ether);
+            esMoca.selectRedemptionOption{value: 0}(redemptionOption2_60Days, 50 ether, 50 ether);
             vm.stopPrank();
         }
 
@@ -1471,13 +1663,6 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
             vm.startPrank(cronJob);
             vm.expectRevert(Pausable.EnforcedPause.selector);
             esMoca.escrowMocaOnBehalf{value: 100 ether}(users, amounts);
-            vm.stopPrank();
-        }
-
-        function testRevert_AssetManagerCannot_ClaimPenalties_WhenPaused() public {
-            vm.startPrank(assetManager);
-            vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.claimPenalties();
             vm.stopPrank();
         }
 
@@ -1510,9 +1695,14 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
         }
 
         function testRevert_EscrowedMocaAdminCannot_SetWhitelistStatus_WhenPaused() public {
+            // array + bool
+            address[] memory addrs = new address[](1);
+            addrs[0] = user2;
+            bool isWhitelisted = true;
+
             vm.startPrank(escrowedMocaAdmin);
             vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.setWhitelistStatus(user2, true);
+            esMoca.setWhitelistStatus(addrs, isWhitelisted);
             vm.stopPrank();
         }
 
@@ -1523,42 +1713,16 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
             vm.stopPrank();
         }
 
-        function testRevert_User1Cannot_Transfer_WhenPaused() public {
-            vm.startPrank(user1);
-            vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.transfer(user2, 50 ether);
-            vm.stopPrank();
-        }
-
-        function testRevert_UserCannot_TransferFrom_WhenPaused() public {
-            // Setup: user1 approves user2 to spend their tokens
-            vm.startPrank(user1);
-            esMoca.approve(user2, 50 ether);
-            vm.stopPrank();
-
-            vm.startPrank(user2);
-            vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.transferFrom(user1, user2, 50 ether);
-            vm.stopPrank();
-        }
-
-        function testRevert_EmergencyExitHandlerCannot_EmergencyExitPenalties_WhenNotFrozen() public {
-            vm.startPrank(emergencyExitHandler);
-                vm.expectRevert(Errors.NotFrozen.selector);
-                esMoca.emergencyExitPenalties();
-            vm.stopPrank();
-        }
-
 
     // --------- negative tests: unpause() ---------
         function test_MonitorCannot_Unpause() public {
             vm.startPrank(monitor);
-            vm.expectRevert(Errors.OnlyCallableByGlobalAdmin.selector);
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, monitor, esMoca.DEFAULT_ADMIN_ROLE()));
             esMoca.unpause();
             vm.stopPrank();
         }
 
-        function test_MonitorCannot_PauseAgain() public {
+        function testRevert_MonitorCannot_PauseAgain() public {
             vm.startPrank(monitor);
             vm.expectRevert(Pausable.EnforcedPause.selector);
             esMoca.pause();
@@ -1566,6 +1730,7 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
         }
         
     // --------- positive tests: unpause() ---------
+        
         function test_GlobalAdminCan_Unpause() public {
             assertEq(esMoca.paused(), true);
             assertEq(esMoca.isFrozen(), 0);
@@ -1767,64 +1932,32 @@ contract StateT60Days_Frozen_Test is StateT60Days_Frozen {
 
     // --------- tests: emergencyExitPenalties() ---------
 
-        function testRevert_emergencyExitPenalties_TreasuryAddressZero() public {
-            // Mock the accessController to return address(0) for ESCROWED_MOCA_TREASURY
-            vm.mockCall(
-                address(accessController),
-                abi.encodeWithSelector(accessController.ESCROWED_MOCA_TREASURY.selector),
-                abi.encode(address(0))
-            );
 
-            // Verify the mock is working
-            assertEq(accessController.ESCROWED_MOCA_TREASURY(), address(0), "Mock should return address(0)");
-
-            // Attempt to call emergencyExitPenalties - should revert with InvalidAddress
-            vm.prank(emergencyExitHandler);
-            vm.expectRevert(Errors.InvalidAddress.selector);
-            esMoca.emergencyExitPenalties();
-
-            // Clear the mock
-            vm.clearMockedCalls();
-        }
-
-        function testRevert_EmergencyExitHandlerCannot_EmergencyExitPenalties_WhenNoPenalties() public {
-            // First, claim the existing penalties from the setup
-            vm.prank(emergencyExitHandler);
-            esMoca.emergencyExitPenalties();
-            
-            // Verify penalties have been claimed
-            assertEq(esMoca.CLAIMED_PENALTY_FROM_VOTERS(), esMoca.ACCRUED_PENALTY_TO_VOTERS(), "Penalties should be marked as claimed");
-            assertEq(esMoca.CLAIMED_PENALTY_FROM_TREASURY(), esMoca.ACCRUED_PENALTY_TO_TREASURY(), "Penalties should be marked as claimed");
-            
-            // Now try to claim again - should revert with NothingToClaim
-            vm.prank(emergencyExitHandler);
-            vm.expectRevert(Errors.NothingToClaim.selector);
-            esMoca.emergencyExitPenalties();
-        }
-
-        function test_EmergencyExitHandlerCan_EmergencyExitPenalties() public {
+        function test_CronJobCan_ClaimPenalties() public {
+            // Calculate claimable penalty
             uint256 totalPenaltyAccrued = esMoca.ACCRUED_PENALTY_TO_VOTERS() + esMoca.ACCRUED_PENALTY_TO_TREASURY();
             uint256 totalClaimable = totalPenaltyAccrued - esMoca.CLAIMED_PENALTY_FROM_VOTERS() - esMoca.CLAIMED_PENALTY_FROM_TREASURY();
             assertTrue(totalClaimable > 0, "No penalties to claim");
 
-            // before
-            uint256 esMocaTreasuryMocaBefore = esMocaTreasury.balance;
-            uint256 contractNativeMocaBefore = address(esMoca).balance;
-            uint256 esMocaTotalSupplyBefore = esMoca.totalSupply();
+            // Record state before
+            uint256 treasuryBalanceBefore = esMocaTreasury.balance;
+            uint256 contractBalanceBefore = address(esMoca).balance;
+            uint256 totalSupplyBefore = esMoca.totalSupply();
 
+            // Expect event from cronjob calling claimPenalties
             vm.expectEmit(true, true, false, true, address(esMoca));
-            emit Events.EmergencyExitPenalties(esMocaTreasury, totalClaimable);
+            emit Events.PenaltyClaimed(esMocaTreasury, totalClaimable);
 
-            vm.prank(emergencyExitHandler);
-            esMoca.emergencyExitPenalties();
+            vm.startPrank(cronJob);
+            esMoca.claimPenalties();
+            vm.stopPrank();
 
-            // after: treasury + contract
-            assertEq(esMocaTreasury.balance, esMocaTreasuryMocaBefore + totalClaimable, "Treasury should receive penalties");
-            assertEq(address(esMoca).balance, contractNativeMocaBefore - totalClaimable, "Contract native moca balance should decrease by total sent");
-            // totalSupply should remain unchanged - emergencyExitPenalties does not burn tokens
-            assertEq(esMoca.totalSupply(), esMocaTotalSupplyBefore, "esMoca totalSupply should remain unchanged");
-            // counters should match
-            assertEq(esMoca.CLAIMED_PENALTY_FROM_VOTERS(), esMoca.ACCRUED_PENALTY_TO_VOTERS(), "Penalties should be marked as claimed");
-            assertEq(esMoca.CLAIMED_PENALTY_FROM_TREASURY(), esMoca.ACCRUED_PENALTY_TO_TREASURY(), "Penalties should be marked as claimed");
+            // After: treasury increases, contract decreases, supply unchanged
+            assertEq(esMocaTreasury.balance, treasuryBalanceBefore + totalClaimable, "Treasury should receive penalties");
+            assertEq(address(esMoca).balance, contractBalanceBefore - totalClaimable, "Contract Moca reduced by penalties claimed");
+            assertEq(esMoca.totalSupply(), totalSupplyBefore, "esMoca totalSupply unchanged");
+
+            assertEq(esMoca.CLAIMED_PENALTY_FROM_VOTERS(), esMoca.ACCRUED_PENALTY_TO_VOTERS(), "Penalty claimed for voters");
+            assertEq(esMoca.CLAIMED_PENALTY_FROM_TREASURY(), esMoca.ACCRUED_PENALTY_TO_TREASURY(), "Penalty claimed for treasury");
         }
 }

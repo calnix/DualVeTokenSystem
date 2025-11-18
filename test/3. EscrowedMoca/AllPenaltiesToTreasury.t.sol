@@ -49,7 +49,7 @@ contract AllPenaltiesToTreasury_Test is AllPenaltiesToTreasury {
                 vm.expectEmit(true, true, false, true, address(esMoca));
                 emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
 
-                esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount);
+                esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount, expectedMocaReceivable);
             vm.stopPrank();
             
             // --- Assert immediate effects ---
@@ -67,10 +67,8 @@ contract AllPenaltiesToTreasury_Test is AllPenaltiesToTreasury {
             uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
             uint256 expectedPenalty = redemptionAmount - expectedMocaReceivable;
             
-            (uint256 mocaReceivable, uint256 penalty, uint256 claimed) = esMoca.redemptionSchedule(user1, block.timestamp + lockDuration);
+            uint256 mocaReceivable = esMoca.redemptionSchedule(user1, block.timestamp + lockDuration);
             assertEq(mocaReceivable, expectedMocaReceivable, "redemption schedule: mocaReceivable wrong");
-            assertEq(claimed, 0, "redemption schedule: claimed should be 0");
-            assertEq(penalty, expectedPenalty, "redemption schedule: penalty wrong");
         }
     }
     
