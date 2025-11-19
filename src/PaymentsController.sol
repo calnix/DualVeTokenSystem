@@ -492,17 +492,16 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     /**
      * @notice Generic function to update the asset manager address for either an issuer or a verifier.
      * @dev Caller must be the admin of the provided ID. IDs are unique across types, preventing cross-updates.
-     * @param entity The address of the entity to update the asset manager address for.
      * @param newAssetManagerAddress The new asset manager address to set.
-     * @param isIssuer Whether the entity belongs to an issuer or a verifier.
+     * @param isIssuer Whether the caller belongs to an issuer or a verifier.
      * @return newAssetManagerAddress The updated asset manager address.
      */
-    function updateAssetManagerAddress(address entity, address newAssetManagerAddress, bool isIssuer) external returns (address) {
+    function updateAssetManagerAddress(address newAssetManagerAddress, bool isIssuer) external returns (address) {
         require(newAssetManagerAddress != address(0), Errors.InvalidAddress());
 
         if(isIssuer) {
             // cache pointer
-            DataTypes.Issuer storage issuerPtr = _issuers[entity];
+            DataTypes.Issuer storage issuerPtr = _issuers[msg.sender];
             
             // sanity check that the issuer exists
             require(issuerPtr.assetManagerAddress != address(0), Errors.IssuerDoesNotExist());
@@ -512,7 +511,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
         } else {
             // cache pointer
-            DataTypes.Verifier storage verifierPtr = _verifiers[entity];
+            DataTypes.Verifier storage verifierPtr = _verifiers[msg.sender];
             
             // sanity check that the verifier exists
             require(verifierPtr.assetManagerAddress != address(0), Errors.VerifierDoesNotExist());
@@ -521,7 +520,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             verifierPtr.assetManagerAddress = newAssetManagerAddress;
         }
 
-        emit Events.AssetManagerAddressUpdated(entity, newAssetManagerAddress);
+        emit Events.AssetManagerAddressUpdated(msg.sender, newAssetManagerAddress);
         return newAssetManagerAddress;
     }
 
