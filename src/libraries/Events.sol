@@ -112,29 +112,29 @@ library Events {
     event EmergencyExit(address indexed treasury);
 
 // --------- PaymentsController.sol ---------
-    event IssuerCreated(bytes32 indexed issuerId, address adminAddress, address assetAddress);
-    event VerifierCreated(bytes32 indexed verifierId, address adminAddress, address signerAddress, address assetAddress);
-    event SchemaCreated(bytes32 indexed schemaId, bytes32 issuerId, uint256 fee);
+    event IssuerCreated(address indexed issuer, address assetManagerAddress);
+    event VerifierCreated(address indexed verifier, address signerAddress, address assetManagerAddress);
+    event SchemaCreated(bytes32 indexed schemaId, address indexed issuer, uint256 fee);
     // updateSchemaFee
     event SchemaFeeReduced(bytes32 indexed schemaId, uint256 newFee, uint256 currentFee);
     event SchemaNextFeeSet(bytes32 indexed schemaId, uint256 newFee, uint256 nextFeeTimestamp, uint256 currentFee);
     event SchemaFeeIncreased(bytes32 indexed schemaId, uint256 oldFee, uint256 newFee);
     // claimFees
-    event IssuerFeesClaimed(bytes32 indexed issuerId, uint256 claimableFees);
+    event IssuerFeesClaimed(address indexed issuer, uint256 claimableFees);
 
     // verifier: deposit(), withdraw(), stakeMoca(), unstakeMoca()
-    event VerifierDeposited(bytes32 indexed verifierId, address indexed assetAddress, uint128 amount);
-    event VerifierWithdrew(bytes32 indexed verifierId, address indexed assetAddress, uint128 amount);
-    event VerifierMocaStaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
-    event VerifierMocaUnstaked(bytes32 indexed verifierId, address assetAddress, uint256 amount);
-    event VerifierSignerAddressUpdated(bytes32 indexed verifierId, address signerAddress);
+    event VerifierDeposited(address indexed verifier, address indexed assetManagerAddress, uint128 amount);
+    event VerifierWithdrew(address indexed verifier, address indexed assetManagerAddress, uint128 amount);
+    event VerifierMocaStaked(address indexed verifier, address indexed assetManagerAddress, uint256 amount);
+    event VerifierMocaUnstaked(address indexed verifier, address indexed assetManagerAddress, uint256 amount);
+    event VerifierSignerAddressUpdated(address indexed verifier, address newSignerAddress);
 
     // updateAssetManagerAddress
-    event AssetManagerAddressUpdated(bytes32 indexed verifierOrIssuerId, address newAssetAddress);
+    event AssetManagerAddressUpdated(address indexed verifierOrIssuer, address newAssetAddress);
 
     // deductBalance()
-    event SubsidyBooked(bytes32 indexed verifierId, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
-    event BalanceDeducted(bytes32 indexed verifierId, bytes32 indexed schemaId, bytes32 indexed issuerId, uint256 amount);
+    event SubsidyBooked(address indexed verifier, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
+    event BalanceDeducted(address indexed verifier, bytes32 indexed schemaId, address indexed issuer, uint256 amount);
     event SchemaVerified(bytes32 indexed schemaId);
     event SchemaVerifiedZeroFee(bytes32 indexed schemaId);
 
@@ -164,8 +164,8 @@ library Events {
     event PaymentsControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
 
     // emergencyExit
-    event EmergencyExitIssuers(bytes32[] issuerIds);
-    event EmergencyExitVerifiers(bytes32[] verifierIds);
+    event EmergencyExitIssuers(address[] issuers);
+    event EmergencyExitVerifiers(address[] verifiers);
     event EmergencyExitFees(address indexed treasury, uint256 totalUnclaimedFees);
 
 // --------- AccessController.sol ---------

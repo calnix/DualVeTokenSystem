@@ -301,46 +301,17 @@ abstract contract TestingHarness is Test {
         return paymentsController.getVerifierNonce(signerAddress, userAddress);
     }
 
-
-    /// @notice Deterministically generates an unused issuerId based on issuer and salt
-    /// @dev Tries salt, salt+1, salt+2, ... until an unused id is found.
-    function generateUnusedIssuerId(address caller) public view returns (bytes32 issuerId) {
-        uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.ISSUER); 
-        issuerId = keccak256(abi.encode("ISSUER", caller, salt));
-        while (
-            paymentsController.getIssuer(issuerId).adminAddress != address(0) ||
-            paymentsController.getVerifier(issuerId).adminAddress != address(0) ||
-            paymentsController.getSchema(issuerId).issuerId != bytes32(0)
-        ) {
-            issuerId = keccak256(abi.encode("ISSUER", caller, ++salt));
-        }
-    }
-
-    function generateUnusedVerifierId(address caller) public view returns (bytes32 verifierId) {
-        uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.VERIFIER); 
-        verifierId = keccak256(abi.encode("VERIFIER", caller, salt));
-        while (
-            paymentsController.getIssuer(verifierId).adminAddress != address(0) 
-            || paymentsController.getVerifier(verifierId).adminAddress != address(0)
-            || paymentsController.getSchema(verifierId).issuerId != bytes32(0)
-        ) {
-            verifierId = keccak256(abi.encode("VERIFIER", caller, ++salt));
-        }
-    }
     
     // Mimic PaymentsController's createSchema salt logic
-    function generateUnusedSchemaId(address caller, bytes32 issuerId) public view returns (bytes32 schemaId) {
-        uint256 salt = paymentsController.getCallerNonce(caller, DataTypes.EntityType.SCHEMA) + 1; 
-        uint256 totalSchemas = paymentsController.getIssuer(issuerId).totalSchemas;
+    function generateUnusedSchemaId(address issuerAdminAddress) public view returns (bytes32 schemaId) {
+        uint256 salt = paymentsController.getIssuerSchemaNonce(issuerAdminAddress); 
+        uint256 totalSchemas = paymentsController.getIssuer(issuerAdminAddress).totalSchemas;
 
-        schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, salt));
-        while (
-            paymentsController.getIssuer(schemaId).adminAddress != address(0)
-            || paymentsController.getVerifier(schemaId).adminAddress != address(0)
-            || paymentsController.getSchema(schemaId).issuerId != bytes32(0)
-        ) {
-            schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, ++salt));
+        schemaId = keccak256(abi.encode("SCHEMA", issuerAdminAddress, totalSchemas, salt));
+        while (paymentsController.getSchema(schemaId).issuer != address(0)) {
+            schemaId = keccak256(abi.encode("SCHEMA", issuerAdminAddress, totalSchemas, ++salt));
         }
+        return schemaId;
     }
 
     /**

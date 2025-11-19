@@ -12,18 +12,12 @@ library DataTypes {
 
 // --------- PaymentsController.sol -------
 
-    enum EntityType {
-        ISSUER,    //0
-        VERIFIER,  //1
-        SCHEMA     //2
-    }
-
     struct Issuer {
-        address adminAddress;              // for interacting w/ contract 
+        //address adminAddress;              // for interacting w/ contract 
         address assetManagerAddress;       // for claiming fees 
                 
         // credentials
-        uint128 totalVerified; // incremented on each verification
+        uint128 totalVerified;            // incremented on each verification
         
         // USD8 | 6dp precision
         uint128 totalNetFeesAccrued;    // net of protocol and voter fees
@@ -33,7 +27,7 @@ library DataTypes {
     }
 
     struct Verifier {
-        address adminAddress;           // msg.sender   
+        //address adminAddress;           // msg.sender   
         address assetManagerAddress;    // used for both deposit/withdrawing fees + staking Moca
         address signerAddress;
 
@@ -46,7 +40,7 @@ library DataTypes {
     }
 
     struct Schema {
-        bytes32 issuerId;
+        address issuer;
         
         // fees are expressed in USD8 terms | 6dp precision
         uint128 currentFee;

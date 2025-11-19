@@ -11,10 +11,10 @@ import {DataTypes} from "../libraries/DataTypes.sol";
 interface IPaymentsController {
 
     // ----- View Functions -----
-    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address callerAddress, DataTypes.EntityType entityType) external view returns (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies);
-    function getIssuer(bytes32 issuerId) external view returns (DataTypes.Issuer memory);
+    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier, address caller) external view returns (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies);
+    function getIssuer(address issuer) external view returns (DataTypes.Issuer memory);
     function getSchema(bytes32 schemaId) external view returns (DataTypes.Schema memory);
-    function getVerifier(bytes32 verifierId) external view returns (DataTypes.Verifier memory);
+    function getVerifier(address verifier) external view returns (DataTypes.Verifier memory);
     function getVerifierNonce(address signerAddress, address userAddress) external view returns (uint256);
     function getEligibleSubsidyPercentage(uint256 mocaStaked) external view returns (uint256);
     function getAllSubsidyTiers() external view returns (DataTypes.SubsidyTier[10] memory);
@@ -26,7 +26,7 @@ interface IPaymentsController {
 
     function getEpochFeesAccrued(uint256 epoch) external view returns (DataTypes.FeesAccrued memory);
 
-    function getCallerNonce(address caller, DataTypes.EntityType entityType) external view returns (uint256);
+    function getIssuerSchemaNonce(address issuer) external view returns (uint256);
 
     // ----- AssetManager: deposit/withdraw for verifiers -----
     function deposit(bytes32 verifierId, uint128 amount) external;

@@ -76,35 +76,32 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
 //------------------------------- Mappings -----------------------------------------------------
     
-    // issuer, verifier, schema
-    mapping(bytes32 issuerId => DataTypes.Issuer issuer) internal _issuers;
-    mapping(bytes32 schemaId => DataTypes.Schema schema) internal _schemas;
-    mapping(bytes32 verifierId => DataTypes.Verifier verifier) internal _verifiers;
+    // issuer, verifier: address are adminAddresses
+    mapping(address issuerAdminAddress => DataTypes.Issuer issuer) internal _issuers;
+    mapping(address verifierAdminAddress => DataTypes.Verifier verifier) internal _verifiers;
 
+    // schema: deterministic id generation
+    mapping(bytes32 schemaId => DataTypes.Schema schema) internal _schemas;
+    
     // nonces for preventing race conditions [ECDSA.sol::recover handles sig.malfunctions]
     // we do not store this in verifier struct since signerAddress is updatable
     mapping(address signerAddress => mapping(address userAddress => uint256 nonce)) internal _verifierNonces;
+
+    // logs nonce for salt used for deterministic schema id generation
+    mapping(address issuerAdminAddress => uint256 nonce) internal _issuerSchemaNonce;
 
     // Staking tiers: determines subsidy percentage for each verifier | admin fn will setup the tiers
     DataTypes.SubsidyTier[10] internal _subsidyTiers;
 
 
     // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
-    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) internal _epochPoolSubsidies;                                                     // totalSubsidiesPerPoolPerEpoch
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(bytes32 verifierId => uint256 verifierTotalSubsidies))) internal _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
+    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) internal _epochPoolSubsidies;                                                               // totalSubsidiesPerPoolPerEpoch
+    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifierAdminAddress => uint256 verifierTotalSubsidies))) internal _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
     
     // To track fees accrued to each pool, per epoch | for voting rewards tracking
     mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) internal _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
     mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) internal _epochFeesAccrued;    
-
-    // logs nonce for salt used for deterministic id generation [each caller has a nonce for each entity type]
-    // nonce stored is used to generate the previous id for the entity [instead of incrementing for the next id; to standardize the id generation process]
-    mapping(address callerAddress => mapping(DataTypes.EntityType entityType => uint256 nonce)) internal _adminNonces;
-
-    // track issuer/verifier IDs per admin address [enforces one-to-one relationship between admin and issuer/verifier IDs]
-    mapping(address adminAddress => mapping(DataTypes.EntityType entityType => bytes32 id)) internal _adminToEntityId;
-
     
     // whitelist of pools [pseudo verification that poolId actually exists in VotingController]
     mapping(bytes32 poolId => bool isWhitelisted) internal _votingPools;
@@ -191,99 +188,65 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
 
     /**
-     * @notice Generates and registers a new issuer with a unique issuerId.
-     * @dev The issuerId is derived from msg.sender, ensuring uniqueness across issuers, verifiers, and schemas.
-     *      Each address can only be the admin of a single issuer [and a single verifier]
+     * @notice Creates a new issuer.
+     * @dev Each address can only be the admin of a single issuer [and a single verifier]
      * @param assetManagerAddress The address where issuer fees will be claimed.
-     * @return issuerId The unique identifier assigned to the new issuer.
      */
-    function createIssuer(address assetManagerAddress) external whenNotPaused returns (bytes32) {
+    function createIssuer(address assetManagerAddress) external whenNotPaused {
         require(assetManagerAddress != address(0), Errors.InvalidAddress());
         
         // check if issuer already exists
-        require(_adminToEntityId[msg.sender][DataTypes.EntityType.ISSUER] == bytes32(0), Errors.IssuerAlreadyExists());
-
-        bytes32 issuerId;
-        uint256 salt;
-        // deterministic id generation: check if id already exists in ANY of the three mappings
-        {
-            // get current nonce
-            salt = _adminNonces[msg.sender][DataTypes.EntityType.ISSUER];
-
-            issuerId = keccak256(abi.encode("ISSUER", msg.sender, salt));
-            while (
-                _issuers[issuerId].adminAddress != address(0) 
-                || _verifiers[issuerId].adminAddress != address(0) 
-                || _schemas[issuerId].issuerId != bytes32(0)
-            ) {
-                // increment nonce and generate new id
-                issuerId = keccak256(abi.encode("ISSUER", msg.sender, ++salt));
-            }
-        }
-
-        // log nonce used for id generation [for deterministic id generation]
-        _adminNonces[msg.sender][DataTypes.EntityType.ISSUER] = salt;
-
-        // track issuer ID for msg.sender [adminAddress]
-        _adminToEntityId[msg.sender][DataTypes.EntityType.ISSUER] = issuerId;
+        require(_issuers[msg.sender].assetManagerAddress == address(0), Errors.IssuerAlreadyExists());
 
         // STORAGE: setup issuer
-        DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
-        issuerPtr.adminAddress = msg.sender;
-        issuerPtr.assetManagerAddress = assetManagerAddress;
+        _issuers[msg.sender].assetManagerAddress = assetManagerAddress;
         
-        emit Events.IssuerCreated(issuerId, msg.sender, assetManagerAddress);
-
-        return issuerId;
+        emit Events.IssuerCreated(msg.sender, assetManagerAddress);
     }
 
-
+ 
     /**
      * @notice Creates a new schema for the specified issuer.
-     * @dev Only the issuer admin can call this function. The schemaId is generated to be unique.
-     * @param issuerId The unique id of the issuer creating the schema.
+     * @dev Only the issuer can call this function. The schemaId is generated to be unique.
      * @param fee The fee for the schema, expressed in USD8 (6 decimals).
-     * @return schemaId The unique id assigned to the new schema.
      */
-    function createSchema(bytes32 issuerId, uint128 fee) external whenNotPaused returns (bytes32) {
-        // caller must be issuer's admin address
-        require(_issuers[issuerId].adminAddress == msg.sender, Errors.InvalidCaller());
-
+    function createSchema(uint128 fee) external whenNotPaused returns (bytes32) {
+        // issuer must exist
+        require(_issuers[msg.sender].assetManagerAddress != address(0), Errors.IssuerDoesNotExist());
+        
         // sanity check: fee cannot be greater than 10_000 USD8
         // fee is an absolute value expressed in USD8 terms | free credentials are allowed
         require(fee < 10_000 * Constants.USD8_PRECISION, Errors.InvalidAmount());
 
-        // deterministic id generation: check if schemaId already exists in ANY of the three mappings
-        uint256 totalSchemas = _issuers[issuerId].totalSchemas;
+        // deterministic id generation: check if schemaId already exists; if so increment salt
+        uint256 totalSchemas = _issuers[msg.sender].totalSchemas;
         bytes32 schemaId;
         uint256 salt;
         {
             // get current nonce
-            salt = _adminNonces[msg.sender][DataTypes.EntityType.SCHEMA] + 1;
+            salt = _issuerSchemaNonce[msg.sender];
             
-            schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, salt));
-            while (
-                _issuers[schemaId].adminAddress != address(0) 
-                || _verifiers[schemaId].adminAddress != address(0) 
-                || _schemas[schemaId].issuerId != bytes32(0)
-            ) {
+            schemaId = keccak256(abi.encode("SCHEMA", msg.sender, totalSchemas, salt));
+            
+            // if non-zero; this schemaId has been taken
+            while (_schemas[schemaId].issuer != address(0)) {
                 // increment nonce and generate new id
-                schemaId = keccak256(abi.encode("SCHEMA", issuerId, totalSchemas, ++salt));
+                schemaId = keccak256(abi.encode("SCHEMA", msg.sender, totalSchemas, ++salt));
             }
         }
 
-        // log nonce used for id generation [for deterministic id generation]
-        _adminNonces[msg.sender][DataTypes.EntityType.SCHEMA] = salt;
+        // increment nonce for next schemaId generation
+        _issuerSchemaNonce[msg.sender] = ++salt;
 
         // Increment schema count for issuer
-        ++_issuers[issuerId].totalSchemas;
+        ++_issuers[msg.sender].totalSchemas;
 
         // STORAGE: create schema
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
-        schemaPtr.issuerId = issuerId;
+        schemaPtr.issuer = msg.sender;
         schemaPtr.currentFee = fee;
 
-        emit Events.SchemaCreated(schemaId, issuerId, fee);
+        emit Events.SchemaCreated(schemaId, msg.sender, fee);
 
         return schemaId;
     }
@@ -298,12 +261,12 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     function updateSchemaFee(bytes32 schemaId, uint128 newFee) external whenNotPaused returns (uint256) {        
         // cache pointers
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
-        DataTypes.Issuer storage issuerPtr = _issuers[schemaPtr.issuerId];
 
-        // caller must be issuer's admin address [also serves as sanity check that the issuer and schema exist]
-        require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+        // sanity check: schema belongs to issuer[msg.sender] | [implicitly checks if schema exists]
+        require(schemaPtr.issuer == msg.sender, Errors.InvalidSchema());
 
         // sanity check: fee cannot be greater than 10,000 USD8 | free credentials are allowed
+        // 10_000 is an arbitrary large value selected
         require(newFee < 10_000 * Constants.USD8_PRECISION, Errors.InvalidAmount());
 
         // if new fee is the same as the current fee, revert
@@ -337,21 +300,20 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
     /**
      * @notice Claims all unclaimed verification fees for a given issuer.
-     * @dev Only callable by the issuer's asset manager address. Transfers the total unclaimed fees to the issuer.
+     * @dev Only callable by the issuer's asset manager address; to which the total unclaimed fees are transferred.
      * - Caller must match the issuer's asset manager address.
      * - There must be claimable fees available.
-     * @param issuerId The unique identifier of the issuer to claim fees for.
+     * @param issuer The address of the issuer to claim fees for.
      */
-    function claimFees(bytes32 issuerId) external whenNotPaused {
+    function claimFees(address issuer) external whenNotPaused {
         // cache pointers
-        DataTypes.Issuer storage issuerPtr = _issuers[issuerId];
-
+        DataTypes.Issuer storage issuerPtr = _issuers[issuer];
+        
         // caller must be issuer's asset manager address
         require(issuerPtr.assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
+        // sanity check: issuer has claimable fees
         uint256 claimableFees = issuerPtr.totalNetFeesAccrued - issuerPtr.totalClaimed;
-
-        // check if issuer has claimable fees
         require(claimableFees > 0, Errors.NoClaimableFees());
 
         // overwrite .totalClaimed with .totalNetFeesAccrued
@@ -360,7 +322,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         // update global counter
         TOTAL_CLAIMED_VERIFICATION_FEES += claimableFees;
 
-        emit Events.IssuerFeesClaimed(issuerId, claimableFees);
+        emit Events.IssuerFeesClaimed(issuer, claimableFees);
 
         // transfer fees to issuer
         USD8.safeTransfer(msg.sender, claimableFees);
@@ -370,53 +332,24 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 //------------------------------- Verifier functions---------------------------------------------------------------
 
     /**
-     * @notice Generates and registers a new verifier with a unique verifierId.
-     * @dev The verifierId is derived from msg.sender, ensuring uniqueness across issuers, verifiers, and schemas.
-     *      Each address can only be the admin of a single verifier [and a single issuer]
+     * @notice Creates a new verifier.
+     * @dev Each address can only be the admin of a single verifier [and a single issuer]
      * @param signerAddress The address of the signer of the verifier.
      * @param assetManagerAddress The address where verifier fees will be claimed.
-     * @return verifierId The unique identifier assigned to the new verifier.
      */
-    function createVerifier(address signerAddress, address assetManagerAddress) external whenNotPaused returns (bytes32) {
+    function createVerifier(address signerAddress, address assetManagerAddress) external whenNotPaused {
         require(signerAddress != address(0), Errors.InvalidAddress());
         require(assetManagerAddress != address(0), Errors.InvalidAddress());
 
-        // check if caller already has a verifier
-        require(_adminToEntityId[msg.sender][DataTypes.EntityType.VERIFIER] == bytes32(0), Errors.VerifierAlreadyExists());
-
-        bytes32 verifierId;
-        uint256 salt;
-        // deterministic id generation: check if id already exists in ANY of the three mappings
-        {
-            // increment nonce and generate new id
-            salt = _adminNonces[msg.sender][DataTypes.EntityType.VERIFIER];
-
-            verifierId = keccak256(abi.encode("VERIFIER", msg.sender, salt));
-            while (
-                _issuers[verifierId].adminAddress != address(0) 
-                || _verifiers[verifierId].adminAddress != address(0)
-                || _schemas[verifierId].issuerId != bytes32(0)
-            ) {
-                // increment nonce and generate new id
-                verifierId = keccak256(abi.encode("VERIFIER", msg.sender, ++salt));
-            }
-        }
-
-        // log nonce used for id generation [for deterministic id generation]
-        _adminNonces[msg.sender][DataTypes.EntityType.VERIFIER] = salt;
-
-        // track verifier ID for msg.sender [adminAddress]
-        _adminToEntityId[msg.sender][DataTypes.EntityType.VERIFIER] = verifierId;
+        // check if verifier already exists
+        require(_verifiers[msg.sender].assetManagerAddress == address(0), Errors.VerifierAlreadyExists());
 
         // STORAGE: create verifier
-        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
-        verifierPtr.adminAddress = msg.sender;
+        DataTypes.Verifier storage verifierPtr = _verifiers[msg.sender];
         verifierPtr.signerAddress = signerAddress;
         verifierPtr.assetManagerAddress = assetManagerAddress;
 
-        emit Events.VerifierCreated(verifierId, msg.sender, signerAddress, assetManagerAddress);
-
-        return verifierId;
+        emit Events.VerifierCreated(msg.sender, signerAddress, assetManagerAddress);
     }
 
 
@@ -424,23 +357,22 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Deposits USD8 into the verifier's balance.
      * @dev Only callable by the verifier's asset manager address. Increases the verifier's balance.
      * - Caller must match the verifier's asset manager address.
-     * @param verifierId The unique identifier of the verifier to deposit for.
+     * @param verifier The address of the verifier to deposit for.
      * @param amount The amount of USD8 to deposit.
      */
-    function deposit(bytes32 verifierId, uint128 amount) external whenNotPaused {
+    function deposit(address verifier, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
         
         // cache pointer
-        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifier];
 
         // caller must be verifier's asset manager address
-        address assetManagerAddress = verifierPtr.assetManagerAddress;
-        require(assetManagerAddress == msg.sender, Errors.InvalidCaller());
+        require(verifierPtr.assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
         // STORAGE: update balance
         verifierPtr.currentBalance += amount;
 
-        emit Events.VerifierDeposited(verifierId, assetManagerAddress, amount);
+        emit Events.VerifierDeposited(verifier, msg.sender, amount);
 
         // transfer funds to verifier
         USD8.safeTransferFrom(msg.sender, address(this), amount);
@@ -451,18 +383,17 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Withdraws USD8 from the verifier's balance.
      * @dev Only callable by the verifier's asset manager address. Decreases the verifier's balance.
      * - Caller must match the verifier's asset manager address.
-     * @param verifierId The unique identifier of the verifier to withdraw from.
+     * @param verifier The address of the verifier to withdraw from.
      * @param amount The amount of USD8 to withdraw.
      */
-    function withdraw(bytes32 verifierId, uint128 amount) external whenNotPaused {
+    function withdraw(address verifier, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
         // cache pointer
-        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifier];
 
         // caller must be verifier's asset manager address
-        address assetManagerAddress = verifierPtr.assetManagerAddress;
-        require(assetManagerAddress == msg.sender, Errors.InvalidCaller());
+        require(verifierPtr.assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
         // check if verifier has enough balance
         uint128 balance = verifierPtr.currentBalance;
@@ -471,7 +402,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         // STORAGE: update balance
         verifierPtr.currentBalance -= amount;
 
-        emit Events.VerifierWithdrew(verifierId, assetManagerAddress, amount);
+        emit Events.VerifierWithdrew(verifier, msg.sender, amount);
 
         // transfer funds to verifier
         USD8.safeTransfer(msg.sender, amount);
@@ -480,49 +411,48 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     /**
      * @notice Updates the signer address for a verifier.
      * @dev Only callable by the verifier's admin address. The new signer address must be non-zero and different from the current one.
-     * @param verifierId The unique identifier of the verifier.
-     * @param signerAddress The new signer address to set.
+     * @param newSignerAddress The new signer address to set.
      */
-    function updateSignerAddress(bytes32 verifierId, address signerAddress) external whenNotPaused {
-        require(signerAddress != address(0), Errors.InvalidAddress());
+    function updateSignerAddress(address newSignerAddress) external whenNotPaused {
+        require(newSignerAddress != address(0), Errors.InvalidAddress());
 
         // cache pointer
-        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+        DataTypes.Verifier storage verifierPtr = _verifiers[msg.sender];
+        address currentSignerAddress = verifierPtr.signerAddress;
 
-        // caller must be verifier's admin address
-        require(verifierPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+        // check if verifier exists
+        require(currentSignerAddress != address(0), Errors.VerifierDoesNotExist());
 
         // check if new signer address is different from current one
-        require(verifierPtr.signerAddress != signerAddress, Errors.InvalidAddress());
+        require(currentSignerAddress != newSignerAddress, Errors.InvalidAddress());
 
         // update signer address
-        verifierPtr.signerAddress = signerAddress;
+        verifierPtr.signerAddress = newSignerAddress;
 
-        emit Events.VerifierSignerAddressUpdated(verifierId, signerAddress);
+        emit Events.VerifierSignerAddressUpdated(msg.sender, newSignerAddress);
     }
 
 
     /**
      * @notice Stakes MOCA for a verifier. Accepts native MOCA via msg.value.
      * @dev Only callable by the verifier's assetManagerAddress address. Increases the verifier's moca staked.
-     * @param verifierId The unique identifier of the verifier to stake MOCA for.
+     * @param verifier The address of the verifier to stake MOCA for.
      */
-    function stakeMoca(bytes32 verifierId) external payable whenNotPaused {
+    function stakeMoca(address verifier) external payable whenNotPaused {
         uint128 amount = uint128(msg.value);
         require(amount > 0, Errors.InvalidAmount());
 
         // cache pointer
-        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifier];
         
         // caller must be verifier's asset manager address
-        address assetManagerAddress = verifierPtr.assetManagerAddress;
-        require(assetManagerAddress == msg.sender, Errors.InvalidCaller());
+        require(verifierPtr.assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
         // STORAGE: update moca staked
         verifierPtr.mocaStaked += amount;
         TOTAL_MOCA_STAKED += amount;
 
-        emit Events.VerifierMocaStaked(verifierId, assetManagerAddress, amount);
+        emit Events.VerifierMocaStaked(verifier, msg.sender, amount);
     }
 
 
@@ -530,14 +460,14 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Unstakes MOCA for a verifier.
      * @dev Only callable by the verifier's asset manager address. Decreases the verifier's moca staked.
      *      Transfers native MOCA via msg.value; if transfer fails within gas limit, wraps to wMoca and transfers the wMoca to verifier.
-     * @param verifierId The unique identifier of the verifier to unstake MOCA for.
+     * @param verifier The address of the verifier to unstake MOCA for.
      * @param amount The amount of MOCA to unstake.
      */
-    function unstakeMoca(bytes32 verifierId, uint128 amount) external payable whenNotPaused {
+    function unstakeMoca(address verifier, uint128 amount) external payable whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
         // cache pointer
-        DataTypes.Verifier storage verifierPtr = _verifiers[verifierId];
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifier];
 
         // caller must be verifier's asset manager address
         address assetManagerAddress = verifierPtr.assetManagerAddress;
@@ -553,44 +483,45 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         // transfer moca to issuer [wraps if transfer fails within gas limit]
         _transferMocaAndWrapIfFailWithGasLimit(WMOCA, assetManagerAddress, amount, MOCA_TRANSFER_GAS_LIMIT);
 
-        emit Events.VerifierMocaUnstaked(verifierId, assetManagerAddress, amount);
+        emit Events.VerifierMocaUnstaked(verifier, assetManagerAddress, amount);
     }
 
 //------------------------------- updateAssetManagerAddress: common to both issuer and verifier ------------------
 
+    //note: can be called during paused state, for use during emergency exit operations
     /**
      * @notice Generic function to update the asset manager address for either an issuer or a verifier.
      * @dev Caller must be the admin of the provided ID. IDs are unique across types, preventing cross-updates.
-     * @param id The unique identifier (issuerId or verifierId).
+     * @param entity The address of the entity to update the asset manager address for.
      * @param newAssetManagerAddress The new asset manager address to set.
-     * @param isIssuer Whether the ID belongs to an issuer or a verifier.
+     * @param isIssuer Whether the entity belongs to an issuer or a verifier.
      * @return newAssetManagerAddress The updated asset manager address.
      */
-    function updateAssetManagerAddress(bytes32 id, address newAssetManagerAddress, bool isIssuer) external whenNotPaused returns (address) {
+    function updateAssetManagerAddress(address entity, address newAssetManagerAddress, bool isIssuer) external returns (address) {
         require(newAssetManagerAddress != address(0), Errors.InvalidAddress());
 
         if(isIssuer) {
             // cache pointer
-            DataTypes.Issuer storage issuerPtr = _issuers[id];
+            DataTypes.Issuer storage issuerPtr = _issuers[entity];
             
-            // caller must be issuer's admin address [also serves as sanity check that the issuer exists]
-            require(issuerPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+            // sanity check that the issuer exists
+            require(issuerPtr.assetManagerAddress != address(0), Errors.IssuerDoesNotExist());
 
             // update asset manager address
             issuerPtr.assetManagerAddress = newAssetManagerAddress;
 
         } else {
             // cache pointer
-            DataTypes.Verifier storage verifierPtr = _verifiers[id];
+            DataTypes.Verifier storage verifierPtr = _verifiers[entity];
             
-            // caller must be verifier's admin address [also serves as sanity check that the verifier exists]
-            require(verifierPtr.adminAddress == msg.sender, Errors.InvalidCaller());
+            // sanity check that the verifier exists
+            require(verifierPtr.assetManagerAddress != address(0), Errors.VerifierDoesNotExist());
 
             // update asset manager address
             verifierPtr.assetManagerAddress = newAssetManagerAddress;
         }
 
-        emit Events.AssetManagerAddressUpdated(id, newAssetManagerAddress);
+        emit Events.AssetManagerAddressUpdated(entity, newAssetManagerAddress);
         return newAssetManagerAddress;
     }
 
@@ -598,116 +529,138 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
     /**
      * @notice Deducts the verifier's balance for a verification, distributing protocol and voting fees.
-     * @dev Gas optimized: minimizes storage reads/writes, by employing a hybrid storage-memory optimization pattern, and unchecked math where safe.
-     *      Validates signature, updates schema fee if needed, and increments verifier nonce.
-     * @param verifierId The unique identifier of the verifier.
+     * @dev Validates signature, updates schema fee if needed, and increments verifier nonce.
+     * @param verifier The address of the verifier.
      * @param schemaId The unique identifier of the schema.
      * @param amount The fee amount to deduct (must match current schema fee).
      * @param expiry The signature expiry timestamp.
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
-    function deductBalance(bytes32 verifierId, address userAddress, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
+    function deductBalance(address verifier, address userAddress, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
         require(expiry > block.timestamp, Errors.SignatureExpired()); 
         require(amount > 0, Errors.InvalidAmount());
         
-        // cache schema in memory (saves ~800 gas)
+        // cache schema
         DataTypes.Schema storage schemaStorage = _schemas[schemaId];
 
-        // get issuer id from schema + check if schema is valid
-        bytes32 issuerId = schemaStorage.issuerId;
-        require(issuerId != bytes32(0), Errors.InvalidIssuer());
+        // get issuer address from schema + check if schema exists
+        address issuer = schemaStorage.issuer;
+        require(issuer != address(0), Errors.InvalidSchema());
 
         //----- NextFee check -----
         uint128 currentFee = _updateSchemaFeeIfNeeded(schemaStorage, schemaId);
 
 
-        // Cache verifier data
-        DataTypes.Verifier storage verifierStorage = _verifiers[verifierId];
+        // cache verifier
+        DataTypes.Verifier storage verifierStorage = _verifiers[verifier];
 
         // ----- Verify signature + Update nonce -----
-        _verifyDeductBalanceSignature(verifierStorage, issuerId, verifierId, schemaId, userAddress, amount, expiry, signature, currentFee);
+        _verifyDeductBalanceSignature(verifierStorage, issuer, verifier, schemaId, userAddress, amount, expiry, signature, currentFee);
 
 
         // ----- Combined fee calculation -----
         (uint128 protocolFee, uint128 votingFee, uint128 netFee) = _calculateFees(amount);
 
+        // ----- Update verifier, issuer, and schema balances and counters -----
+        _updateBalancesAndCounters(verifierStorage, schemaStorage, issuer, amount, netFee);
+        emit Events.BalanceDeducted(verifier, schemaId, issuer, amount);
 
-        // update verifier, issuer, and schema
-        _updateBalancesAndCounters(verifierStorage, schemaStorage, issuerId, amount, netFee);
-
-        // Pool-specific updates [for VotingController]    
+        // ----- Book fees: pool-specific and epoch-level -----
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
 
         {
             bytes32 poolId = schemaStorage.poolId;
             // book fees: pool-specific and epoch-level
-            _bookFees(verifierId, poolId, schemaId, amount, currentEpoch, protocolFee, votingFee);
-        }
+            _bookFees(verifier, poolId, schemaId, amount, currentEpoch, protocolFee, votingFee);
+        }        
 
-        emit Events.BalanceDeducted(verifierId, schemaId, issuerId, amount);
-        
         // ----- Increment verification count -----
-        unchecked { ++schemaStorage.totalVerified; }
+        ++schemaStorage.totalVerified;
         emit Events.SchemaVerified(schemaId);
     }
+
 
     /**
      * @notice Deducts a verifier's balance for a zero-fee schema verification, updating relevant counters.
      * @dev Requires the schema to have zero fee. Verifies the signature for the operation.
      *      Increments verification counters for the schema and issuer. Emits SchemaVerifiedZeroFee event.
-     * @param verifierId The unique identifier of the verifier.
+     * @param verifier The address of the verifier.
      * @param schemaId The unique identifier of the schema.
      * @param expiry The timestamp after which the signature is invalid.
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
-    function deductBalanceZeroFee(bytes32 verifierId, bytes32 schemaId, address userAddress, uint256 expiry, bytes calldata signature) external whenNotPaused {
+    function deductBalanceZeroFee(address verifier, bytes32 schemaId, address userAddress, uint256 expiry, bytes calldata signature) external whenNotPaused {
         require(expiry > block.timestamp, Errors.SignatureExpired());
+        
+        // get pointer
+        DataTypes.Schema storage schemaPtr = _schemas[schemaId];
 
-        // cache schema in memory (saves ~800 gas)
-        DataTypes.Schema storage schemaStorage = _schemas[schemaId];
-        DataTypes.Schema memory schema = schemaStorage; // Load once into memory
-
-        // get issuer id from schema + check if schema belongs to issuer
-        bytes32 issuerId = schema.issuerId;
-        require(issuerId != bytes32(0), Errors.InvalidIssuer());
+        // get issuer address from schema + check if schema exists
+        address issuer = schemaPtr.issuer;
+        require(issuer != address(0), Errors.InvalidSchema());
 
     
         //----- Verify schema has still has zero fee [ NextFee timestamp check ]-----
-        if (schema.nextFee > 0 && schema.nextFeeTimestamp <= block.timestamp) revert Errors.InvalidSchemaFee();
+        if (schemaPtr.nextFee > 0 && schemaPtr.nextFeeTimestamp <= block.timestamp) revert Errors.InvalidSchemaFee();
 
-        // Simplified signature verification: excludes amount/fee from signature check
-        address signerAddress = _verifiers[verifierId].signerAddress;
-        bytes32 hash = _hashTypedDataV4(
-            keccak256(abi.encode(
-                Constants.DEDUCT_BALANCE_ZERO_FEE_TYPEHASH,
-                issuerId, 
-                verifierId, 
-                schemaId, 
-                userAddress,
-                expiry, 
-                _verifierNonces[signerAddress][userAddress]
-            ))
-        );
-        require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
+        // ----- Verify signature + Update nonce -----
+        _verifyDeductBalanceZeroFeeSignature(verifier, issuer, schemaId, userAddress, expiry, signature);
         
-        // Update counters
-        unchecked {
-            ++_verifierNonces[signerAddress][userAddress];
-            ++schemaStorage.totalVerified;
-            ++_issuers[issuerId].totalVerified;
-        }
+        // ----- Increment issuer and schema total verified counters -----
+        ++schemaPtr.totalVerified;
+        ++_issuers[issuer].totalVerified;
         
         emit Events.SchemaVerifiedZeroFee(schemaId);
     }
 
- 
+    
+    /**
+     * @notice Verifies the EIP-712 signature for deductBalanceZeroFee and updates nonce.
+     * @dev Internal function to reduce stack depth in deductBalanceZeroFee.
+     * @param verifierAdminAddress The verifier admin address.
+     * @param issuerAdminAddress The issuer admin address.
+     * @param schemaId The schema identifier.
+     * @param userAddress The user address.
+     * @param expiry The signature expiry timestamp.
+     * @param signature The EIP-712 signature.
+     */
+    function _verifyDeductBalanceZeroFeeSignature(
+        address verifierAdminAddress,
+        address issuerAdminAddress,
+        bytes32 schemaId,
+        address userAddress,
+        uint256 expiry,
+        bytes calldata signature
+    ) internal {
+        // cache verifier to get signer address
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifierAdminAddress];
+        address signerAddress = verifierPtr.signerAddress;
+        
+        // hash the signature
+        bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(
+            Constants.DEDUCT_BALANCE_ZERO_FEE_TYPEHASH,
+            issuerAdminAddress,
+            verifierAdminAddress,
+            schemaId,
+            userAddress,
+            expiry,
+            _verifierNonces[signerAddress][userAddress]
+        )));
+        
+        // handles both EOA and contract signatures | returns true if signature is valid
+        require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
+        
+        // increment verifier nonce
+        ++_verifierNonces[signerAddress][userAddress];
+    }
+
 //------------------------------- Internal functions--------------------------------------------------------------
 
     // Finds the highest tier the verifier qualifies for (closest largest) and applies that subsidy.
     // expects subsidy tier array to be orders in ascending fashion (from smallest to largest)
-    function _bookSubsidy(bytes32 verifierId, bytes32 poolId, bytes32 schemaId, uint128 amount, uint256 currentEpoch) internal {
+    function _bookSubsidy(address verifier, bytes32 poolId, bytes32 schemaId, uint128 amount, uint256 currentEpoch) internal {
         // get verifier's moca staked
-        uint256 verifierMocaStaked = _verifiers[verifierId].mocaStaked;
+        uint256 verifierMocaStaked = _verifiers[verifier].mocaStaked;
         
         // find the highest tier the verifier qualifies for
         uint256 subsidyPct = _getSubsidyPercentage(verifierMocaStaked);
@@ -720,8 +673,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             if(subsidy > 0) {
                 // book verifier's subsidy
                 _epochPoolSubsidies[currentEpoch][poolId] += subsidy;
-                _epochPoolVerifierSubsidies[currentEpoch][poolId][verifierId] += subsidy;
-                emit Events.SubsidyBooked(verifierId, poolId, schemaId, subsidy);
+                _epochPoolVerifierSubsidies[currentEpoch][poolId][verifier] += subsidy;
+                emit Events.SubsidyBooked(verifier, poolId, schemaId, subsidy);
             }
         }
     }
@@ -751,7 +704,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     }
 
     /**
-     * @notice Calculates protocol fee, voting fee, and net fee from an amount.
+     * @notice Calculates protocol fee, voting fee, and net fee from an amount. [Fees are calculated in USD8 terms | 6dp precision]
      * @dev Internal function to reduce stack depth in deductBalance.
      * @param amount The amount to calculate fees from.
      * @return protocolFee The protocol fee amount.
@@ -763,7 +716,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         uint256 protocolFeeCalc = (uint256(amount) * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
         uint256 votingFeeCalc = (uint256(amount) * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
 
-        protocolFee = uint128(protocolFeeCalc);
+        //@audit should these require safecast? USD8 is 6 dp precision [calnix]
+        protocolFee = uint128(protocolFeeCalc); 
         votingFee = uint128(votingFeeCalc);
         netFee = uint128(amount - protocolFee - votingFee);
     }
@@ -777,11 +731,13 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      */
     function _updateSchemaFeeIfNeeded(DataTypes.Schema storage schemaStorage, bytes32 schemaId) internal returns (uint128) {
         uint128 currentFee = schemaStorage.currentFee;
+
         if (schemaStorage.nextFee > 0 && schemaStorage.nextFeeTimestamp <= block.timestamp) {
+            // cache for event emission
             uint128 oldFee = currentFee;
             currentFee = schemaStorage.nextFee;
 
-            // Batch storage updates
+            // update schema fee
             schemaStorage.currentFee = currentFee;
             delete schemaStorage.nextFee;
             delete schemaStorage.nextFeeTimestamp;
@@ -795,8 +751,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Verifies the EIP-712 signature for deductBalance and updates nonce.
      * @dev Internal function to reduce stack depth in deductBalance.
      * @param verifierStorage Storage pointer to the verifier.
-     * @param issuerId The issuer identifier.
-     * @param verifierId The verifier identifier.
+     * @param issuerAdminAddress The issuer admin address.
+     * @param verifierAdminAddress The verifier admin address.
      * @param schemaId The schema identifier.
      * @param userAddress The user address.
      * @param amount The amount to verify.
@@ -806,8 +762,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      */
     function _verifyDeductBalanceSignature(
         DataTypes.Verifier storage verifierStorage,
-        bytes32 issuerId,
-        bytes32 verifierId,
+        address issuerAdminAddress,
+        address verifierAdminAddress,
         bytes32 schemaId,
         address userAddress,
         uint128 amount,
@@ -815,12 +771,18 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         bytes calldata signature,
         uint128 currentFee
     ) internal {
+        
+        // sanity check: amount matches latest schema fee
+        require(amount == currentFee, Errors.InvalidSchemaFee());
+
+        // get signer address from verifier
         address signerAddress = verifierStorage.signerAddress;
         
+        // hash the signature
         bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(
             Constants.DEDUCT_BALANCE_TYPEHASH,
-            issuerId,
-            verifierId,
+            issuerAdminAddress,
+            verifierAdminAddress,
             schemaId,
             userAddress,
             amount,
@@ -830,10 +792,9 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         
         // handles both EOA and contract signatures | returns true if signature is valid
         require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature()); 
-        ++_verifierNonces[signerAddress][userAddress];
 
-        // check if amount matches latest schema fee
-        require(amount == currentFee, Errors.InvalidSchemaFee());
+        // increment verifier nonce
+        ++_verifierNonces[signerAddress][userAddress];
     }
 
 
@@ -842,36 +803,37 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @dev Internal function to reduce stack depth in deductBalance.
      * @param verifierStorage Storage pointer to the verifier.
      * @param schemaStorage Storage pointer to the schema.
-     * @param issuerId The issuer identifier.
+     * @param issuer The issuer address.
      * @param amount The amount being deducted.
      * @param netFee The net fee after protocol and voting fees.
      */
     function _updateBalancesAndCounters(
         DataTypes.Verifier storage verifierStorage,
         DataTypes.Schema storage schemaStorage,
-        bytes32 issuerId,
-        uint128 amount,
-        uint128 netFee
+        address issuer, uint128 amount, uint128 netFee
     ) internal {
+        
+        // sanity check: verifier has sufficient balance
         uint128 verifierBalance = verifierStorage.currentBalance;
         require(verifierBalance >= amount, Errors.InsufficientBalance());
         
+        // verifier: deduct amount from verifier's balance + increment total expenditure
         verifierStorage.currentBalance = verifierBalance - amount;
         verifierStorage.totalExpenditure += amount;
         
-        // update issuer
-        DataTypes.Issuer storage issuerStorage = _issuers[issuerId];
+        // issuer: update total net fees accrued and total verified
+        DataTypes.Issuer storage issuerStorage = _issuers[issuer];
         issuerStorage.totalNetFeesAccrued += netFee;
-        unchecked { ++issuerStorage.totalVerified; }
+        ++issuerStorage.totalVerified; 
 
-        // update schema counters
+        // schema: update total gross fees accrued
         schemaStorage.totalGrossFeesAccrued += amount;
     }
 
     /**
      * @notice Books fees for pool-specific and epoch-level tracking.
      * @dev Internal function to reduce stack depth in deductBalance.
-     * @param verifierId The verifier identifier.
+     * @param verifier The verifier address.
      * @param poolId The pool identifier.
      * @param schemaId The schema identifier.
      * @param amount The amount for subsidy calculation.
@@ -880,17 +842,13 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param votingFee The voting fee amount.
      */
     function _bookFees(
-        bytes32 verifierId,
-        bytes32 poolId,
-        bytes32 schemaId,
-        uint128 amount,
-        uint256 currentEpoch,
-        uint128 protocolFee,
-        uint128 votingFee
+        address verifier, bytes32 poolId, bytes32 schemaId, uint128 amount, 
+        uint256 currentEpoch, uint128 protocolFee, uint128 votingFee
     ) internal {
+
         // Pool-specific updates [for VotingController]
         if(_votingPools[poolId]) {
-            _bookSubsidy(verifierId, poolId, schemaId, amount, currentEpoch);
+            _bookSubsidy(verifier, poolId, schemaId, amount, currentEpoch);
             
             // Batch pool fee updates
             DataTypes.FeesAccrued storage poolFees = _epochPoolFeesAccrued[currentEpoch][poolId];
@@ -908,6 +866,8 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         TOTAL_VOTING_FEES_UNCLAIMED += votingFee;
     }
 
+    
+
 //------------------------------- PaymentsControllerAdmin: update functions---------------------------------------
 
     /**
@@ -920,7 +880,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
 
         // sanity check: schema must exist
-        require(schemaPtr.issuerId != bytes32(0), Errors.InvalidSchema());
+        require(schemaPtr.issuer != address(0), Errors.InvalidSchema());
         
         // pool must be whitelisted
         require(_votingPools[poolId], Errors.PoolNotWhitelisted());
@@ -1178,36 +1138,38 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
     /**
      * @notice Transfers all verifiers' remaining balances to their registered asset addresses during emergency exit.
-     * @dev If called by an verifier, they should pass an array of length 1 with their own verifierId.
-     *      If called by the emergency exit handler, they should pass an array of length > 1 with the verifierIds of the verifiers to exit.
+     * @dev If called by an verifier, they should pass an array of length 1 with their own verifier address.
+     *      If called by the emergency exit handler, they should pass an array of length > 1 with the verifier addresses of the verifiers to exit.
      *      Can only be called when the contract is frozen.
      *      Iterates through the provided verifierIds, transferring each non-zero balance to the corresponding asset manager address.
      *      Skips verifiers with zero balance.
-     * @param verifierIds Array of verifier identifiers whose balances will be exfil'd.
+     * @param verifiers Array of verifier addresses whose balances will be exfil'd.
      */
-    function emergencyExitVerifiers(bytes32[] calldata verifierIds) external payable {
+    function emergencyExitVerifiers(address[] calldata verifiers) external payable {
         require(isFrozen == 1, Errors.NotFrozen());
-        require(verifierIds.length > 0, Errors.InvalidArray());
+        require(verifiers.length > 0, Errors.InvalidArray());
    
         uint256 totalAssets;
         
-        // if anything other than a valid verifierId is given, will retrieve either empty struct and skip
-        for(uint256 i; i < verifierIds.length; ++i) {
+        // if anything other than a valid verifier address is given, will retrieve either empty struct and skip
+        for(uint256 i; i < verifiers.length; ++i) {
             
-            // cache pointer
-            DataTypes.Verifier storage verifierPtr = _verifiers[verifierIds[i]];
+            address verifier = verifiers[i];
 
             // check: if NOT emergency exit handler, AND NOT, the verifier themselves: revert
-            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != verifierPtr.adminAddress) {
+            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != verifier) {
                 revert Errors.OnlyCallableByEmergencyExitHandlerOrVerifier();
             }
 
+            // cache verifier pointer
+            DataTypes.Verifier storage verifierPtr = _verifiers[verifier];
+
             // get balance: if 0, skip
-            uint256 verifierBalance = verifierPtr.currentBalance;
+            uint256 verifierUSD8Balance = verifierPtr.currentBalance;
             uint256 verifierMocaStaked = verifierPtr.mocaStaked;
             
             // check if total assets is 0; if so, skip
-            totalAssets += verifierBalance + verifierMocaStaked;
+            totalAssets += verifierUSD8Balance + verifierMocaStaked;
             if(totalAssets == 0) continue;
 
             // get asset manager address
@@ -1218,10 +1180,10 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             delete verifierPtr.mocaStaked;
 
             
-            // transfer usd8 balance to verifier
-            if(verifierBalance > 0) USD8.safeTransfer(verifierAssetManagerAddress, verifierBalance);
+            // transfer USD8 balance to verifier
+            if(verifierUSD8Balance > 0) USD8.safeTransfer(verifierAssetManagerAddress, verifierUSD8Balance);
             
-            // transfer moca to verifier
+            // transfer MOCA staked to verifier
             if(verifierMocaStaked > 0) {
 
                 // decrement total moca staked
@@ -1233,7 +1195,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         }
 
         // emit event if total assets is > 0
-        if(totalAssets > 0) emit Events.EmergencyExitVerifiers(verifierIds);
+        if(totalAssets > 0) emit Events.EmergencyExitVerifiers(verifiers);
     }
 
     /**
@@ -1243,24 +1205,26 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      *      Can only be called when the contract is frozen.
      *      Iterates through the provided issuerIds, transferring each non-zero unclaimed fees to the corresponding asset manager address.
      *      Skips issuers with zero unclaimed fees.
-     * @param issuerIds Array of issuer identifiers whose unclaimed fees will be exfil'd.
+     * @param issuers Array of issuer addresses whose unclaimed fees will be exfil'd.
      */
-    function emergencyExitIssuers(bytes32[] calldata issuerIds) external {
+    function emergencyExitIssuers(address[] calldata issuers) external {
         require(isFrozen == 1, Errors.NotFrozen());
-        require(issuerIds.length > 0, Errors.InvalidArray());
+        require(issuers.length > 0, Errors.InvalidArray());
 
         uint256 totalAssets;
 
-        // if anything other than a valid issuerId is given, will retrieve either empty struct and skip
-        for(uint256 i; i < issuerIds.length; ++i) {
-            
-            // cache pointer
-            DataTypes.Issuer storage issuerPtr = _issuers[issuerIds[i]];
+        // if anything other than a valid issuer address is given, will retrieve either empty struct and skip
+        for(uint256 i; i < issuers.length; ++i) {
+
+            address issuer = issuers[i];
 
             // check: if NOT emergency exit handler, AND NOT, the issuer themselves: revert
-            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != issuerPtr.adminAddress) {
+            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != issuer) {
                 revert Errors.OnlyCallableByEmergencyExitHandlerOrIssuer();
             }
+
+            // cache pointer
+            DataTypes.Issuer storage issuerPtr = _issuers[issuer];
 
             // get unclaimed fees: if 0, skip
             uint256 unclaimedFees = issuerPtr.totalNetFeesAccrued - issuerPtr.totalClaimed;
@@ -1277,7 +1241,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         }
 
         // emit event if total assets is > 0
-        if(totalAssets > 0) emit Events.EmergencyExitIssuers(issuerIds);   
+        if(totalAssets > 0) emit Events.EmergencyExitIssuers(issuers);   
     }
 
     /**
@@ -1316,24 +1280,24 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Returns the total subsidies per epoch, for a pool and {verifier, pool}.
      * @param epoch The epoch.
      * @param poolId The pool id.
-     * @param verifierId The verifier id.
+     * @param verifier The verifier address.
      * @param caller The verifier's asset manager address. [Called through VotingController.claimSubsidies()].
      * @return verifierAccruedSubsidies The total subsidies for the {verifier, pool}, for the epoch.
      * @return poolAccruedSubsidies The total subsidies for the pool, for the epoch.
      */
-    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId, address caller) external view returns (uint256, uint256) {
+    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier, address caller) external view returns (uint256, uint256) {
         // verifiers's asset manager address must be the caller of VotingController.claimSubsidies
-        require(caller == _verifiers[verifierId].assetManagerAddress, Errors.InvalidCaller());
-        return (_epochPoolVerifierSubsidies[epoch][poolId][verifierId], _epochPoolSubsidies[epoch][poolId]);
+        require(caller == _verifiers[verifier].assetManagerAddress, Errors.InvalidCaller());
+        return (_epochPoolVerifierSubsidies[epoch][poolId][verifier], _epochPoolSubsidies[epoch][poolId]);
     }
 
     /**
-     * @notice Returns the Issuer struct for a given issuerId.
-     * @param issuerId The unique identifier of the issuer.
+     * @notice Returns the Issuer struct for a given issuer address.
+     * @param issuer The address of the issuer.
      * @return issuer The Issuer struct containing all issuer data.
      */
-    function getIssuer(bytes32 issuerId) external view returns (DataTypes.Issuer memory) {
-        return _issuers[issuerId];
+    function getIssuer(address issuer) external view returns (DataTypes.Issuer memory) {
+        return _issuers[issuer];
     }
 
     /** 
@@ -1346,12 +1310,12 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     }
 
     /**
-     * @notice Returns the Verifier struct for a given verifierId.
-     * @param verifierId The unique identifier of the verifier.
+     * @notice Returns the Verifier struct for a given verifier address.
+     * @param verifier The address of the verifier.
      * @return verifier The Verifier struct containing all verifier data.
      */
-    function getVerifier(bytes32 verifierId) external view returns (DataTypes.Verifier memory) {
-        return _verifiers[verifierId];
+    function getVerifier(address verifier) external view returns (DataTypes.Verifier memory) {
+        return _verifiers[verifier];
     }
 
     /**
@@ -1406,11 +1370,11 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Returns the total subsidies for a given pool and verifier and epoch.
      * @param epoch The epoch.
      * @param poolId The pool id.
-     * @param verifierId The verifier id.
+     * @param verifier The verifier address.
      * @return totalSubsidies The total subsidies for the pool and verifier and epoch.
      */
-    function getEpochPoolVerifierSubsidies(uint256 epoch, bytes32 poolId, bytes32 verifierId) external view returns (uint256) {
-        return _epochPoolVerifierSubsidies[epoch][poolId][verifierId];
+    function getEpochPoolVerifierSubsidies(uint256 epoch, bytes32 poolId, address verifier) external view returns (uint256) {
+        return _epochPoolVerifierSubsidies[epoch][poolId][verifier];
     }
 
     // note: manually refer to this, to know how much esMoca to deposit per pool on VotingController.depositRewardsForEpoch()
@@ -1434,13 +1398,12 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     }
 
     /**
-     * @notice Returns the nonce for a given caller and entity type.
-     * @param caller The caller address.
-     * @param entityType The entity type. [0: ISSUER, 1: VERIFIER, 2: SCHEMA]
-     * @return nonce The nonce for the caller and entity type.
+     * @notice Returns the nonce for a given issuer address.
+     * @param issuer The issuer address.
+     * @return nonce The nonce for the issuer address.
      */
-    function getCallerNonce(address caller, DataTypes.EntityType entityType) external view returns (uint256) {
-        return _adminNonces[caller][entityType];
+    function getIssuerSchemaNonce(address issuer) external view returns (uint256) {
+        return _issuerSchemaNonce[issuer];
     }
 
     /**
@@ -1452,21 +1415,4 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         return _votingPools[poolId];
     }
 
-    /**
-     * @notice Returns the issuer ID for a given admin address.
-     * @param adminAddress The admin address to query.
-     * @return issuerId The issuer ID associated with the admin address, or bytes32(0) if none exists.
-     */
-    function getIssuerIdByAdmin(address adminAddress) external view returns (bytes32) {
-        return _adminToEntityId[adminAddress][DataTypes.EntityType.ISSUER];
-    }
-
-    /**
-     * @notice Returns the verifier ID for a given admin address.
-     * @param adminAddress The admin address to query.
-     * @return verifierId The verifier ID associated with the admin address, or bytes32(0) if none exists.
-     */
-    function getVerifierIdByAdmin(address adminAddress) external view returns (bytes32) {
-        return _adminToEntityId[adminAddress][DataTypes.EntityType.VERIFIER];
-    }
 }
