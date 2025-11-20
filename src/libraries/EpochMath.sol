@@ -18,55 +18,56 @@ pragma solidity ^0.8.27;
 library EpochMath {
 
     // PERIODICITY:  does not account for leap year or leap seconds
-    uint256 internal constant EPOCH_DURATION = 14 days;                    
-    uint256 internal constant MIN_LOCK_DURATION = 28 days;            // double the epoch duration for minimum lock duration: for forward decay liveliness
-    uint256 internal constant MAX_LOCK_DURATION = 728 days;               
+    uint128 internal constant EPOCH_DURATION = 14 days;                    
+    uint128 internal constant MIN_LOCK_DURATION = 28 days;            // double the epoch duration for minimum lock duration: for forward decay liveliness
+    uint128 internal constant MAX_LOCK_DURATION = 728 days;               
 
 
     ///@dev returns epoch number for a given timestamp
-    function getEpochNumber(uint256 timestamp) internal pure returns (uint256) {
+    function getEpochNumber(uint128 timestamp) internal pure returns (uint128) {
         return timestamp / EPOCH_DURATION;
     }
 
     ///@dev returns current epoch number
-    function getCurrentEpochNumber() internal view returns (uint256) {
-        return getEpochNumber(block.timestamp);
+    function getCurrentEpochNumber() internal view returns (uint128) {
+        return getEpochNumber(uint128(block.timestamp));
     }
 
     ///@dev returns epoch start time for a given timestamp
-    function getEpochStartForTimestamp(uint256 timestamp) internal pure returns (uint256) {
+    function getEpochStartForTimestamp(uint128 timestamp) internal pure returns (uint128) {
         // intentionally divide first to "discard" remainder
         return (timestamp / EPOCH_DURATION) * EPOCH_DURATION;   // forge-lint: disable-line(divide-before-multiply)
     }
 
     ///@dev returns epoch end time for a given timestamp
-    function getEpochEndForTimestamp(uint256 timestamp) internal pure returns (uint256) {
+    function getEpochEndForTimestamp(uint128 timestamp) internal pure returns (uint128) {
         return getEpochStartForTimestamp(timestamp) + EPOCH_DURATION;
     }
     
 
     ///@dev returns current epoch start time | uint128: Checkpoint{veBla, uint128 lastUpdatedAt}
     function getCurrentEpochStart() internal view returns (uint128) {
-        return uint128(getEpochStartForTimestamp(block.timestamp));
+        return getEpochStartForTimestamp(uint128(block.timestamp));
     }
 
     ///@dev returns current epoch end time
-    function getCurrentEpochEnd() internal view returns (uint256) {
+    function getCurrentEpochEnd() internal view returns (uint128) {
         return getEpochEndTimestamp(getCurrentEpochNumber());
     }
 
-    function getEpochStartTimestamp(uint256 epoch) internal pure returns (uint256) {
-        return epoch * EPOCH_DURATION;
+    ///@dev returns epoch start time for a given epoch number
+    function getEpochStartTimestamp(uint256 epoch) internal pure returns (uint128) {
+        return uint128(epoch * EPOCH_DURATION);
     }
 
     ///@dev returns epoch end time for a given epoch number
-    function getEpochEndTimestamp(uint256 epoch) internal pure returns (uint256) {
+    function getEpochEndTimestamp(uint256 epoch) internal pure returns (uint128) {
         // end of epoch:N is the start of epoch:N+1
-        return (epoch + 1) * EPOCH_DURATION;
+        return uint128((epoch + 1) * EPOCH_DURATION);
     }
 
     // used in _createLockFor()
-    function isValidEpochTime(uint256 timestamp) internal pure returns (bool) {
+    function isValidEpochTime(uint128 timestamp) internal pure returns (bool) {
         return timestamp % EPOCH_DURATION == 0;
     }
 

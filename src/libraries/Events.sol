@@ -44,10 +44,28 @@ library Events {
     event EmergencyExitEscrowedMoca(address[] users, uint256 totalMoca);
 
 // --------- VotingEscrowMoca.sol ---------
+    
+    event GlobalUpdated(uint128 bias, uint128 slope);
+    event UserUpdated(address indexed user, uint128 bias, uint128 slope);
+
+
+    // create lock
     event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);
-    // delegate
+    // increaseAmount
+    event LockAmountIncreased(bytes32 indexed lockId, address indexed owner, uint128 mocaToAdd, uint128 esMocaToAdd);
+    // increaseDuration
+    event LockDurationIncreased(bytes32 indexed lockId, address indexed owner, uint256 oldExpiry, uint256 newExpiry);
+
+    // delegate: register, unregister
     event DelegateRegistered(address indexed delegate);
     event DelegateUnregistered(address indexed delegate);
+    // delegateLock
+    event LockDelegated(bytes32 indexed lockId, address indexed owner, address delegate);
+    event DelegateUpdated(address indexed delegate, uint128 bias, uint128 slope);
+    event DelegatedAggregationUpdated(address indexed user, address indexed delegate, uint128 bias, uint128 slope);
+
+    // switchDelegate
+    
     //unlock
     event LockUnlocked(bytes32 indexed lockId, address indexed owner, uint256 moca, uint256 esMoca);
     // undelegateLock

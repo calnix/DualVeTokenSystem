@@ -56,6 +56,7 @@ library Errors {
     error PoolWhitelistedStatusUnchanged();
 
 // --------- VotingEscrowMoca.sol ---------
+    error LockExpired();
     error InvalidLockDuration();
     error IsNonTransferable();
     error InvalidLockId();
@@ -64,9 +65,11 @@ library Errors {
     error LockAlreadyDelegated();
     error InvalidEpochTime();
     error InvalidDelegate();
+    error LockNotDelegated();
     error LockExpiresTooSoon();
     error PrincipalsAlreadyReturned();
     error OnlyCallableByVotingEscrowMocaAdmin();
+    error OnlyCallableByVotingControllerContract();
 
 // --------- VotingController.sol ---------
     error EpochNotEnded();

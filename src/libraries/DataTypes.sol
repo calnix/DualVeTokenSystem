@@ -157,12 +157,6 @@ library DataTypes {
         uint128 expiry;        // timestamp when lock ends
         bool isUnlocked;       // flag: indicates lock's principals are returned
     }
-    
-    // Checkpoint
-    struct Checkpoint {
-        VeBalance veBalance;
-        uint128 lastUpdatedAt;
-    }
 
     // Aggregation: global + user
     struct VeBalance {
@@ -170,7 +164,15 @@ library DataTypes {
         uint128 slope;
     }
 
-    struct VeBalanceDelta {
+    // Checkpoint
+    struct Checkpoint {
+        VeBalance veBalance;
+        uint128 lastUpdatedAt;
+    }
+
+    struct VeDeltas {
+        bool hasAddition;
+        bool hasSubtraction;
         DataTypes.VeBalance additions;
         DataTypes.VeBalance subtractions;
     }
