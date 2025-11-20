@@ -152,3 +152,37 @@ Its an absolute-bias system.
         return a;
     }
 ```
+
+## undelegating then redelegating again immediately
+
+in undelegate, lock.delegate is deleted, allowing the lock owner to redelegate immediately.
+- this might seem like a bug
+- but is not
+
+**The Math: "Undelegate + Delegate" = "Switch"**
+
+If a user performs undelegateLock and then delegateLock in the same epoch, the contract schedules two opposing updates for the Next Epoch. These cancel each other out perfectly for the user.
+
+```bash
+| Action         | Effect on User's Pending Deltas   | Effect on Delegate A        | Effect on Delegate B     |
+|----------------|-----------------------------------|-----------------------------|--------------------------|
+| Undelegate     | Add Voting Power (`+V`)           | Remove Power (`−V`)         | No Change                |
+| Delegate       | Subtract Voting Power (`−V`)      | No Change                   | Add Power (`+V`)         |
+| **Net Result** | 0 Change (`+V` and `−V` cancel)   | −V (Lost Power)             | +V (Gained Power)        |
+```
+
+This is mathematically identical to switchDelegate, where A loses power and B gains it, with the user acting as the net-neutral conduit.
+
+The implementation is mathematically safe, although semantically wrong, in the sense that we update lock.delegate immediately, when the change in delegation effect takes place in the next epoch.
+
+## min amount check
+
+```
+MIN_LOCK_AMOUNT = 1E13 wei = 0.00001 tokens
+MAX_LOCK_DURATION = 728 days = 62,899,200 seconds
+
+slope = 1E13 / 62,899,200 ≈ 158,989 wei per second
+```
+
+The minimum amount for non-zero voting power. 
+Could consider increasing to 1e18 wei, 1 MOCA token.

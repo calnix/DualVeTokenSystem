@@ -59,19 +59,20 @@ library Events {
     // delegate: register, unregister
     event DelegateRegistered(address indexed delegate);
     event DelegateUnregistered(address indexed delegate);
+    
     // delegateLock
     event LockDelegated(bytes32 indexed lockId, address indexed owner, address delegate);
     event DelegateUpdated(address indexed delegate, uint128 bias, uint128 slope);
     event DelegatedAggregationUpdated(address indexed user, address indexed delegate, uint128 bias, uint128 slope);
 
     // switchDelegate
+    event LockDelegateSwitched(bytes32 indexed lockId, address indexed owner, address delegate, address newDelegate);
     
     //unlock
     event LockUnlocked(bytes32 indexed lockId, address indexed owner, uint256 moca, uint256 esMoca);
     // undelegateLock
     event LockUndelegated(bytes32 indexed lockId, address indexed owner, address delegate);
-    // switchDelegate
-    event LockDelegateSwitched(bytes32 indexed lockId, address indexed owner, address delegate, address newDelegate);
+
     // emergencyExit
     event EmergencyExit(bytes32[] lockIds, uint256 validLocks, uint256 totalMocaReturned, uint256 totalEsMocaReturned);
 
