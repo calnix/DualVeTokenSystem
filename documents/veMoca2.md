@@ -186,3 +186,53 @@ slope = 1E13 / 62,899,200 ≈ 158,989 wei per second
 
 The minimum amount for non-zero voting power. 
 Could consider increasing to 1e18 wei, 1 MOCA token.
+
+
+## unlock does not bother with delegation management
+
+**Not necessary**
+
+- the moment unlock() is called, the lock is already expired.
+- therefore, the veBalance (voting power) is already calculated as 0 by the system.
+- Updating the delegate's history at this specific moment is effectively updating them with a "zero change" event, which wastes gas.
+
+**Why update msg.sender instead?**
+
+- owner is initiating the txn and paying the gas for it 
+- so we update their state
+
+
+1. Voting Power Decays Automatically (Lazy Evaluation) 
+- The core mechanic of the ve system is that voting power is not manually removed when a lock expires; it mathematically decays to zero based on time.
+
+- Slope Changes: When the lock was originally delegated (or created), a slopeChange was scheduled for the specific expiry timestamp
+
+- Automatic Expiry: When the expiry time is passed, any function reading the delegate's balance (like balanceOfAt or _updateAccount...) will automatically trigger _subtractExpired
+
+Result: The delegate's voting power associated with that lock is removed automatically by the contract's math as soon as the epoch passes. You do not need to explicitly touch the delegate's account in unlock() to "clear" the votes.
+
+
+## getSpecificDelegatedBalanceAtEpochEnd
+
+- no need to bother with `_viewAccountAndGlobalAndPendingDeltas()` to update user or delegate
+- focus strictly on the User-Delegate Pair Mappings
+
+- utilizes a "Quad-Accounting" system where the state of a specific (user, delegate) relationship is tracked in its own isolated set of mappings. 
+- these user-delegate pair mappings form a completely independent tracking system. 
+- allows the VotingController to accurately determine reward distribution based on the specific user-delegate relationship without needing to reconstruct the entire state.
+
+### The Two Parallel Streams
+
+**1. Stream A: The Aggregate Stream (Global Account State)**
+
+- Purpose: Tracks the total voting power of an account (User or Delegate) for voting and total supply calculations.
+- Mappings: `userHistory`, `delegateHistory`, `slopeChanges`, `userSlopeChanges`, `userPendingDeltas`.
+- Used By: `balanceOf()`, `totalSupply()`, and `_viewAccountAndGlobalAndPendingDeltas`.
+
+
+**2. Stream B: The Parallel Stream (Pair-Specific State)**
+
+- Purpose: Tracks specifically how much voting power User A has contributed to Delegate B.
+- Mappings: `delegatedAggregationHistory`, `userDelegatedSlopeChanges`, `userPendingDeltasForDelegate`.
+- Used By: `getSpecificDelegatedBalanceAtEpochEnd` (for calculating the user's share of a delegate's rewards).
+

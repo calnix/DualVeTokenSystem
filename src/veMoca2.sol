@@ -79,10 +79,10 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
 
     // ----- Aggregation of a specific user-delegate pair: for VotingController to determine users' share of rewards from delegates -----
     // delegatedAggregationHistory tracks how much veBalance a user has delegated out
-    mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeBalance veBalance))) public delegatedAggregationHistory;  // user's aggregated delegated veBalance for a specific delegate
+    mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeBalance veBalance))) public delegatedAggregationHistory;   // user's aggregated delegated veBalance for a specific delegate
     mapping(address user => mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange))) public userDelegatedSlopeChanges;               // aggregated slope changes for user's delegated locks for a specific delegate
-    mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) public userPendingDeltasForDelegate;   // pending deltas for user's delegated locks for a specific delegate
-    mapping(address user => mapping(address delegate => uint128 lastUpdatedTimestamp)) public userDelegatedPairLastUpdatedTimestamp;                        // last updated timestamp for user-delegate pair
+    mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) public userPendingDeltasForDelegate;    // pending deltas for user's delegated locks for a specific delegate
+    mapping(address user => mapping(address delegate => uint128 lastUpdatedTimestamp)) public userDelegatedPairLastUpdatedTimestamp;                    // last updated timestamp for user-delegate pair
 
 //------------------------------- Constructor ------------------------------------------
 
@@ -951,10 +951,10 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         DataTypes.VeBalance memory veGlobal_ = veGlobal;
         uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
 
-        // init user veUser
+        // init account veAccount
         DataTypes.VeBalance memory veAccount_;
 
-        // get user's lastUpdatedTimestamp [either matches global or lags behind it]
+        // get account's lastUpdatedTimestamp [either matches global or lags behind it]
         uint128 accountLastUpdatedAt = accountLastUpdatedMapping[account];
         
         // account's first time: no prior updates to execute 
@@ -1016,7 +1016,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         // set final lastUpdatedTimestamp: for global & account
         lastUpdatedTimestamp = accountLastUpdatedMapping[account] = accountLastUpdatedAt;
 
-        // return
         return (veGlobal_, veAccount_);
     }
 
@@ -1227,7 +1226,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
 
 //-------------------------------internal: view functions-----------------------------------------------------
 
-
+    // needed for totalSupplyAtTimestamp()
     function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint128 lastUpdatedAt, uint128 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {       
         // nothing to update: lastUpdate was within current epoch 
         if(lastUpdatedAt >= currentEpochStart) return (veGlobal_); 
@@ -1294,6 +1293,77 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         return (veGlobal_, veUser_);
     }
 
+    function _viewAccountAndGlobalAndPendingDeltas(address account, uint128 currentEpochStart, bool isDelegate) internal view returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
+        // Streamlined mapping lookups based on account type
+        (
+            mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping,
+            mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping,
+            mapping(address account => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas)) storage accountPendingDeltas,
+            mapping(address account => uint128 lastUpdatedTimestamp) storage accountLastUpdatedMapping
+        ) 
+            = isDelegate ? (delegateHistory, delegateSlopeChanges, delegatePendingDeltas, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userPendingDeltas, userLastUpdatedTimestamp);
+
+        // CACHE: global veBalance + lastUpdatedTimestamp
+        DataTypes.VeBalance memory veGlobal_ = veGlobal;
+        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
+
+        // init account veAccount
+        DataTypes.VeBalance memory veAccount_;
+
+        // get account's lastUpdatedTimestamp [either matches global or lags behind it]
+        uint128 accountLastUpdatedAt = accountLastUpdatedMapping[account];
+
+        // account's first time: no prior updates to execute 
+        if (accountLastUpdatedAt == 0) {
+            
+            // set account's lastUpdatedTimestamp
+            accountLastUpdatedMapping[account] = currentEpochStart;
+
+            // update global: updates lastUpdatedTimestamp [may or may not have updates]
+            veGlobal_ = _viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
+
+            return (veGlobal_, veAccount_);
+        }
+
+        // get account's previous veBalance: if both global and account are up to date, return
+        veAccount_ = accountHistoryMapping[account][accountLastUpdatedAt];
+        if(accountLastUpdatedAt >= currentEpochStart) return (veGlobal_, veAccount_); 
+
+        // update both global and account veBalance to current epoch
+        while (accountLastUpdatedAt < currentEpochStart) {
+            // advance 1 epoch
+            accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
+
+            // update global: if needed 
+            if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
+                
+                // apply scheduled slope reductions and decrement bias for expiring locks
+                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
+                // book ve supply for this epoch
+                //totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
+            }
+
+            // update account: apply scheduled slope reductions and decrement bias for expiring locks
+            veAccount_ = _subtractExpired(veAccount_, accountSlopeChangesMapping[account][accountLastUpdatedAt], accountLastUpdatedAt);
+
+            // get the pending delta for the current epoch
+            DataTypes.VeDeltas storage deltaPtr = accountPendingDeltas[account][accountLastUpdatedAt];
+           
+            // copy flags to mem
+            bool hasAddition = deltaPtr.hasAddition;
+            bool hasSubtraction = deltaPtr.hasSubtraction;
+
+            // if the pending delta has no additions or subtractions, skip
+            if(!hasAddition && !hasSubtraction) continue;
+
+            // apply the pending delta to the veAccount [add then sub]
+            if(hasAddition) veAccount_ = _add(veAccount_, deltaPtr.additions);
+            if(hasSubtraction) veAccount_ = _sub(veAccount_, deltaPtr.subtractions);
+        }
+
+        return (veGlobal_, veAccount_);
+    }
+
 //-------------------------------External: View functions-----------------------------------------
 
     function totalSupplyAtTimestamp(uint128 timestamp) public view returns (uint256) {
@@ -1307,36 +1377,90 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
     }
 
 
-    // returns user's voting power at given timestamp [ignores freezing of voting power in an epoch]
-    function balanceOfAt(address user, uint128 timestamp) public view returns (uint256) {
+    // returns either a user's personal voting power, or voting power that was delegated to him, at given timestamp 
+    function balanceOfAt(address user, uint128 timestamp, bool isDelegate) public view returns (uint256) {
         require(user != address(0), Errors.InvalidAddress());
-        require(timestamp >= block.timestamp, Errors.InvalidTimestamp());
+        require(timestamp <= block.timestamp, Errors.InvalidTimestamp());   // cannot query the future
 
         // get target epoch start
         uint128 targetEpochStartTime = EpochMath.getEpochStartForTimestamp(timestamp);  
 
-        (/*DataTypes.VeBalance memory veGlobal_*/, DataTypes.VeBalance memory veUser_) = _viewUserAndGlobal(user, targetEpochStartTime);
-        if(veUser_.bias == 0) return 0; 
+        (/*DataTypes.VeBalance memory veGlobal_*/, DataTypes.VeBalance memory veAccount_) = _viewAccountAndGlobalAndPendingDeltas(user, targetEpochStartTime, isDelegate);
+        if(veAccount_.bias == 0) return 0; 
 
         // return user's voting power at given timestamp
-        return _getValueAt(veUser_, timestamp);
+        return _getValueAt(veAccount_, timestamp);
     }
 
     // note: used by VotingController for vote()
-    function balanceAtEpochEnd(address user, uint256 epoch) external view returns (uint256) {
+    function balanceAtEpochEnd(address user, uint256 epoch, bool isDelegate) external view returns (uint256) {
         require(user != address(0), Errors.InvalidAddress());
 
+        // restrict to current/past epochs | can be used by VotingController and for other general queries
         uint128 epochStartTime = EpochMath.getEpochStartTimestamp(epoch);
-        require(epochStartTime >= EpochMath.getCurrentEpochStart(), Errors.InvalidTimestamp());  // New: restrict to current/future epochs
+        require(epochStartTime <= EpochMath.getCurrentEpochStart(), Errors.InvalidTimestamp());  
 
-        (/*veGlobal_*/, DataTypes.VeBalance memory veUser_) = _viewUserAndGlobal(user, epochStartTime);
-        if (veUser_.bias == 0) return 0;
+        (/*veGlobal_*/, DataTypes.VeBalance memory veAccount_) = _viewAccountAndGlobalAndPendingDeltas(user, epochStartTime, isDelegate);
+        if(veAccount_.bias == 0) return 0;
 
+        // return user's voting power at the end of the epoch
         uint128 epochEndTime = epochStartTime + EpochMath.EPOCH_DURATION;
-        return _getValueAt(veUser_, epochEndTime);
+        return _getValueAt(veAccount_, epochEndTime);
     }
 
     //Note: used by VotingController.claimRewardsFromDelegate() | returns userVotesAllocatedToDelegateForEpoch
-    function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {}
+    function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
+        require(user != address(0), Errors.InvalidAddress());
+        require(delegate != address(0), Errors.InvalidAddress());
+        //require(isFrozen == 0, Errors.IsFrozen());   
 
+        // 1. Determine time boundaries for the requested epoch
+        uint128 epochStartTime = EpochMath.getEpochStartTimestamp(epoch);
+        uint128 epochEndTime = epochStartTime + EpochMath.EPOCH_DURATION;
+        
+        // 2. Retrieve the timestamp of the last state update for this specific user-delegate pair
+        uint128 lastUpdate = userDelegatedPairLastUpdatedTimestamp[user][delegate];
+
+        // 3. If there is no history of interaction, the balance is 0
+        if (lastUpdate == 0) return 0;
+
+        // 4. Load baseline state from history
+        DataTypes.VeBalance memory veBalance = delegatedAggregationHistory[user][delegate][lastUpdate]; // 
+
+        // 5. If data is already up to date (lastUpdate >= epochStartTime), simply calculate value at epochEndTime. 
+        if (lastUpdate >= epochStartTime) return _getValueAt(veBalance, epochEndTime);
+
+        
+        // 6. Simulate the state forward from the last update to the start of the requested epoch
+        // This accounts for linear decay, slope changes, and pending deltas (additions/subtractions)
+        // Logic mirrors _viewAccountAndGlobalAndPendingDeltas
+        while (lastUpdate < epochStartTime) {
+
+            // advance to the next epoch
+            lastUpdate += EpochMath.EPOCH_DURATION;
+
+            // Apply decay and slope changes scheduled for this epoch
+            veBalance = _subtractExpired(veBalance, userDelegatedSlopeChanges[user][delegate][lastUpdate], lastUpdate);
+
+            // Apply any pending deltas (delegations/undelegations) that were queued for this epoch
+            DataTypes.VeDeltas storage deltaPtr = userPendingDeltasForDelegate[user][delegate][lastUpdate];
+
+            // copy flags to mem
+            bool hasAddition = deltaPtr.hasAddition;
+            bool hasSubtraction = deltaPtr.hasSubtraction;
+
+            // if the pending delta has no additions or subtractions, skip
+            if(!hasAddition && !hasSubtraction) continue;
+            
+            // apply the pending delta to the veBalance [add then sub]
+            if(hasAddition) veBalance = _add(veBalance, deltaPtr.additions);
+            if(hasSubtraction) veBalance = _sub(veBalance, deltaPtr.subtractions);
+        }
+
+        // if 0 bias, return 0
+        if(veBalance.bias == 0) return 0;
+
+        // return the calculated voting power at the exact end of the epoch
+        return _getValueAt(veBalance, epochEndTime);
+    }
 }
