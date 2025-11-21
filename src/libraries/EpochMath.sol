@@ -39,21 +39,12 @@ library EpochMath {
         return (timestamp / EPOCH_DURATION) * EPOCH_DURATION;   // forge-lint: disable-line(divide-before-multiply)
     }
 
-    ///@dev returns epoch end time for a given timestamp
-    function getEpochEndForTimestamp(uint128 timestamp) internal pure returns (uint128) {
-        return getEpochStartForTimestamp(timestamp) + EPOCH_DURATION;
-    }
-    
 
     ///@dev returns current epoch start time | uint128: Checkpoint{veBla, uint128 lastUpdatedAt}
     function getCurrentEpochStart() internal view returns (uint128) {
         return getEpochStartForTimestamp(uint128(block.timestamp));
     }
 
-    ///@dev returns current epoch end time
-    function getCurrentEpochEnd() internal view returns (uint128) {
-        return getEpochEndTimestamp(getCurrentEpochNumber());
-    }
 
     ///@dev returns epoch start time for a given epoch number
     function getEpochStartTimestamp(uint256 epoch) internal pure returns (uint128) {
@@ -70,5 +61,21 @@ library EpochMath {
     function isValidEpochTime(uint128 timestamp) internal pure returns (bool) {
         return timestamp % EPOCH_DURATION == 0;
     }
+
+
+
+    // ----- Unused functions [consider removing`]-----
+
+    ///@dev returns current epoch end time
+    function getCurrentEpochEnd() internal view returns (uint128) {
+        return getEpochEndTimestamp(getCurrentEpochNumber());
+    }
+
+    ///@dev returns epoch end time for a given timestamp
+    function getEpochEndForTimestamp(uint128 timestamp) internal pure returns (uint128) {
+        return getEpochStartForTimestamp(timestamp) + EPOCH_DURATION;
+    }
+    
+
 
 }

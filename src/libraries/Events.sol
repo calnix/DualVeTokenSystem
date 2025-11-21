@@ -47,14 +47,14 @@ library Events {
     
     event GlobalUpdated(uint128 bias, uint128 slope);
     event UserUpdated(address indexed user, uint128 bias, uint128 slope);
-
+    event AccountUpdated(address indexed account, uint128 bias, uint128 slope);
 
     // create lock
     event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);
     // increaseAmount
-    event LockAmountIncreased(bytes32 indexed lockId, address indexed owner, uint128 mocaToAdd, uint128 esMocaToAdd);
+    event LockAmountIncreased(bytes32 indexed lockId, address indexed owner, address delegate, uint128 mocaToAdd, uint128 esMocaToAdd);
     // increaseDuration
-    event LockDurationIncreased(bytes32 indexed lockId, address indexed owner, uint256 oldExpiry, uint256 newExpiry);
+    event LockDurationIncreased(bytes32 indexed lockId, address indexed owner, address delegate, uint256 oldExpiry, uint256 newExpiry);
 
     // delegate: register, unregister
     event DelegateRegistered(address indexed delegate);
