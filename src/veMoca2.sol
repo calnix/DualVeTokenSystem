@@ -1475,14 +1475,14 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
     }  
 
     /**
-     * @notice Returns principal tokens (esMoca, Moca) to users for specified locks during emergency exit.
+     * @notice Returns principal assets (esMoca, Moca) to users for specified locks 
      * @dev Only callable by the Emergency Exit Handler when the contract is frozen.
-     *      Ignores all contract state updates except returning principals; assumes system failure.
+     *      Ignores all contract state updates except returning assets; assumes system failure.
      *      NOTE: Expectation is that VotingController is paused or undergoing emergencyExit(), to prevent phantom votes.
-     *            Phantom votes since we do not update state when returning principals; too complicated and not worth the effort.
-     * @param lockIds Array of lock IDs for which principals should be returned.    
+     *            Phantom votes since we do not update state when returning assets; too complicated and not worth the effort.
+     * @param lockIds Array of lock IDs for which assets should be returned.    
      * @return totalLocksProcessed The number of locks processed.
-     * @return totalMocaReturned The total amount of moca returned.
+     * @return totalMocaReturned The total amount of Moca returned.
      * @return totalEsMocaReturned The total amount of esMoca returned.
      */
     function emergencyExit(bytes32[] calldata lockIds) external onlyRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE) returns(uint256, uint256, uint256) {
