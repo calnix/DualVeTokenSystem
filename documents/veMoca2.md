@@ -236,3 +236,10 @@ Result: The delegate's voting power associated with that lock is removed automat
 - Mappings: `delegatedAggregationHistory`, `userDelegatedSlopeChanges`, `userPendingDeltasForDelegate`.
 - Used By: `getSpecificDelegatedBalanceAtEpochEnd` (for calculating the user's share of a delegate's rewards).
 
+```solidity
+// These mappings track the user-delegate relationship independently:
+delegatedAggregationHistory[user][delegate][timestamp]     // Historical veBalance for this pair
+userDelegatedSlopeChanges[user][delegate][timestamp]       // Slope changes for this pair  
+userPendingDeltasForDelegate[user][delegate][timestamp]    // Pending deltas for this pair
+userDelegatedPairLastUpdatedTimestamp[user][delegate]      // Last update for this pair
+```

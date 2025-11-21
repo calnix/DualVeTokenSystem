@@ -114,7 +114,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
 
 
     // lock created is booked to currentEpochStart
-    function createLock(uint128 expiry, uint128 esMoca) external payable  whenNotPaused returns (bytes32) {
+    function createLock(uint128 expiry, uint128 esMoca, address delegate) external payable whenNotPaused returns (bytes32) {
         // Enforce minimum increment amount to avoid precision loss
         uint128 moca = uint128(msg.value);
         _minimumAmountCheck(moca, esMoca);
@@ -127,10 +127,27 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, Errors.InvalidLockDuration());
 
 
-        // check: lock will end at or after the 3 epochs from current epoch start [current + 2 more epochs]
+        // check: lock will minimally exist for 3 epochs [current + 2 more epochs]
         uint128 currentEpochStart = _minimumDurationCheck(expiry);
 
-        // update user and global veBalance: may or may not have updates [STORAGE: updates lastUpdatedTimestamp for global & user]
+        // init veDelegate & veDelegatePair
+        DataTypes.VeBalance memory veDelegate_;
+        DataTypes.VeBalance memory veDelegatePair_;
+
+        // check: delegation validity
+        bool isDelegated = delegate != address(0);
+        if (isDelegated) {
+            require(delegate != msg.sender, Errors.InvalidDelegate());
+            require(isRegisteredDelegate[delegate], Errors.DelegateNotRegistered());
+
+            // Update Delegate's state to current epoch [STORAGE: updates lastUpdatedTimestamp global & delegate]
+            (, veDelegate_) = _updateAccountAndGlobalAndPendingDeltas(delegate, currentEpochStart, true);
+
+            // Update User-Delegate Pair state and process any pending deltas [STORAGE: updates lastUpdatedTimestamp for user-delegate pair]
+            veDelegatePair_ = _updatePendingForDelegatePair(msg.sender, delegate, currentEpochStart);
+        }
+
+        // update user: may or may not have updates [STORAGE: updates lastUpdatedTimestamp for user]
         (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser_) = _updateAccountAndGlobalAndPendingDeltas(msg.sender, currentEpochStart, false);
 
         // --------- generate lockId ---------
@@ -160,9 +177,9 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
             _pushCheckpoint(lockHistory[lockId], veIncoming, uint128(currentEpochStart));
 
             // emit: lock created
-            emit Events.LockCreated(lockId, msg.sender, /*delegate*/ address(0), newLock.moca, newLock.esMoca, newLock.expiry);
+            emit Events.LockCreated(lockId, msg.sender, delegate, newLock.moca, newLock.esMoca, newLock.expiry);
 
-        // --------- Increment global state: add veIncoming to veGlobal ---------
+        // --------- Update global state: add veIncoming to veGlobal ---------
         
         // STORAGE: update global [veBalance & schedule slope change]
         veGlobal_ = _add(veGlobal_, veIncoming);
@@ -170,13 +187,41 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         slopeChanges[newLock.expiry] += veIncoming.slope;
         emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
 
-        // --------- Increment user state: add veIncoming to user ---------
+        // --------- Update user/delegate state: add veIncoming to user/delegate ---------
+        if (isDelegated) {
+
+            // --- DELEGATED PATH: lock is delegated ---
+
+            // STORAGE: update delegate [veBalance & schedule slope change]
+            veDelegate_ = _add(veDelegate_, veIncoming);
+            delegateHistory[delegate][currentEpochStart] = veDelegate_;
+            delegateSlopeChanges[delegate][newLock.expiry] += veIncoming.slope;
+            emit Events.DelegateUpdated(delegate, veDelegate_.bias, veDelegate_.slope);
+
+
+            // STORAGE: update user-delegate pair [veBalance & schedule slope change]
+            veDelegatePair_ = _add(veDelegatePair_, veIncoming);
+            delegatedAggregationHistory[msg.sender][delegate][currentEpochStart] = veDelegatePair_;
+            userDelegatedSlopeChanges[msg.sender][delegate][newLock.expiry] += veIncoming.slope;
+            emit Events.DelegatedAggregationUpdated(msg.sender, delegate, veDelegatePair_.bias, veDelegatePair_.slope);
+
+
+            // Note: User's personal veUser_ is updated, but veBalance is not increased
+            // We do NOT add slope to userSlopeChanges because the slope burden is on the delegate
+            userHistory[msg.sender][currentEpochStart] = veUser_;
+
+        } else{
+
+            // --- PERSONAL PATH: lock is personal (not delegated) ---
+
+            // STORAGE: update user [veBalance & schedule slope change]
+            veUser_ = _add(veUser_, veIncoming);
+            userHistory[msg.sender][currentEpochStart] = veUser_;
+            userSlopeChanges[msg.sender][newLock.expiry] += veIncoming.slope;
+            emit Events.UserUpdated(msg.sender, veUser_.bias, veUser_.slope);
+        }
         
-        // STORAGE: update user [veBalance & schedule slope change]
-        veUser_ = _add(veUser_, veIncoming);
-        userHistory[msg.sender][currentEpochStart] = veUser_;
-        userSlopeChanges[msg.sender][newLock.expiry] += veIncoming.slope;
-        emit Events.UserUpdated(msg.sender, veUser_.bias, veUser_.slope);
+        // --------- Handle asset booking & transfers ---------
 
         // STORAGE: increment global TOTAL_LOCKED_MOCA
         if(moca > 0) TOTAL_LOCKED_MOCA += moca;
@@ -337,7 +382,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
     }
 
 
-//-------------------------------User Delegate functions-------------------------------------
+//------------------------------ User Delegate functions-------------------------------------
 
     /** Problem: user can vote, then delegate
         ⦁	sub their veBal, add to delegate veBal
@@ -738,7 +783,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         return (lockId, veIncoming);
     }
 
-//-------------------------------Admin function: setMocaTransferGasLimit() ---------------------------------------------
+//------------------------------ Admin function: setMocaTransferGasLimit() ---------------------------------------------
 
     /**
         * @notice Sets the gas limit for moca transfer.
@@ -756,7 +801,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
     }
 
 
-//-------------------------------VotingController.sol functions------------------------------------------
+//------------------------------ VotingController.sol functions------------------------------------------
     
     // note combine to 1 -> update Voting Controller
 
@@ -1226,7 +1271,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
 
 //-------------------------------internal: view functions-----------------------------------------------------
 
-    // needed for totalSupplyAtTimestamp()
+    // needed for totalSupplyAtTimestamp() & _viewAccountAndGlobalAndPendingDeltas
     function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint128 lastUpdatedAt, uint128 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {       
         // nothing to update: lastUpdate was within current epoch 
         if(lastUpdatedAt >= currentEpochStart) return (veGlobal_); 
@@ -1246,51 +1291,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         }
 
         return (veGlobal_);
-    }
-
-    function _viewUserAndGlobal(address user, uint128 currentEpochStart) internal view returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
-        // cache global veBalance
-        DataTypes.VeBalance memory veGlobal_ = veGlobal;
-        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
-
-        // init user veUser
-        DataTypes.VeBalance memory veUser_;
-
-        // get user's lastUpdatedTimestamp [either matches global or lags behind it]
-        uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
-        
-
-        // user's first time: no prior updates to execute 
-        if (userLastUpdatedAt == 0) {
-
-            // view global: may or may not have updates
-            veGlobal_ = _viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
-
-            return (veGlobal_, veUser_);
-        }
-                
-        // get user's previous veBalance: if both global and user are up to date, return
-        veUser_ = userHistory[user][userLastUpdatedAt];
-        if(userLastUpdatedAt >= currentEpochStart) return (veGlobal_, veUser_); 
-
-        // update both global and user veBalance to current epoch
-        while (userLastUpdatedAt < currentEpochStart) {
-
-            // advance 1 epoch
-            userLastUpdatedAt += EpochMath.EPOCH_DURATION;
-
-            // view global: if needed 
-            if(lastUpdatedTimestamp_ < userLastUpdatedAt) {
-                
-                // apply scheduled slope reductions and decrement bias for expiring locks
-                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[userLastUpdatedAt], userLastUpdatedAt);
-            }
-
-            // view user: apply scheduled slope reductions and decrement bias for expiring locks
-            veUser_ = _subtractExpired(veUser_, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
-        }
-
-        return (veGlobal_, veUser_);
     }
 
     function _viewAccountAndGlobalAndPendingDeltas(address account, uint128 currentEpochStart, bool isDelegate) internal view returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
@@ -1316,10 +1316,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         // account's first time: no prior updates to execute 
         if (accountLastUpdatedAt == 0) {
             
-            // set account's lastUpdatedTimestamp
-            accountLastUpdatedMapping[account] = currentEpochStart;
-
-            // update global: updates lastUpdatedTimestamp [may or may not have updates]
+            // view global: does not update storage
             veGlobal_ = _viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
 
             return (veGlobal_, veAccount_);
