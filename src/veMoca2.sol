@@ -819,14 +819,13 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
             address account = accounts[i];
             if (account == address(0)) continue;
 
-            // Call internal update function.
-            // This function INTERNALLY writes to:
+            // Call internal update function. This function INTERNALLY writes to:
             // - accountHistoryMapping 
             // - accountLastUpdatedMapping 
             // - accountPendingDeltas 
-            (, DataTypes.VeBalance memory veAccount_)= _updateAccountAndGlobalAndPendingDeltas(account, currentEpochStart, isDelegate);
+            (, DataTypes.VeBalance memory veAccount_) = _updateAccountAndGlobalAndPendingDeltas(account, currentEpochStart, isDelegate);
             
-            // No need to write veUser/veDelegate back to storage here; the internal function has already checkpointed the result to history
+            // No need to write veUser/veDelegate back to storage here; the internal function has already checkpointed the result to history1
             if(isDelegate) emit Events.DelegateUpdated(account, veAccount_.bias, veAccount_.slope);
             else emit Events.UserUpdated(account, veAccount_.bias, veAccount_.slope);
         }
@@ -845,24 +844,28 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
 
         uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
 
+        // 1. Update Global State Explicitly (Once per batch)
+        // This ensures veGlobal storage is current. Subsequent internal calls will skip global updates.
+        DataTypes.VeBalance memory veGlobal_ = _updateGlobal(veGlobal, lastUpdatedTimestamp, currentEpochStart); 
+        
+        // STORAGE: update global veBalance
+        veGlobal = veGlobal_;
+        emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
+
+        // 2. Iterate through user-delegate pairs
         for(uint256 i; i < length; ++i) {
             address user = users[i];
             address delegate = delegates[i];
             
             if (user == address(0) || delegate == address(0)) continue;
 
-            // 1. Calculate up-to-date state & Clear pending deltas
-            // Internal function writes to:
+            // Update user-delegate pair state & Clear pending deltas. Internal function writes to:
             // - userDelegatedPairLastUpdatedTimestamp 
             // - userPendingDeltasForDelegate (Deletes) 
-            DataTypes.VeBalance memory vePair_ = _updatePendingForDelegatePair(user, delegate, currentEpochStart);
+            DataTypes.VeBalance memory veDelegatePair_ = _updatePendingForDelegatePair(user, delegate, currentEpochStart);
             
-            // 2. CRITICAL: Write the calculated balance to storage
-            // The internal function does NOT do this [cite: 710-719]
-            delegatedAggregationHistory[user][delegate][currentEpochStart] = vePair_;
-            
-            // 3. Emit event for indexers
-            emit Events.DelegatedAggregationUpdated(user, delegate, vePair_.bias, vePair_.slope);
+            // No need to write veDelegatePair back to storage here; the internal function has already checkpointed the result to delegatedAggregationHistory
+            emit Events.DelegatedAggregationUpdated(user, delegate, veDelegatePair_.bias, veDelegatePair_.slope);
         }
     }
 
