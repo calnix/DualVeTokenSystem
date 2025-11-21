@@ -391,79 +391,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
 
 //------------------------------ User Delegate functions-------------------------------------
 
-    /**
-        @dev
-        See @veMoca2.md "min. lock duration: freezing decay + delegation"
-
-        Minimum lock duration for delegation: currentEpoch + 3
-        
-        This requirement stems from two core mechanics:
-        1. Forward-decay: All locks' voting power is decayed to 0 at epoch end (freezing decay)
-        2. Forward-delegation: Delegation only takes effect in the next epoch
-        
-        Example scenario:
-        - Epoch 1: User creates lock
-        - Epoch 2: User delegates lock; user still retains voting rights in epoch 2
-        - Epoch 3: Delegation takes effect; delegate can now vote with the lock
-        - Epoch 4: Lock's voting power is forward-decayed to 0
-        
-        Therefore, for a delegation to be meaningful:
-        - Lock expiry must be >= currentEpoch + 3
-        - This ensures the delegate has at least one full epoch (epoch 3) to exercise voting power
-        - If expiry < currentEpoch + 3, the lock would decay to 0 before the delegate can use it
-        
-        Note: When creating a new delegated lock via createLock(isDelegated=true), the lock is delegated immediately,
-        so only currentEpoch + 1 is required as the minimum expiry.
-
-        But we keep to currentEpoch + 3 for consistency.
-    */
-
-    function _updatePendingForDelegatePair(address user, address delegate, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory) {
-        uint128 pairLastUpdatedAt = userDelegatedPairLastUpdatedTimestamp[user][delegate];
-
-        // init user veUser
-        DataTypes.VeBalance memory vePair_;
-
-        // if the pair has never been updated, return the initial aggregated veBalance
-        if(pairLastUpdatedAt == 0) {
-            // update the last updated timestamp
-            userDelegatedPairLastUpdatedTimestamp[user][delegate] = currentEpochStart;
-            return vePair_;
-        }
-
-        // copy the previous aggregated veBalance to mem [if the pair is already up to date, return]
-        vePair_ = delegatedAggregationHistory[user][delegate][pairLastUpdatedAt];
-        if(pairLastUpdatedAt == currentEpochStart) return vePair_; 
-
-        // update pair's aggregated veBalance to current epoch start
-        while(pairLastUpdatedAt < currentEpochStart) {
-
-            // advance to next epoch
-            pairLastUpdatedAt += EpochMath.EPOCH_DURATION;
-
-            // apply decay to the aggregated veBalance
-            vePair_ = _subtractExpired(vePair_, userDelegatedSlopeChanges[user][delegate][pairLastUpdatedAt], pairLastUpdatedAt);
-            
-            // get the pending delta for the current epoch
-            DataTypes.VeDeltas storage deltaPtr = userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
-            
-            // apply the pending deltas to the vePair [add then sub]
-            if (deltaPtr.hasAddition) vePair_ = _add(vePair_, deltaPtr.additions);
-            if (deltaPtr.hasSubtraction) vePair_ = _sub(vePair_, deltaPtr.subtractions);
-
-            // STORAGE: book veBalance for epoch 
-            delegatedAggregationHistory[user][delegate][pairLastUpdatedAt] = vePair_;
-
-            // clean up after applying
-            delete userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
-        }
-
-        // update the last updated timestamp
-        userDelegatedPairLastUpdatedTimestamp[user][delegate] = pairLastUpdatedAt;
-
-        return vePair_;
-    }
-    
     function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
         // sanity check: delegate is registered + not the same as the caller
         require(delegate != msg.sender, Errors.InvalidDelegate());
@@ -656,7 +583,85 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         emit Events.LockUndelegated(lockId, msg.sender, lock.delegate);
     }
 
-//------------------------------ CronJob: createLockFor()---------------------------------------------
+// ----------------------------- Helper functions --------------------------------------------------------------------
+
+    /**
+     * @notice Admin helper to batch update stale accounts to the current epoch.
+     * @dev Fixes OOG risks by applying pending deltas and decay in a separate transaction.
+     * @param accounts Array of addresses to update.
+     * @param isDelegate True if updating delegate accounts, False for user accounts.
+     */
+    function updateAccountsAndPendingDeltas(address[] calldata accounts, bool isDelegate) external whenNotPaused {
+        uint256 length = accounts.length;
+        require(length > 0, Errors.InvalidArray());
+
+        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
+
+        // 1. Update Global State Explicitly (Once per batch)
+        // This ensures veGlobal storage is current. Subsequent internal calls will skip global updates.
+        DataTypes.VeBalance memory veGlobal_ = _updateGlobal(veGlobal, lastUpdatedTimestamp, currentEpochStart); 
+        
+        // STORAGE: update global veBalance
+        veGlobal = veGlobal_;
+        emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
+  
+        // 2. Iterate through accounts
+        for(uint256 i; i < length; ++i) {
+            address account = accounts[i];
+            if (account == address(0)) continue;
+
+            // Call internal update function. This function INTERNALLY writes to:
+            // - accountHistoryMapping 
+            // - accountLastUpdatedMapping 
+            // - accountPendingDeltas 
+            (, DataTypes.VeBalance memory veAccount_) = _updateAccountAndGlobalAndPendingDeltas(account, currentEpochStart, isDelegate);
+            
+            // No need to write veUser/veDelegate back to storage here; the internal function has already checkpointed the result to history
+            if(isDelegate) emit Events.DelegateUpdated(account, veAccount_.bias, veAccount_.slope);
+            else emit Events.UserUpdated(account, veAccount_.bias, veAccount_.slope);
+        }
+    }
+
+    /**
+     * @notice Admin helper to batch update stale User-Delegate pairs to the current epoch.
+     * @dev Essential for delegates claiming fees if the pair interaction is stale.
+     * @param users Array of user addresses.
+     * @param delegates Array of delegate addresses corresponding to the users.
+     */
+    function updateDelegatePairs(address[] calldata users, address[] calldata delegates) external whenNotPaused {
+        uint256 length = users.length;
+        require(length > 0, Errors.InvalidArray());
+        require(length == delegates.length, Errors.MismatchedArrayLengths());
+
+        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
+
+        // 1. Update Global State Explicitly (Once per batch)
+        // This ensures veGlobal storage is current. Subsequent internal calls will skip global updates.
+        DataTypes.VeBalance memory veGlobal_ = _updateGlobal(veGlobal, lastUpdatedTimestamp, currentEpochStart); 
+        
+        // STORAGE: update global veBalance
+        veGlobal = veGlobal_;
+        emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
+
+        // 2. Iterate through user-delegate pairs
+        for(uint256 i; i < length; ++i) {
+            address user = users[i];
+            address delegate = delegates[i];
+            
+            if (user == address(0) || delegate == address(0)) continue;
+
+            // Update user-delegate pair state & Clear pending deltas. Internal function writes to:
+            // - userDelegatedPairLastUpdatedTimestamp 
+            // - userPendingDeltasForDelegate (Deletes) 
+            DataTypes.VeBalance memory veDelegatePair_ = _updatePendingForDelegatePair(user, delegate, currentEpochStart);
+            
+            // No need to write veDelegatePair back to storage here; the internal function has already checkpointed the result to delegatedAggregationHistory
+            emit Events.DelegatedAggregationUpdated(user, delegate, veDelegatePair_.bias, veDelegatePair_.slope);
+        }
+    }
+
+
+//------------------------------ CronJob: createLockFor()---------------------------------------------------------------
 
     /** consider:
 
@@ -794,81 +799,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
     }
 
-    /**
-     * @notice Admin helper to batch update stale accounts to the current epoch.
-     * @dev Fixes OOG risks by applying pending deltas and decay in a separate transaction.
-     * @param accounts Array of addresses to update.
-     * @param isDelegate True if updating delegate accounts, False for user accounts.
-     */
-    function updateAccountsAndPendingDeltas(address[] calldata accounts, bool isDelegate) external onlyRole(Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE) whenNotPaused {
-        uint256 length = accounts.length;
-        require(length > 0, Errors.InvalidArray());
-
-        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
-
-        // 1. Update Global State Explicitly (Once per batch)
-        // This ensures veGlobal storage is current. Subsequent internal calls will skip global updates.
-        DataTypes.VeBalance memory veGlobal_ = _updateGlobal(veGlobal, lastUpdatedTimestamp, currentEpochStart); 
-        
-        // STORAGE: update global veBalance
-        veGlobal = veGlobal_;
-        emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-  
-        // 2. Iterate through accounts
-        for(uint256 i; i < length; ++i) {
-            address account = accounts[i];
-            if (account == address(0)) continue;
-
-            // Call internal update function. This function INTERNALLY writes to:
-            // - accountHistoryMapping 
-            // - accountLastUpdatedMapping 
-            // - accountPendingDeltas 
-            (, DataTypes.VeBalance memory veAccount_) = _updateAccountAndGlobalAndPendingDeltas(account, currentEpochStart, isDelegate);
-            
-            // No need to write veUser/veDelegate back to storage here; the internal function has already checkpointed the result to history1
-            if(isDelegate) emit Events.DelegateUpdated(account, veAccount_.bias, veAccount_.slope);
-            else emit Events.UserUpdated(account, veAccount_.bias, veAccount_.slope);
-        }
-    }
-
-    /**
-     * @notice Admin helper to batch update stale User-Delegate pairs to the current epoch.
-     * @dev Essential for delegates claiming fees if the pair interaction is stale.
-     * @param users Array of user addresses.
-     * @param delegates Array of delegate addresses corresponding to the users.
-     */
-    function updateDelegatePairs(address[] calldata users, address[] calldata delegates) external onlyRole(Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE) whenNotPaused {
-        uint256 length = users.length;
-        require(length > 0, Errors.InvalidArray());
-        require(length == delegates.length, Errors.MismatchedArrayLengths());
-
-        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
-
-        // 1. Update Global State Explicitly (Once per batch)
-        // This ensures veGlobal storage is current. Subsequent internal calls will skip global updates.
-        DataTypes.VeBalance memory veGlobal_ = _updateGlobal(veGlobal, lastUpdatedTimestamp, currentEpochStart); 
-        
-        // STORAGE: update global veBalance
-        veGlobal = veGlobal_;
-        emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-
-        // 2. Iterate through user-delegate pairs
-        for(uint256 i; i < length; ++i) {
-            address user = users[i];
-            address delegate = delegates[i];
-            
-            if (user == address(0) || delegate == address(0)) continue;
-
-            // Update user-delegate pair state & Clear pending deltas. Internal function writes to:
-            // - userDelegatedPairLastUpdatedTimestamp 
-            // - userPendingDeltasForDelegate (Deletes) 
-            DataTypes.VeBalance memory veDelegatePair_ = _updatePendingForDelegatePair(user, delegate, currentEpochStart);
-            
-            // No need to write veDelegatePair back to storage here; the internal function has already checkpointed the result to delegatedAggregationHistory
-            emit Events.DelegatedAggregationUpdated(user, delegate, veDelegatePair_.bias, veDelegatePair_.slope);
-        }
-    }
-
 //------------------------------ VotingController.sol functions------------------------------------------
     
     // note combine to 1 -> update Voting Controller
@@ -893,7 +823,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         emit Events.DelegateUnregistered(delegate);
     }
 
-//-------------------------------internal: update functions-----------------------------------------------------
+//------------------------------ Internal: update functions-----------------------------------------------------
 
 
     // does not update veGlobal. updates lastUpdatedTimestamp, totalSupplyAt[]
@@ -1257,7 +1187,54 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         return newVeBalance;
     }
 
-//-------------------------------internal: helper functions-----------------------------------------------------
+    function _updatePendingForDelegatePair(address user, address delegate, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory) {
+        uint128 pairLastUpdatedAt = userDelegatedPairLastUpdatedTimestamp[user][delegate];
+
+        // init user veUser
+        DataTypes.VeBalance memory vePair_;
+
+        // if the pair has never been updated, return the initial aggregated veBalance
+        if(pairLastUpdatedAt == 0) {
+            // update the last updated timestamp
+            userDelegatedPairLastUpdatedTimestamp[user][delegate] = currentEpochStart;
+            return vePair_;
+        }
+
+        // copy the previous aggregated veBalance to mem [if the pair is already up to date, return]
+        vePair_ = delegatedAggregationHistory[user][delegate][pairLastUpdatedAt];
+        if(pairLastUpdatedAt == currentEpochStart) return vePair_; 
+
+        // update pair's aggregated veBalance to current epoch start
+        while(pairLastUpdatedAt < currentEpochStart) {
+
+            // advance to next epoch
+            pairLastUpdatedAt += EpochMath.EPOCH_DURATION;
+
+            // apply decay to the aggregated veBalance
+            vePair_ = _subtractExpired(vePair_, userDelegatedSlopeChanges[user][delegate][pairLastUpdatedAt], pairLastUpdatedAt);
+            
+            // get the pending delta for the current epoch
+            DataTypes.VeDeltas storage deltaPtr = userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
+            
+            // apply the pending deltas to the vePair [add then sub]
+            if (deltaPtr.hasAddition) vePair_ = _add(vePair_, deltaPtr.additions);
+            if (deltaPtr.hasSubtraction) vePair_ = _sub(vePair_, deltaPtr.subtractions);
+
+            // STORAGE: book veBalance for epoch 
+            delegatedAggregationHistory[user][delegate][pairLastUpdatedAt] = vePair_;
+
+            // clean up after applying
+            delete userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
+        }
+
+        // update the last updated timestamp
+        userDelegatedPairLastUpdatedTimestamp[user][delegate] = pairLastUpdatedAt;
+
+        return vePair_;
+    }
+    
+
+//------------------------------ Internal: helper functions-----------------------------------------------------
 
     ///@dev Generate a vaultId. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
     function _generateVaultId(uint256 salt, address user) internal view returns (bytes32) {
@@ -1296,7 +1273,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
     }
 
 
-//-------------------------------internal: lib-----------------------------------------------------
+//------------------------------ Internal: lib------------------------------------------------------------------
    
     /**
      * @notice Removes expired locks from a veBalance.
@@ -1341,8 +1318,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
     }
 
 
-
-
     // subtracts b from a: a - b
     function _sub(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
         DataTypes.VeBalance memory res;
@@ -1370,7 +1345,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         return a.bias - decay;
     }
 
-//-------------------------------internal: view functions-----------------------------------------------------
+//------------------------------ Internal: view functions-----------------------------------------------------
 
     // needed for totalSupplyAtTimestamp() & _viewAccountAndGlobalAndPendingDeltas
     function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint128 lastUpdatedAt, uint128 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {       
@@ -1469,7 +1444,104 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         return (veGlobal_, veAccount_);
     }
 
-//-------------------------------External: View functions-----------------------------------------
+//-------------------------------Risk management--------------------------------------------------------
+
+    /**
+     * @notice Pause contract. Cannot pause once frozen
+     */
+    function pause() external whenNotPaused onlyRole(Constants.MONITOR_ROLE) {
+        _pause();
+    }
+
+    /**
+     * @notice Unpause pool. Cannot unpause once frozen
+     */
+    function unpause() external whenPaused onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(isFrozen == 0, Errors.IsFrozen()); 
+        _unpause();
+    }
+
+    /**
+     * @notice To freeze the pool in the event of something untoward occurring
+     * @dev Only callable from a paused state, affirming that staking should not resume
+     *      Nothing to be updated. Freeze as is.
+     *      Enables emergencyExit() to be called.
+     */
+    function freeze() external whenPaused onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(isFrozen == 0, Errors.IsFrozen());
+
+        isFrozen = 1;
+        emit Events.ContractFrozen();
+    }  
+
+    /**
+     * @notice Returns principal tokens (esMoca, Moca) to users for specified locks during emergency exit.
+     * @dev Only callable by the Emergency Exit Handler when the contract is frozen.
+     *      Ignores all contract state updates except returning principals; assumes system failure.
+     *      NOTE: Expectation is that VotingController is paused or undergoing emergencyExit(), to prevent phantom votes.
+     *            Phantom votes since we do not update state when returning principals; too complicated and not worth the effort.
+     * @param lockIds Array of lock IDs for which principals should be returned.    
+     * @return totalLocksProcessed The number of locks processed.
+     * @return totalMocaReturned The total amount of moca returned.
+     * @return totalEsMocaReturned The total amount of esMoca returned.
+     */
+    function emergencyExit(bytes32[] calldata lockIds) external onlyRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE) returns(uint256, uint256, uint256) {
+        require(isFrozen == 1, Errors.NotFrozen());
+        require(lockIds.length > 0, Errors.InvalidArray());
+
+        // Track totals for single event emission
+        uint256 totalMocaReturned;
+        uint256 totalEsMocaReturned;
+        uint256 totalLocksProcessed;
+
+        // get user's veBalance for each lock
+        for(uint256 i; i < lockIds.length; ++i) {
+            DataTypes.Lock memory lock = locks[lockIds[i]];
+
+            // Skip invalid/already processed locks
+            if(lock.owner == address(0) || lock.isUnlocked) continue;        
+            
+            // direct storage updates - only write changed fields
+            if(lock.esMoca > 0) {
+                
+                uint256 esMocaToReturn = lock.esMoca;
+                delete lock.esMoca;
+                TOTAL_LOCKED_ESMOCA -= esMocaToReturn;
+                
+                // increment counter
+                totalEsMocaReturned += esMocaToReturn;
+
+                ESMOCA.safeTransfer(lock.owner, esMocaToReturn);
+            }
+
+            if(lock.moca > 0) {
+
+                uint256 mocaToReturn = lock.moca;
+                delete lock.moca;
+                TOTAL_LOCKED_MOCA -= mocaToReturn;  
+
+                // increment counter
+                totalMocaReturned += mocaToReturn;
+
+                // transfer moca [wraps if transfer fails within gas limit]
+                _transferMocaAndWrapIfFailWithGasLimit(WMOCA, lock.owner, mocaToReturn, MOCA_TRANSFER_GAS_LIMIT);
+            }
+
+            // mark unlocked: principals returned
+            lock.isUnlocked = true;
+
+            // STORAGE: update lock
+            locks[lockIds[i]] = lock;
+
+            ++totalLocksProcessed;
+        }
+
+        if(totalLocksProcessed > 0) emit Events.EmergencyExit(lockIds, totalLocksProcessed, totalMocaReturned, totalEsMocaReturned);
+
+        return (totalLocksProcessed, totalMocaReturned, totalEsMocaReturned);
+    }
+    
+//-------------------------------External: View functions-----------------------------------------------
 
     function totalSupplyAtTimestamp(uint128 timestamp) public view returns (uint256) {
         require(timestamp >= block.timestamp, Errors.InvalidTimestamp());
