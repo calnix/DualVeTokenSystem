@@ -4,7 +4,7 @@ pragma solidity 0.8.27;
 // OZ
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {AccessControlEnumerable} from "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 // libraries
@@ -24,7 +24,7 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
     - Formula-based calculation determines veMOCA amount based on stake amount and duration
  */
 
-contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
+contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     using SafeERC20 for IERC20;
 
     address public immutable WMOCA;
@@ -583,7 +583,15 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         emit Events.LockUndelegated(lockId, msg.sender, lock.delegate);
     }
 
-// ----------------------------- Helper functions --------------------------------------------------------------------
+// ----------------------------- Update state functions -----------------------------------------------------------------
+
+    /**
+        Because state updates require iterating through every missed epoch,
+        an account that has been inactive for a long period (e.g., several epochs) will require a transaction with a very high gas limit to update its state.
+        
+        To address this we have the helper functions below that will batch update stale accounts and user-delegate pairs to the current epoch.
+     */
+
 
     /**
      * @notice Admin helper to batch update stale accounts to the current epoch.
@@ -708,12 +716,12 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         
         for(uint256 i; i < length; ++i) {
 
-            DataTypes.VeBalance memory veIncoming;
-            (lockIds[i], veIncoming) = _createSingleLock(users[i], mocaAmounts[i], esMocaAmounts[i], expiry, currentEpochStart);
+            DataTypes.VeBalance memory veIncoming_;
+            (lockIds[i], veIncoming_) = _createSingleLock(users[i], mocaAmounts[i], esMocaAmounts[i], expiry, currentEpochStart);
 
             // Aggregate Global Stats in memory
-            veGlobal_ = _add(veGlobal_, veIncoming);
-            totalSlopeChanges += veIncoming.slope;
+            veGlobal_ = _add(veGlobal_, veIncoming_);
+            totalSlopeChanges += veIncoming_.slope;
             
             // accumulate totals: for verification
             totalMoca += mocaAmounts[i];
@@ -735,6 +743,8 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
             ESMOCA.safeTransferFrom(msg.sender, address(this), totalEsMoca);
         }
 
+        // emit events
+        emit Events.LocksCreatedFor(users, lockIds, totalMoca, totalEsMoca);
         return lockIds;
     }
 
@@ -763,23 +773,23 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         newLock.expiry = expiry;
 
         // Convert Lock to veBalance
-        DataTypes.VeBalance memory veIncoming = _convertToVeBalance(newLock);
+        DataTypes.VeBalance memory veIncoming_ = _convertToVeBalance(newLock);
 
         // STORAGE: book lock + checkpoint lock
         locks[lockId] = newLock;
-        _pushCheckpoint(lockHistory[lockId], veIncoming, uint128(currentEpochStart));
+        _pushCheckpoint(lockHistory[lockId], veIncoming_, uint128(currentEpochStart));
     
         emit Events.LockCreated(lockId, user, /*delegate*/ address(0), newLock.moca, newLock.esMoca, newLock.expiry);
 
         // Update User State: add veIncoming to user
-        veUser_ = _add(veUser_, veIncoming);
+        veUser_ = _add(veUser_, veIncoming_);
         
         // Write final user state
         userHistory[user][currentEpochStart] = veUser_;
-        userSlopeChanges[user][newLock.expiry] += veIncoming.slope;
+        userSlopeChanges[user][newLock.expiry] += veIncoming_.slope;
         emit Events.UserUpdated(user, veUser_.bias, veUser_.slope);
 
-        return (lockId, veIncoming);
+        return (lockId, veIncoming_);
     }
 
 //------------------------------ Admin function: setMocaTransferGasLimit() ---------------------------------------------
@@ -857,127 +867,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
 
         return (veGlobal_);
     }
-
-    /*
-    function _updateUserAndGlobal(address user, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
-        // cache global veBalance
-        DataTypes.VeBalance memory veGlobal_ = veGlobal;
-        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
-
-        // init user veUser
-        DataTypes.VeBalance memory veUser_;
-
-        // get user's lastUpdatedTimestamp [either matches global or lags behind it]
-        uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
-        
-
-        // user's first time: no prior updates to execute 
-        if (userLastUpdatedAt == 0) {
-            
-            // set user's lastUpdatedTimestamp
-            userLastUpdatedTimestamp[user] = currentEpochStart;
-
-            // update global: updates lastUpdatedTimestamp [may or may not have updates]
-            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
-
-            return (veGlobal_, veUser_);
-        }
-                
-        // get user's previous veBalance: if both global and user are up to date, return
-        veUser_ = userHistory[user][userLastUpdatedAt];
-        if(userLastUpdatedAt >= currentEpochStart) return (veGlobal_, veUser_); 
-
-        // update both global and user veBalance to current epoch
-        while (userLastUpdatedAt < currentEpochStart) {
-
-            // advance 1 epoch
-            userLastUpdatedAt += EpochMath.EPOCH_DURATION;
-
-            // update global: if needed 
-            if(lastUpdatedTimestamp_ < userLastUpdatedAt) {
-                
-                // apply scheduled slope reductions and decrement bias for expiring locks
-                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[userLastUpdatedAt], userLastUpdatedAt);
-                // book ve supply for this epoch
-                totalSupplyAt[userLastUpdatedAt] = _getValueAt(veGlobal_, userLastUpdatedAt);
-            }
-
-            // update user: apply scheduled slope reductions and decrement bias for expiring locks
-            veUser_ = _subtractExpired(veUser_, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
-            // book user checkpoint 
-            userHistory[user][userLastUpdatedAt] = veUser_;
-        }
-
-        // set final lastUpdatedTimestamp: for global & user
-        lastUpdatedTimestamp = userLastUpdatedTimestamp[user] = userLastUpdatedAt;
-        
-        // return
-        return (veGlobal_, veUser_);
-    }*/
-
-    /*
-    function _updateAccountAndGlobal(address account, uint128 currentEpochStart, bool isDelegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
-        // Streamlined mapping lookups based on account type
-        (
-            mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping,
-            mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping,
-            mapping(address => uint128) storage accountLastUpdatedMapping
-        ) 
-            = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
-
-        // CACHE: global veBalance + lastUpdatedTimestamp
-        DataTypes.VeBalance memory veGlobal_ = veGlobal;
-        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
-
-        // init user veUser
-        DataTypes.VeBalance memory veAccount_;
-
-        // get user's lastUpdatedTimestamp [either matches global or lags behind it]
-        uint128 accountLastUpdatedAt = accountLastUpdatedMapping[account];
-        
-        // account's first time: no prior updates to execute 
-        if (accountLastUpdatedAt == 0) {
-            
-            // set account's lastUpdatedTimestamp
-            accountLastUpdatedMapping[account] = currentEpochStart;
-
-            // update global: updates lastUpdatedTimestamp [may or may not have updates]
-            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
-
-            return (veGlobal_, veAccount_);
-        }
-
-        // get account's previous veBalance: if both global and account are up to date, return
-        veAccount_ = accountHistoryMapping[account][accountLastUpdatedAt];
-        if(accountLastUpdatedAt >= currentEpochStart) return (veGlobal_, veAccount_); 
-
-
-        // update both global and account veBalance to current epoch
-        while (accountLastUpdatedAt < currentEpochStart) {
-            // advance 1 epoch
-            accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
-
-            // update global: if needed 
-            if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
-                
-                // apply scheduled slope reductions and decrement bias for expiring locks
-                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
-                // book ve supply for this epoch
-                totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
-            }
-
-            // update account: apply scheduled slope reductions and decrement bias for expiring locks
-            veAccount_ = _subtractExpired(veAccount_, accountSlopeChangesMapping[account][accountLastUpdatedAt], accountLastUpdatedAt);
-            // book account checkpoint 
-            accountHistoryMapping[account][accountLastUpdatedAt] = veAccount_;
-        }
-
-        // set final lastUpdatedTimestamp: for global & account
-        lastUpdatedTimestamp = accountLastUpdatedMapping[account] = accountLastUpdatedAt;
-
-        // return
-        return (veGlobal_, veAccount_);
-    }*/
 
     /**
         - user.lastUpdatedAt either matches the global.lastUpdatedAt OR is behind it
@@ -1162,6 +1051,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
             // account slope changes
             accountSlopeChangesMapping[account][oldLock.expiry] -= oldVeBalance.slope;
             accountSlopeChangesMapping[account][newLock.expiry] += newVeBalance.slope;
+
         } else {
             // SCENARIO: increaseAmount() - only amounts changed [expiry unchanged]
             
@@ -1177,11 +1067,22 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
             // process pending deltas for the owner-delegate pair, till current epoch
             DataTypes.VeBalance memory veDelegatePair_ = _updatePendingForDelegatePair(oldLock.owner, oldLock.delegate, currentEpochStart);
 
-            // update delegatedAggregationHistory
+            // update delegatedAggregationHistory[veBalance of user-delegate pair]
             veDelegatePair_ = _add(veDelegatePair_, increaseInVeBalance);
             delegatedAggregationHistory[newLock.owner][newLock.delegate][currentEpochStart] = veDelegatePair_;
-            userDelegatedSlopeChanges[newLock.owner][newLock.delegate][currentEpochStart] += increaseInVeBalance.slope;
             emit Events.DelegatedAggregationUpdated(newLock.owner, newLock.delegate, veDelegatePair_.bias, veDelegatePair_.slope);
+
+            // update userDelegatedSlopeChanges depending on the scenario: increaseDuration or increaseAmount
+            if(newLock.expiry != oldLock.expiry) {
+
+                // SCENARIO: increaseDuration()
+                userDelegatedSlopeChanges[oldLock.owner][oldLock.delegate][oldLock.expiry] -= oldVeBalance.slope;
+                userDelegatedSlopeChanges[newLock.owner][newLock.delegate][newLock.expiry] += newVeBalance.slope;
+            } else {
+
+                // SCENARIO: increaseAmount()
+                userDelegatedSlopeChanges[newLock.owner][newLock.delegate][newLock.expiry] += increaseInVeBalance.slope;
+            }
         }
 
         return newVeBalance;
@@ -1275,6 +1176,34 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
 
 //------------------------------ Internal: lib------------------------------------------------------------------
    
+    /** note: for _subtractExpired(), _convertToVeBalance(), _getValueAt()
+
+        On bias & slope calculations, we can use uint128 for all calculations.
+
+        Overflow is mathematically impossible given:
+        - Total MOCA supply: 8.89 billion tokens
+        - Maximum lock duration: 728 days
+        - Reasonable timestamp ranges (through year 2300)
+
+        So if someone locks the entire Moca supply for 728 days [MAX_LOCK_DURATION]:
+        - slope = totalAmount / MAX_LOCK_DURATION
+        - slope = (8.89 × 10^27) / (62,899,200)
+        - slope ≈ 1.413 × 10^20 wei/second
+        
+        bias = slope × expiry:
+        - bias = (1.413 × 10^20) × (4.1 × 10^9)
+        - bias ≈ 5.79 × 10^29 wei
+
+        uint128.max = 2^128 - 1 ≈ 3.402 × 10^38 wei
+        - Safety Margin = uint128.max / bias
+        - Safety Margin = (3.402 × 10^38) / (5.79 × 10^29)
+        - Safety Margin ≈ 587 million times
+
+        When would overflow actually occur?
+        - Only if someone could lock 587 million times the entire circulating supply in a single lock, which is:
+        - Economically impossible (tokens don't exist)
+    */
+
     /**
      * @notice Removes expired locks from a veBalance.
      * @dev Overflow is only possible if 100% of MOCA is locked at the same expiry, which is infeasible in practice.
@@ -1298,7 +1227,8 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
     function _convertToVeBalance(DataTypes.Lock memory lock) internal pure returns (DataTypes.VeBalance memory) {
         DataTypes.VeBalance memory veBalance;
 
-        veBalance.slope = (lock.moca + lock.esMoca) / uint128(EpochMath.MAX_LOCK_DURATION);
+        // In practice, this should never overflow given MOCA supply constraints
+        veBalance.slope = (lock.moca + lock.esMoca) / EpochMath.MAX_LOCK_DURATION;
         veBalance.bias = veBalance.slope * lock.expiry;
 
         return veBalance;
@@ -1474,6 +1404,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         emit Events.ContractFrozen();
     }  
 
+    // @audit calnix: reentrancy guard? well only we can call the function; so no need for reentrancy guard
     /**
      * @notice Returns principal assets (esMoca, Moca) to users for specified locks 
      * @dev Only callable by the Emergency Exit Handler when the contract is frozen.
@@ -1497,7 +1428,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         // get user's veBalance for each lock
         for(uint256 i; i < lockIds.length; ++i) {
             DataTypes.Lock memory lock = locks[lockIds[i]];
-
+            
             // Skip invalid/already processed locks
             if(lock.owner == address(0) || lock.isUnlocked) continue;        
             
@@ -1640,4 +1571,152 @@ contract veMocaV2 is LowLevelWMoca, AccessControl, Pausable {
         // return the calculated voting power at the exact end of the epoch
         return _getValueAt(veBalance, epochEndTime);
     }
+
+    /**
+     * @notice Check if a lock can be delegated
+     * @param lockId Lock ID to check
+     * @return canDelegate Whether lock can be delegated
+     */
+    function canDelegateLock(bytes32 lockId) external view returns (bool) {
+        DataTypes.Lock memory lock = locks[lockId];
+        
+        // lock does not exist
+        if (lock.owner == address(0)) return false;
+        
+        // lock is already delegated
+        if (lock.delegate != address(0)) return false;
+        
+        // lock is unlocked: lock expired & principals were returned
+        if (lock.isUnlocked) return false;
+        
+        // lock is expired
+        if (lock.expiry <= block.timestamp) return false;
+        
+        // check minimum duration
+        _minimumDurationCheck(lock.expiry); 
+        
+        return true;
+    }
 }
+
+
+/*
+    function _updateUserAndGlobal(address user, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
+        // cache global veBalance
+        DataTypes.VeBalance memory veGlobal_ = veGlobal;
+        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
+
+        // init user veUser
+        DataTypes.VeBalance memory veUser_;
+
+        // get user's lastUpdatedTimestamp [either matches global or lags behind it]
+        uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
+        
+
+        // user's first time: no prior updates to execute 
+        if (userLastUpdatedAt == 0) {
+            
+            // set user's lastUpdatedTimestamp
+            userLastUpdatedTimestamp[user] = currentEpochStart;
+
+            // update global: updates lastUpdatedTimestamp [may or may not have updates]
+            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
+
+            return (veGlobal_, veUser_);
+        }
+                
+        // get user's previous veBalance: if both global and user are up to date, return
+        veUser_ = userHistory[user][userLastUpdatedAt];
+        if(userLastUpdatedAt >= currentEpochStart) return (veGlobal_, veUser_); 
+
+        // update both global and user veBalance to current epoch
+        while (userLastUpdatedAt < currentEpochStart) {
+
+            // advance 1 epoch
+            userLastUpdatedAt += EpochMath.EPOCH_DURATION;
+
+            // update global: if needed 
+            if(lastUpdatedTimestamp_ < userLastUpdatedAt) {
+                
+                // apply scheduled slope reductions and decrement bias for expiring locks
+                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[userLastUpdatedAt], userLastUpdatedAt);
+                // book ve supply for this epoch
+                totalSupplyAt[userLastUpdatedAt] = _getValueAt(veGlobal_, userLastUpdatedAt);
+            }
+
+            // update user: apply scheduled slope reductions and decrement bias for expiring locks
+            veUser_ = _subtractExpired(veUser_, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
+            // book user checkpoint 
+            userHistory[user][userLastUpdatedAt] = veUser_;
+        }
+
+        // set final lastUpdatedTimestamp: for global & user
+        lastUpdatedTimestamp = userLastUpdatedTimestamp[user] = userLastUpdatedAt;
+        
+        // return
+        return (veGlobal_, veUser_);
+    }*/
+
+    /*
+    function _updateAccountAndGlobal(address account, uint128 currentEpochStart, bool isDelegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
+        // Streamlined mapping lookups based on account type
+        (
+            mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping,
+            mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping,
+            mapping(address => uint128) storage accountLastUpdatedMapping
+        ) 
+            = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
+
+        // CACHE: global veBalance + lastUpdatedTimestamp
+        DataTypes.VeBalance memory veGlobal_ = veGlobal;
+        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
+
+        // init user veUser
+        DataTypes.VeBalance memory veAccount_;
+
+        // get user's lastUpdatedTimestamp [either matches global or lags behind it]
+        uint128 accountLastUpdatedAt = accountLastUpdatedMapping[account];
+        
+        // account's first time: no prior updates to execute 
+        if (accountLastUpdatedAt == 0) {
+            
+            // set account's lastUpdatedTimestamp
+            accountLastUpdatedMapping[account] = currentEpochStart;
+
+            // update global: updates lastUpdatedTimestamp [may or may not have updates]
+            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
+
+            return (veGlobal_, veAccount_);
+        }
+
+        // get account's previous veBalance: if both global and account are up to date, return
+        veAccount_ = accountHistoryMapping[account][accountLastUpdatedAt];
+        if(accountLastUpdatedAt >= currentEpochStart) return (veGlobal_, veAccount_); 
+
+
+        // update both global and account veBalance to current epoch
+        while (accountLastUpdatedAt < currentEpochStart) {
+            // advance 1 epoch
+            accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
+
+            // update global: if needed 
+            if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
+                
+                // apply scheduled slope reductions and decrement bias for expiring locks
+                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
+                // book ve supply for this epoch
+                totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
+            }
+
+            // update account: apply scheduled slope reductions and decrement bias for expiring locks
+            veAccount_ = _subtractExpired(veAccount_, accountSlopeChangesMapping[account][accountLastUpdatedAt], accountLastUpdatedAt);
+            // book account checkpoint 
+            accountHistoryMapping[account][accountLastUpdatedAt] = veAccount_;
+        }
+
+        // set final lastUpdatedTimestamp: for global & account
+        lastUpdatedTimestamp = accountLastUpdatedMapping[account] = accountLastUpdatedAt;
+
+        // return
+        return (veGlobal_, veAccount_);
+    }*/

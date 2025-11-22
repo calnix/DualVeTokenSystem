@@ -56,6 +56,9 @@ library Events {
     // increaseDuration
     event LockDurationIncreased(bytes32 indexed lockId, address indexed owner, address delegate, uint256 oldExpiry, uint256 newExpiry);
 
+    // createLockFor
+    event LocksCreatedFor(address[] users, bytes32[] lockIds, uint256 totalMoca, uint256 totalEsMoca);
+
     // delegate: register, unregister
     event DelegateRegistered(address indexed delegate);
     event DelegateUnregistered(address indexed delegate);
