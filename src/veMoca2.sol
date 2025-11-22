@@ -4,7 +4,7 @@ pragma solidity 0.8.27;
 // OZ
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AccessControlEnumerable} from "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {AccessControlEnumerable, AccessControl} from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 // libraries
@@ -86,7 +86,10 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
 //------------------------------- Constructor ------------------------------------------
 
-    constructor(address wMoca_, address esMoca_, address votingController_, address owner_, uint256 mocaTransferGasLimit) {
+    constructor(address wMoca_, address esMoca_, address votingController_, uint256 mocaTransferGasLimit,
+        address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
+        address monitorBot, address emergencyExitHandler) {
+
         // cannot deploy at T=0
         require(block.timestamp > 0, Errors.InvalidTimestamp());
 
@@ -107,11 +110,11 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
 
         // roles
-        _setupRolesAndTreasury();
+        _setupRoles(globalAdmin, votingEscrowMocaAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler);
     }
 
         // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
-    function _setupRolesAndTreasury(
+    function _setupRoles(
         address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
         address monitorBot, address emergencyExitHandler) 
     internal {
@@ -126,24 +129,24 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // grant roles to addresses
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);    
-        _grantRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, votingEscrowMocaAdmin);
-        _grantRole(MONITOR_ADMIN_ROLE, monitorAdmin);
-        _grantRole(CRON_JOB_ADMIN_ROLE, cronJobAdmin);
-        _grantRole(EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
+        _grantRole(Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE, votingEscrowMocaAdmin);
+        _grantRole(Constants.MONITOR_ADMIN_ROLE, monitorAdmin);
+        _grantRole(Constants.CRON_JOB_ADMIN_ROLE, cronJobAdmin);
+        _grantRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
 
         // there should at least 1 bot address for monitoring at deployment
-        _grantRole(MONITOR_ROLE, monitorBot);
+        _grantRole(Constants.MONITOR_ROLE, monitorBot);
 
         // --------------- Set role admins ------------------------------
         // Operational role administrators managed by global admin
-        _setRoleAdmin(VOTING_ESCROW_MOCA_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
-        _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(Constants.EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
 
-        _setRoleAdmin(MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
-        _setRoleAdmin(CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(Constants.MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(Constants.CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         // High-frequency roles managed by their dedicated admins
-        _setRoleAdmin(MONITOR_ROLE, MONITOR_ADMIN_ROLE);
-        _setRoleAdmin(CRON_JOB_ROLE, CRON_JOB_ADMIN_ROLE);
+        _setRoleAdmin(Constants.MONITOR_ROLE, Constants.MONITOR_ADMIN_ROLE);
+        _setRoleAdmin(Constants.CRON_JOB_ROLE, Constants.CRON_JOB_ADMIN_ROLE);
     }
 
 //------------------------------- External functions------------------------------------------
@@ -1632,6 +1635,57 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         _minimumDurationCheck(lock.expiry); 
         
         return true;
+    }
+
+
+    // ----- Role Hashes -----
+    
+    /**
+     * @notice Get the MONITOR_ROLE hash
+     * @return The keccak256 hash of "MONITOR_ROLE"
+     */
+    function MONITOR_ROLE() external pure returns (bytes32) {
+        return Constants.MONITOR_ROLE;
+    }
+
+    /**
+     * @notice Get the CRON_JOB_ROLE hash
+     * @return The keccak256 hash of "CRON_JOB_ROLE"
+     */
+    function CRON_JOB_ROLE() external pure returns (bytes32) {
+        return Constants.CRON_JOB_ROLE;
+    }
+
+    /**
+     * @notice Get the MONITOR_ADMIN_ROLE hash
+     * @return The keccak256 hash of "MONITOR_ADMIN_ROLE"
+     */
+    function MONITOR_ADMIN_ROLE() external pure returns (bytes32) {
+        return Constants.MONITOR_ADMIN_ROLE;
+    }
+
+    /**
+     * @notice Get the CRON_JOB_ADMIN_ROLE hash
+     * @return The keccak256 hash of "CRON_JOB_ADMIN_ROLE"
+     */
+    function CRON_JOB_ADMIN_ROLE() external pure returns (bytes32) {
+        return Constants.CRON_JOB_ADMIN_ROLE;
+    }
+
+    /**
+     * @notice Get the VOTING_ESCROW_MOCA_ADMIN_ROLE hash
+     * @return The keccak256 hash of "VOTING_ESCROW_MOCA_ADMIN_ROLE"
+     */
+    function VOTING_ESCROW_MOCA_ADMIN_ROLE() external pure returns (bytes32) {
+        return Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE;
+    }
+
+    /**
+     * @notice Get the EMERGENCY_EXIT_HANDLER_ROLE hash
+     * @return The keccak256 hash of "EMERGENCY_EXIT_HANDLER_ROLE"
+     */
+    function EMERGENCY_EXIT_HANDLER_ROLE() external pure returns (bytes32) {
+        return Constants.EMERGENCY_EXIT_HANDLER_ROLE;
     }
 }
 
