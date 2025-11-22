@@ -107,7 +107,43 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
 
         // roles
-        _grantRole(DEFAULT_ADMIN_ROLE, owner_);
+        _setupRolesAndTreasury();
+    }
+
+        // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
+    function _setupRolesAndTreasury(
+        address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
+        address monitorBot, address emergencyExitHandler) 
+    internal {
+
+        // sanity check: all addresses are not zero address
+        require(globalAdmin != address(0), Errors.InvalidAddress());
+        require(votingEscrowMocaAdmin != address(0), Errors.InvalidAddress());
+        require(monitorAdmin != address(0), Errors.InvalidAddress());
+        require(cronJobAdmin != address(0), Errors.InvalidAddress());
+        require(monitorBot != address(0), Errors.InvalidAddress());
+        require(emergencyExitHandler != address(0), Errors.InvalidAddress());
+
+        // grant roles to addresses
+        _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);    
+        _grantRole(VOTING_ESCROW_MOCA_ADMIN_ROLE, votingEscrowMocaAdmin);
+        _grantRole(MONITOR_ADMIN_ROLE, monitorAdmin);
+        _grantRole(CRON_JOB_ADMIN_ROLE, cronJobAdmin);
+        _grantRole(EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
+
+        // there should at least 1 bot address for monitoring at deployment
+        _grantRole(MONITOR_ROLE, monitorBot);
+
+        // --------------- Set role admins ------------------------------
+        // Operational role administrators managed by global admin
+        _setRoleAdmin(VOTING_ESCROW_MOCA_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
+
+        _setRoleAdmin(MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        // High-frequency roles managed by their dedicated admins
+        _setRoleAdmin(MONITOR_ROLE, MONITOR_ADMIN_ROLE);
+        _setRoleAdmin(CRON_JOB_ROLE, CRON_JOB_ADMIN_ROLE);
     }
 
 //------------------------------- External functions------------------------------------------
