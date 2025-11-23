@@ -33,8 +33,8 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     address public immutable VOTING_CONTROLLER;
 
     // global principal amounts
-    uint256 public TOTAL_LOCKED_MOCA;
-    uint256 public TOTAL_LOCKED_ESMOCA;
+    uint128 public TOTAL_LOCKED_MOCA;
+    uint128 public TOTAL_LOCKED_ESMOCA;
 
     // global veBalance
     DataTypes.VeBalance public veGlobal;
@@ -45,6 +45,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
     // risk
     uint256 public isFrozen;
+    
 
 //------------------------------- Mappings ------------------------------------------
 
@@ -724,7 +725,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
      */
 
     function createLockFor(address[] calldata users, uint128[] calldata esMocaAmounts, uint128[] calldata mocaAmounts, uint128 expiry) 
-    external payable onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused returns (bytes32[] memory) { 
+        external payable onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused returns (bytes32[] memory) { 
 
         // array validation
         uint256 length = users.length;
@@ -789,7 +790,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
     function _createSingleLock(address user, uint128 moca, uint128 esMoca, uint128 expiry, uint128 currentEpochStart) internal returns (bytes32, DataTypes.VeBalance memory) {
         // update user veBalance: [STORAGE: updates userLastUpdatedTimestamp]
-        DataTypes.VeBalance memory veUser_ = _updateUser(user, currentEpochStart);
+        (, DataTypes.VeBalance memory veUser_) = _updateAccountAndGlobalAndPendingDeltas(user, currentEpochStart, false);
 
         // check: minimum amount
         _minimumAmountCheck(moca, esMoca);
@@ -988,47 +989,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         return (veGlobal_, veAccount_);
     }
-
-    // used in _createSingleLock() for createLockFor()
-    function _updateUser(address user, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory) {
-        // init user veBalance
-        DataTypes.VeBalance memory veUser_;
-
-        // get user's lastUpdatedTimestamp
-        uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
-        
-        // user's first time: no prior updates to execute 
-        if (userLastUpdatedAt == 0) {
-            // set user's lastUpdatedTimestamp
-            userLastUpdatedTimestamp[user] = currentEpochStart;
-            return veUser_;
-        }
-
-        // get user's previous veBalance: if user is already up to date, return
-        veUser_ = userHistory[user][userLastUpdatedAt];
-        if(userLastUpdatedAt >= currentEpochStart) return veUser_; 
-
-        // cache epoch duration
-        uint128 epochDuration = EpochMath.EPOCH_DURATION;
-
-        // update user veBalance to current epoch
-        while (userLastUpdatedAt < currentEpochStart) {
-            // advance 1 epoch [unchecked: can't overflow; saves some gas]
-            unchecked {userLastUpdatedAt += epochDuration;}
-
-            // update user: apply scheduled slope reductions and decrement bias for expiring locks
-            veUser_ = _subtractExpired(veUser_, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
-            
-            // book user checkpoint 
-            userHistory[user][userLastUpdatedAt] = veUser_;
-        }
-
-        // set final userLastUpdatedTimestamp
-        userLastUpdatedTimestamp[user] = userLastUpdatedAt;
-        
-        return veUser_;
-    }
-        
 
     /**
      * @dev Internal function to handle lock modifications (amount or duration changes)
@@ -1460,9 +1420,9 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         require(lockIds.length > 0, Errors.InvalidArray());
 
         // Track totals for single event emission
-        uint256 totalMocaReturned;
-        uint256 totalEsMocaReturned;
-        uint256 totalLocksProcessed;
+        uint128 totalMocaReturned;
+        uint128 totalEsMocaReturned;
+        uint128 totalLocksProcessed;
 
         // get user's veBalance for each lock
         for(uint256 i; i < lockIds.length; ++i) {
@@ -1474,7 +1434,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
             // direct storage updates - only write changed fields
             if(lock.esMoca > 0) {
                 
-                uint256 esMocaToReturn = lock.esMoca;
+                uint128 esMocaToReturn = lock.esMoca;
                 delete lock.esMoca;
                 TOTAL_LOCKED_ESMOCA -= esMocaToReturn;
                 
@@ -1486,7 +1446,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
             if(lock.moca > 0) {
 
-                uint256 mocaToReturn = lock.moca;
+                uint128 mocaToReturn = lock.moca;
                 delete lock.moca;
                 TOTAL_LOCKED_MOCA -= mocaToReturn;  
 
@@ -1513,8 +1473,8 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     
 //-------------------------------External: View functions-----------------------------------------------
 
-    function totalSupplyAtTimestamp(uint128 timestamp) public view returns (uint256) {
-        require(timestamp >= block.timestamp, Errors.InvalidTimestamp());
+    // can be for past or future queries 
+    function totalSupplyAtTimestamp(uint128 timestamp) public view returns (uint128) {
 
         // get target epoch start
         uint128 targetEpochStartTime = EpochMath.getEpochStartForTimestamp(timestamp);  
@@ -1523,9 +1483,8 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return _getValueAt(veGlobal_, timestamp);
     }
 
-
     // returns either a user's personal voting power, or voting power that was delegated to him, at given timestamp 
-    function balanceOfAt(address user, uint128 timestamp, bool isDelegate) public view returns (uint256) {
+    function balanceOfAt(address user, uint128 timestamp, bool isDelegate) public view returns (uint128) {
         require(user != address(0), Errors.InvalidAddress());
         require(timestamp <= block.timestamp, Errors.InvalidTimestamp());   // cannot query the future
 
@@ -1539,8 +1498,40 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return _getValueAt(veAccount_, timestamp);
     }
 
+    // ----------------------------- Lock View Functions -----------------------------------------------
+
+    /**
+     * @notice Returns the number of checkpoints in the lock's history.
+     * @param lockId The ID of the lock whose history length is being queried.
+     * @return The number of checkpoints in the lock's history.
+     */
+    function getLockHistoryLength(bytes32 lockId) external view returns (uint256) {
+        return lockHistory[lockId].length;
+    }
+
+    /**
+     * @notice Returns the current veBalance of a lock.
+     * @dev Converts the lock's principal amounts to veBalance using _convertToVeBalance.
+     * @param lockId The ID of the lock whose veBalance is being queried.
+     * @return The current veBalance of the lock as a DataTypes.VeBalance struct.
+     */
+    function getLockVeBalance(bytes32 lockId) external view returns (DataTypes.VeBalance memory) {
+        return _convertToVeBalance(locks[lockId]);
+    }
+
+    function getLockVotingPowerAt(bytes32 lockId, uint128 timestamp) external view returns (uint128) {
+        DataTypes.Lock memory lockPtr = locks[lockId];
+        if(lockPtr.expiry <= block.timestamp) return 0;
+
+        return _getValueAt(_convertToVeBalance(lockPtr), timestamp);
+    }
+
+
+    // ----------------------------- Voting Controller Queries -----------------------------------------------
+
+
     // note: used by VotingController for vote()
-    function balanceAtEpochEnd(address user, uint256 epoch, bool isDelegate) external view returns (uint256) {
+    function balanceAtEpochEnd(address user, uint128 epoch, bool isDelegate) external view returns (uint128) {
         require(user != address(0), Errors.InvalidAddress());
 
         // restrict to current/past epochs | can be used by VotingController and for other general queries
@@ -1556,7 +1547,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     }
 
     //Note: used by VotingController.claimRewardsFromDelegate() | returns userVotesAllocatedToDelegateForEpoch
-    function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint256) {
+    function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint128 epoch) external view returns (uint128) {
         require(user != address(0), Errors.InvalidAddress());
         require(delegate != address(0), Errors.InvalidAddress());
         //require(isFrozen == 0, Errors.IsFrozen());   
@@ -1611,202 +1602,4 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return _getValueAt(veBalance, epochEndTime);
     }
 
-    /**
-     * @notice Check if a lock can be delegated
-     * @param lockId Lock ID to check
-     * @return canDelegate Whether lock can be delegated
-     */
-    function canDelegateLock(bytes32 lockId) external view returns (bool) {
-        DataTypes.Lock memory lock = locks[lockId];
-        
-        // lock does not exist
-        if (lock.owner == address(0)) return false;
-        
-        // lock is already delegated
-        if (lock.delegate != address(0)) return false;
-        
-        // lock is unlocked: lock expired & principals were returned
-        if (lock.isUnlocked) return false;
-        
-        // lock is expired
-        if (lock.expiry <= block.timestamp) return false;
-        
-        // check minimum duration
-        _minimumDurationCheck(lock.expiry); 
-        
-        return true;
-    }
-
-
-    // ----- Role Hashes -----
-    
-    /**
-     * @notice Get the MONITOR_ROLE hash
-     * @return The keccak256 hash of "MONITOR_ROLE"
-     */
-    function MONITOR_ROLE() external pure returns (bytes32) {
-        return Constants.MONITOR_ROLE;
-    }
-
-    /**
-     * @notice Get the CRON_JOB_ROLE hash
-     * @return The keccak256 hash of "CRON_JOB_ROLE"
-     */
-    function CRON_JOB_ROLE() external pure returns (bytes32) {
-        return Constants.CRON_JOB_ROLE;
-    }
-
-    /**
-     * @notice Get the MONITOR_ADMIN_ROLE hash
-     * @return The keccak256 hash of "MONITOR_ADMIN_ROLE"
-     */
-    function MONITOR_ADMIN_ROLE() external pure returns (bytes32) {
-        return Constants.MONITOR_ADMIN_ROLE;
-    }
-
-    /**
-     * @notice Get the CRON_JOB_ADMIN_ROLE hash
-     * @return The keccak256 hash of "CRON_JOB_ADMIN_ROLE"
-     */
-    function CRON_JOB_ADMIN_ROLE() external pure returns (bytes32) {
-        return Constants.CRON_JOB_ADMIN_ROLE;
-    }
-
-    /**
-     * @notice Get the VOTING_ESCROW_MOCA_ADMIN_ROLE hash
-     * @return The keccak256 hash of "VOTING_ESCROW_MOCA_ADMIN_ROLE"
-     */
-    function VOTING_ESCROW_MOCA_ADMIN_ROLE() external pure returns (bytes32) {
-        return Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE;
-    }
-
-    /**
-     * @notice Get the EMERGENCY_EXIT_HANDLER_ROLE hash
-     * @return The keccak256 hash of "EMERGENCY_EXIT_HANDLER_ROLE"
-     */
-    function EMERGENCY_EXIT_HANDLER_ROLE() external pure returns (bytes32) {
-        return Constants.EMERGENCY_EXIT_HANDLER_ROLE;
-    }
 }
-
-
-/*
-    function _updateUserAndGlobal(address user, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
-        // cache global veBalance
-        DataTypes.VeBalance memory veGlobal_ = veGlobal;
-        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
-
-        // init user veUser
-        DataTypes.VeBalance memory veUser_;
-
-        // get user's lastUpdatedTimestamp [either matches global or lags behind it]
-        uint128 userLastUpdatedAt = userLastUpdatedTimestamp[user];
-        
-
-        // user's first time: no prior updates to execute 
-        if (userLastUpdatedAt == 0) {
-            
-            // set user's lastUpdatedTimestamp
-            userLastUpdatedTimestamp[user] = currentEpochStart;
-
-            // update global: updates lastUpdatedTimestamp [may or may not have updates]
-            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
-
-            return (veGlobal_, veUser_);
-        }
-                
-        // get user's previous veBalance: if both global and user are up to date, return
-        veUser_ = userHistory[user][userLastUpdatedAt];
-        if(userLastUpdatedAt >= currentEpochStart) return (veGlobal_, veUser_); 
-
-        // update both global and user veBalance to current epoch
-        while (userLastUpdatedAt < currentEpochStart) {
-
-            // advance 1 epoch
-            userLastUpdatedAt += EpochMath.EPOCH_DURATION;
-
-            // update global: if needed 
-            if(lastUpdatedTimestamp_ < userLastUpdatedAt) {
-                
-                // apply scheduled slope reductions and decrement bias for expiring locks
-                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[userLastUpdatedAt], userLastUpdatedAt);
-                // book ve supply for this epoch
-                totalSupplyAt[userLastUpdatedAt] = _getValueAt(veGlobal_, userLastUpdatedAt);
-            }
-
-            // update user: apply scheduled slope reductions and decrement bias for expiring locks
-            veUser_ = _subtractExpired(veUser_, userSlopeChanges[user][userLastUpdatedAt], userLastUpdatedAt);
-            // book user checkpoint 
-            userHistory[user][userLastUpdatedAt] = veUser_;
-        }
-
-        // set final lastUpdatedTimestamp: for global & user
-        lastUpdatedTimestamp = userLastUpdatedTimestamp[user] = userLastUpdatedAt;
-        
-        // return
-        return (veGlobal_, veUser_);
-    }*/
-
-    /*
-    function _updateAccountAndGlobal(address account, uint128 currentEpochStart, bool isDelegate) internal returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
-        // Streamlined mapping lookups based on account type
-        (
-            mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage accountHistoryMapping,
-            mapping(address => mapping(uint128 => uint128)) storage accountSlopeChangesMapping,
-            mapping(address => uint128) storage accountLastUpdatedMapping
-        ) 
-            = isDelegate ? (delegateHistory, delegateSlopeChanges, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userLastUpdatedTimestamp);
-
-        // CACHE: global veBalance + lastUpdatedTimestamp
-        DataTypes.VeBalance memory veGlobal_ = veGlobal;
-        uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
-
-        // init user veUser
-        DataTypes.VeBalance memory veAccount_;
-
-        // get user's lastUpdatedTimestamp [either matches global or lags behind it]
-        uint128 accountLastUpdatedAt = accountLastUpdatedMapping[account];
-        
-        // account's first time: no prior updates to execute 
-        if (accountLastUpdatedAt == 0) {
-            
-            // set account's lastUpdatedTimestamp
-            accountLastUpdatedMapping[account] = currentEpochStart;
-
-            // update global: updates lastUpdatedTimestamp [may or may not have updates]
-            veGlobal_ = _updateGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
-
-            return (veGlobal_, veAccount_);
-        }
-
-        // get account's previous veBalance: if both global and account are up to date, return
-        veAccount_ = accountHistoryMapping[account][accountLastUpdatedAt];
-        if(accountLastUpdatedAt >= currentEpochStart) return (veGlobal_, veAccount_); 
-
-
-        // update both global and account veBalance to current epoch
-        while (accountLastUpdatedAt < currentEpochStart) {
-            // advance 1 epoch
-            accountLastUpdatedAt += EpochMath.EPOCH_DURATION;
-
-            // update global: if needed 
-            if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
-                
-                // apply scheduled slope reductions and decrement bias for expiring locks
-                veGlobal_ = _subtractExpired(veGlobal_, slopeChanges[accountLastUpdatedAt], accountLastUpdatedAt);
-                // book ve supply for this epoch
-                totalSupplyAt[accountLastUpdatedAt] = _getValueAt(veGlobal_, accountLastUpdatedAt);
-            }
-
-            // update account: apply scheduled slope reductions and decrement bias for expiring locks
-            veAccount_ = _subtractExpired(veAccount_, accountSlopeChangesMapping[account][accountLastUpdatedAt], accountLastUpdatedAt);
-            // book account checkpoint 
-            accountHistoryMapping[account][accountLastUpdatedAt] = veAccount_;
-        }
-
-        // set final lastUpdatedTimestamp: for global & account
-        lastUpdatedTimestamp = accountLastUpdatedMapping[account] = accountLastUpdatedAt;
-
-        // return
-        return (veGlobal_, veAccount_);
-    }*/
