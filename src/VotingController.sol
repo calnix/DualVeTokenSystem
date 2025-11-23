@@ -4,6 +4,7 @@ pragma solidity 0.8.27;
 // External: OZ
 import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {AccessControlEnumerable, AccessControl} from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 
 // libraries
 import {Constants} from "./libraries/Constants.sol";
@@ -13,7 +14,6 @@ import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
 
 // interfaces
-import {IAccessController} from "./interfaces/IAccessController.sol";
 import {IPaymentsController} from "./interfaces/IPaymentsController.sol";
 import {IVotingEscrowMoca} from "./interfaces/IVotingEscrowMoca.sol";
 import {IEscrowedMoca} from "./interfaces/IEscrowedMoca.sol";
@@ -35,7 +35,6 @@ contract VotingController is Pausable, LowLevelWMoca {
     using SafeERC20 for IERC20;
 
     // Contracts
-    IAccessController public immutable accessController;
     IVotingEscrowMoca public immutable votingEscrowMoca;
     IEscrowedMoca public immutable escrowedMoca;
     address public immutable wMoca;
