@@ -7,11 +7,11 @@ import {AccessControlEnumerable, AccessControl} from "@openzeppelin/contracts/ac
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 // libraries
-import {EpochMath} from "./libraries/EpochMath.sol";
 import {Constants} from "./libraries/Constants.sol";
+import {EpochMath} from "./libraries/EpochMath.sol";
 import {DataTypes} from "./libraries/DataTypes.sol";
-import {Errors} from "./libraries/Errors.sol";
 import {Events} from "./libraries/Events.sol";
+import {Errors} from "./libraries/Errors.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";
@@ -113,7 +113,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         _setupRoles(globalAdmin, votingEscrowMocaAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler);
     }
 
-        // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
+    // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
     function _setupRoles(
         address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
         address monitorBot, address emergencyExitHandler) 
@@ -638,7 +638,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
      * @param accounts Array of addresses to update.
      * @param isDelegate True if updating delegate accounts, False for user accounts.
      */
-    function updateAccountsAndPendingDeltas(address[] calldata accounts, bool isDelegate) external whenNotPaused {
+    function updateAccountsAndPendingDeltas(address[] calldata accounts, bool isDelegate) external whenNotPaused onlyRole(Constants.CRON_JOB_ROLE){
         uint256 length = accounts.length;
         require(length > 0, Errors.InvalidArray());
 
@@ -675,7 +675,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
      * @param users Array of user addresses.
      * @param delegates Array of delegate addresses corresponding to the users.
      */
-    function updateDelegatePairs(address[] calldata users, address[] calldata delegates) external whenNotPaused {
+    function updateDelegatePairs(address[] calldata users, address[] calldata delegates) external whenNotPaused onlyRole(Constants.CRON_JOB_ROLE){
         uint256 length = users.length;
         require(length > 0, Errors.InvalidArray());
         require(length == delegates.length, Errors.MismatchedArrayLengths());

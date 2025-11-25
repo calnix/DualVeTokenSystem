@@ -112,7 +112,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     constructor(
         address globalAdmin, address paymentsControllerAdmin, address monitorAdmin, address cronJobAdmin, address monitorBot, 
         address paymentsControllerTreasury, address emergencyExitHandler,
-        uint256 protocolFeePercentage, uint256 voterFeePercentage, uint256 delayPeriod, 
+        uint256 protocolFeePercentage, uint256 voterFeePercentage, uint128 delayPeriod, 
         address wMoca_, address usd8_, uint256 mocaTransferGasLimit,
         string memory name, string memory version) EIP712(name, version) {
 
@@ -909,7 +909,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      *      and a multiple of the epoch duration defined in EpochMath.
      * @param newDelayPeriod The new delay period to set, in seconds. Must be divisible by EpochMath.EPOCH_DURATION.
      */
-    function updateFeeIncreaseDelayPeriod(uint256 newDelayPeriod) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
+    function updateFeeIncreaseDelayPeriod(uint128 newDelayPeriod) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         // min. delay period is 1 epoch; value must be in epoch intervals
         require(newDelayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
         require(EpochMath.isValidEpochTime(newDelayPeriod), Errors.InvalidDelayPeriod());
@@ -1277,19 +1277,18 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     // note: called by VotingController.claimSubsidies | no need for zero address check on the caller
     /**
      * @notice Returns the total subsidies per epoch, for a pool and {verifier, pool}.
-     * @param epoch The epoch.
+     * @param epoch The epoch number.   
      * @param poolId The pool id.
-     * @param verifier The verifier address.
-     * @param caller The verifier's asset manager address. [Called through VotingController.claimSubsidies()].
+     * @param verifierAddress The verifier address.
+     * @param caller Expected to be the verifier's asset manager address. [Called through VotingController.claimSubsidies()].
      * @return verifierAccruedSubsidies The total subsidies for the {verifier, pool}, for the epoch.
      * @return poolAccruedSubsidies The total subsidies for the pool, for the epoch.
      */
-    function getVerifierAndPoolAccruedSubsidies(uint256 epoch, bytes32 poolId, address verifier, address caller) external view returns (uint256, uint256) {
+    function getVerifierAndPoolAccruedSubsidies(uint128 epoch, bytes32 poolId, address verifierAddress, address caller) external view returns (uint256, uint256) {
         // verifiers's asset manager address must be the caller of VotingController.claimSubsidies
-        require(caller == _verifiers[verifier].assetManagerAddress, Errors.InvalidCaller());
-        return (_epochPoolVerifierSubsidies[epoch][poolId][verifier], _epochPoolSubsidies[epoch][poolId]);
+        require(caller == _verifiers[verifierAddress].assetManagerAddress, Errors.InvalidCaller());
+        return (_epochPoolVerifierSubsidies[epoch][poolId][verifierAddress], _epochPoolSubsidies[epoch][poolId]);
     }
-
     /**
      * @notice Returns the Issuer struct for a given issuer address.
      * @param issuer The address of the issuer.

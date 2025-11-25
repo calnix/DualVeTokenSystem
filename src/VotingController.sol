@@ -3,8 +3,8 @@ pragma solidity 0.8.27;
 
 // External: OZ
 import {SafeERC20, IERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {AccessControlEnumerable, AccessControl} from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 // libraries
 import {Constants} from "./libraries/Constants.sol";
@@ -31,13 +31,16 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
  */
 
 
-contract VotingController is Pausable, LowLevelWMoca {
+contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     using SafeERC20 for IERC20;
 
-    // Contracts
-    IVotingEscrowMoca public immutable votingEscrowMoca;
-    IEscrowedMoca public immutable escrowedMoca;
-    address public immutable wMoca;
+    // Immutable Contracts
+    IVotingEscrowMoca public immutable VEMOCA;
+    IERC20 public immutable ESMOCA;
+    address public immutable WMOCA;
+
+    // mutable contracts
+    IPaymentsController public PAYMENTS_CONTROLLER;
 
     
     // safety check
@@ -68,66 +71,70 @@ contract VotingController is Pausable, LowLevelWMoca {
     // risk management
     uint256 public isFrozen;
 
-//-------------------------------Mappings----------------------------------------------
+//-------------------------------Mappings-------------------------------------------------
 
     // epoch data
-    mapping(uint256 epochNum => DataTypes.Epoch epoch) public epochs;    
+    mapping(uint128 epochNum => DataTypes.Epoch epoch) public epochs;    
     
     // pool data
     mapping(bytes32 poolId => DataTypes.Pool pool) public pools;
-    mapping(uint256 epochNum => mapping(bytes32 poolId => DataTypes.PoolEpoch poolEpoch)) public epochPools;
+    mapping(uint128 epochNum => mapping(bytes32 poolId => DataTypes.PoolEpoch poolEpoch)) public epochPools;
 
 
     // user personal data: perEpoch | perPoolPerEpoch
-    mapping(uint256 epochNum => mapping(address userAddr => DataTypes.Account user)) public usersEpochData;
-    mapping(uint256 epochNum => mapping(bytes32 poolId => mapping(address user => DataTypes.Account userAccount))) public usersEpochPoolData;
+    mapping(uint128 epochNum => mapping(address userAddr => DataTypes.Account user)) public usersEpochData;
+    mapping(uint128 epochNum => mapping(bytes32 poolId => mapping(address user => DataTypes.Account userAccount))) public usersEpochPoolData;
     
     // delegate aggregated data: perEpoch | perPoolPerEpoch [mirror of userEpochData & userEpochPoolData]
-    mapping(uint256 epochNum => mapping(address delegateAddr => DataTypes.Account delegate)) public delegateEpochData;
-    mapping(uint256 epochNum => mapping(bytes32 poolId => mapping(address delegate => DataTypes.Account delegateAccount))) public delegatesEpochPoolData;
+    mapping(uint128 epochNum => mapping(address delegateAddr => DataTypes.Account delegate)) public delegateEpochData;
+    mapping(uint128 epochNum => mapping(bytes32 poolId => mapping(address delegate => DataTypes.Account delegateAccount))) public delegatesEpochPoolData;
 
     // User-Delegate tracking [for this user-delegate pair, what was the user's {rewards,claimed}]
-    mapping(uint256 epochNum => mapping(address user => mapping(address delegate => DataTypes.OmnibusDelegateAccount userDelegateAccount))) public userDelegateAccounting;
+    mapping(uint128 epochNum => mapping(address user => mapping(address delegate => DataTypes.OmnibusDelegateAccount userDelegateAccount))) public userDelegateAccounting;
 
 
     // Delegate registration data + fee data
     mapping(address delegateAddr => DataTypes.Delegate delegate) public delegates;     
     // if 0: fee not set for that epoch      
-    mapping(address delegate => mapping(uint256 epoch => uint128 currentFeePct)) public delegateHistoricalFeePcts;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
+    mapping(address delegate => mapping(uint128 epoch => uint128 currentFeePct)) public delegateHistoricalFeePcts;   // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
 
     // REVIEW: only verifierEpochPoolData is mandatory. optional: drop verifierData & verifierEpochData, if we want to streamline storage. 
     // are there creative ways to have the optional mappings without the extra storage writes?
     mapping(address verifier => uint256 totalSubsidies) public verifierData;                  
-    mapping(uint256 epoch => mapping(address verifier => uint256 totalSubsidies)) public verifierEpochData;
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifier => uint256 totalSubsidies))) public verifierEpochPoolData;
+    mapping(uint128 epoch => mapping(address verifier => uint256 totalSubsidies)) public verifierEpochData;
+    mapping(uint128 epoch => mapping(bytes32 poolId => mapping(address verifier => uint256 totalSubsidies))) public verifierEpochPoolData;
     
 
 //-------------------------------Constructor------------------------------------------
 
-    constructor(address accessController_, uint256 registrationFee, uint256 maxDelegateFeePct, uint256 delayDuration, 
-        address wMoca_, uint256 mocaTransferGasLimit, address votingEscrowMoca_, address escrowedMoca_) {
-        
-        require(registrationFee > 0, Errors.InvalidAmount());
+    constructor(
+        uint256 maxDelegateFeePct, uint256 delayDuration, address wMoca_, uint256 mocaTransferGasLimit, 
+        address votingEscrowMoca_, address escrowedMoca_, address votingControllerTreasury_, address paymentsController_,
+        address globalAdmin, address votingControllerAdmin, address monitorAdmin, address cronJobAdmin,
+        address monitorBot, address emergencyExitHandler
+        ) {
 
-        // check: access controller is set [Treasury should be non-zero]
-        accessController = IAccessController(accessController_);
-        require(accessController.VOTING_CONTROLLER_TREASURY() != address(0), Errors.InvalidAddress());
+        // check: voting controller treasury is set
+        require(votingControllerTreasury_ != address(0), Errors.InvalidAddress());
+        VOTING_CONTROLLER_TREASURY = votingControllerTreasury_;
+
+        // check: payments controller is set
+        require(paymentsController_ != address(0), Errors.InvalidAddress());
+        PAYMENTS_CONTROLLER = IPaymentsController(paymentsController_);
+
         
         // check: voting escrow moca is set
         require(votingEscrowMoca_ != address(0), Errors.InvalidAddress());
-        votingEscrowMoca = IVotingEscrowMoca(votingEscrowMoca_);
+        VEMOCA = IVotingEscrowMoca(votingEscrowMoca_);
         
         // check: escrowed moca is set
         require(escrowedMoca_ != address(0), Errors.InvalidAddress());
-        escrowedMoca = IEscrowedMoca(escrowedMoca_);
+        ESMOCA = IERC20(escrowedMoca_);
         
         // initial unclaimed delay & fee increase delay
         require(delayDuration > 0, Errors.InvalidDelayPeriod());
         require(delayDuration % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
         UNCLAIMED_DELAY_EPOCHS = FEE_INCREASE_DELAY_EPOCHS = delayDuration;
-
-        // set registration fee
-        REGISTRATION_FEE = registrationFee;
 
         // set max delegate fee percentage
         require(maxDelegateFeePct > 0 && maxDelegateFeePct <= Constants.PRECISION_BASE, Errors.InvalidFeePct());
@@ -135,12 +142,47 @@ contract VotingController is Pausable, LowLevelWMoca {
 
         // wrapped moca 
         require(wMoca_ != address(0), Errors.InvalidAddress());
-        wMoca = wMoca_;
+        WMOCA = wMoca_;
 
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
 
+        // roles
+        _setupRoles(globalAdmin, votingControllerAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler);
+    }
+
+    function _setupRoles(
+        address globalAdmin, address votingControllerAdmin, address monitorAdmin, address cronJobAdmin,
+        address monitorBot, address emergencyExitHandler
+    ) internal {
+        require(globalAdmin != address(0), Errors.InvalidAddress());
+        require(votingControllerAdmin != address(0), Errors.InvalidAddress());
+        require(monitorAdmin != address(0), Errors.InvalidAddress());
+        require(cronJobAdmin != address(0), Errors.InvalidAddress());
+        require(monitorBot != address(0), Errors.InvalidAddress());
+        require(emergencyExitHandler != address(0), Errors.InvalidAddress());
+
+        // grant roles to addresses
+        _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);    
+        _grantRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE, votingControllerAdmin);
+        _grantRole(Constants.MONITOR_ADMIN_ROLE, monitorAdmin);
+        _grantRole(Constants.CRON_JOB_ADMIN_ROLE, cronJobAdmin);
+        _grantRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
+
+        // there should at least 1 bot address for monitoring at deployment
+        _grantRole(Constants.MONITOR_ROLE, monitorBot);
+
+        // --------------- Set role admins ------------------------------
+        // Operational role administrators managed by global admin
+        _setRoleAdmin(Constants.VOTING_CONTROLLER_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(Constants.EMERGENCY_EXIT_HANDLER_ROLE, DEFAULT_ADMIN_ROLE);
+
+        _setRoleAdmin(Constants.MONITOR_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        _setRoleAdmin(Constants.CRON_JOB_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
+        // High-frequency roles managed by their dedicated admins
+        _setRoleAdmin(Constants.MONITOR_ROLE, Constants.MONITOR_ADMIN_ROLE);
+        _setRoleAdmin(Constants.CRON_JOB_ROLE, Constants.CRON_JOB_ADMIN_ROLE);
     }
 
 //-------------------------------voting functions------------------------------------------
@@ -160,24 +202,24 @@ contract VotingController is Pausable, LowLevelWMoca {
         require(poolIds.length == poolVotes.length, Errors.MismatchedArrayLengths());
 
         // get current epoch & cache epoch pointer
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();          
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();          
         DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
 
         // epoch should not be finalized
         require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
-        ( mapping(uint256 => mapping(address => DataTypes.Account)) storage accountEpochData,
-          mapping(uint256 => mapping(bytes32 => mapping(address => DataTypes.Account))) storage accountEpochPoolData 
+        ( mapping(uint128 => mapping(address => DataTypes.Account)) storage accountEpochData,
+          mapping(uint128 => mapping(bytes32 => mapping(address => DataTypes.Account))) storage accountEpochPoolData 
         ) 
         = isDelegated ? (delegateEpochData, delegatesEpochPoolData) : (usersEpochData, usersEpochPoolData);
 
-        // assign mappings
+        // if caller is voting as a delegate: registration + fee check
         if (isDelegated) {
             // sanity check: delegate must be registered [msg.sender is delegate]
             require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());
 
-            // fee check: if not set, set to current fee
+            // fee check: if not set, check pending; else log current fee
             if(delegateHistoricalFeePcts[msg.sender][currentEpoch] == 0) {
                 bool pendingFeeApplied = _applyPendingFeeIfNeeded(msg.sender, currentEpoch);
                 
@@ -190,7 +232,7 @@ contract VotingController is Pausable, LowLevelWMoca {
 
         // votingPower: benchmarked to end of epoch [forward-decay]
         // get account's voting power[personal, delegated] and used votes
-        uint256 totalVotes = _veMoca().balanceAtEpochEnd(msg.sender, currentEpoch, isDelegated);
+        uint256 totalVotes = VEMOCA.balanceAtEpochEnd(msg.sender, currentEpoch, isDelegated);
         uint256 spentVotes = accountEpochData[currentEpoch][msg.sender].totalVotesSpent; // spentVotes is natively uint128, although expressed as uint256 here for ease of arithmetic
 
         // check if account has available votes 
@@ -252,22 +294,22 @@ contract VotingController is Pausable, LowLevelWMoca {
         require(length == poolVotes.length, Errors.MismatchedArrayLengths());
 
         // get current epoch & cache epoch pointer
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();          
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();          
         DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
 
         // epoch should not be finalized
         require(!epochPtr.isFullyFinalized, Errors.EpochFinalized());
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
-        mapping(uint256 => mapping(bytes32 => mapping(address => DataTypes.Account))) storage accountEpochPoolData  
+        mapping(uint128 => mapping(bytes32 => mapping(address => DataTypes.Account))) storage accountEpochPoolData  
         = isDelegated ? delegatesEpochPoolData : usersEpochPoolData;
 
-        // assign mappings
+        // if caller is voting as a delegate: registration + fee check
         if (isDelegated) {
             // sanity check: delegate must be registered [msg.sender is delegate]
             require(delegates[msg.sender].isRegistered, Errors.DelegateNotRegistered());
 
-            // fee check: if not set, set to current fee
+            // fee check: if not set, check pending; else log current fee
             if(delegateHistoricalFeePcts[msg.sender][currentEpoch] == 0) {
                 bool pendingFeeApplied = _applyPendingFeeIfNeeded(msg.sender, currentEpoch);
                 
@@ -322,32 +364,22 @@ contract VotingController is Pausable, LowLevelWMoca {
 
 //-------------------------------delegate functions------------------------------------------
     
-    //TODO: make payable
     /**
      * @notice Registers the caller as a delegate and activates their status.
-     * @dev Requires payment of the registration fee. Marks the delegate as active upon registration.
+     * @dev Requires payment of the registration fee in Native Moca. 
      *      Calls VotingEscrowMoca.registerAsDelegate() to mark the delegate as active.
      * @param feePct The fee percentage to be applied to the delegate's rewards.
-     * Emits a {DelegateRegistered} event on success.
-     * Reverts if the fee is greater than the maximum allowed fee, the caller is already registered,
-     * or the registration fee cannot be transferred from the caller.
      */
-    function registerAsDelegate(uint128 feePct) external whenNotPaused {
-        require(feePct > 0, Errors.InvalidPercentage());
+    function registerAsDelegate(uint128 feePct) external payable whenNotPaused {
+        // sanity check: fee percentage must be less than or equal to the maximum allowed fee
         require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidPercentage());
 
+        // sanity check: delegate must not be registered
         DataTypes.Delegate storage delegate = delegates[msg.sender];
         require(!delegate.isRegistered, Errors.DelegateAlreadyRegistered());
-
-        // collect registration fee & increment global counter
-        uint256 registrationFee = REGISTRATION_FEE;
-        if(registrationFee > 0) {
-            TOTAL_REGISTRATION_FEES += registrationFee;
-            _moca().safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
-        }
-
+        
         // register on VotingEscrowMoca | if delegate is already registered on VotingEscrowMoca -> reverts
-        _veMoca().registerAsDelegate(msg.sender);
+        VEMOCA.registerAsDelegate(msg.sender);
 
         // storage: register delegate + set fee percentage
         delegate.isRegistered = true;
@@ -358,26 +390,25 @@ contract VotingController is Pausable, LowLevelWMoca {
     }
 
     /**
-     * @notice Updates the delegate fee percentage.
+     * @notice Called by delegate to update their fee percentage.
      * @dev If the fee is increased, the new fee takes effect from currentEpoch + FEE_INCREASE_DELAY_EPOCHS to prevent last-minute increases.
      *      If the fee is decreased, the new fee takes effect immediately.
      * @param feePct The new fee percentage to be applied to the delegate's rewards.
-     * Emits a {DelegateFeeUpdated} event on success.
-     * Reverts if the fee is greater than the maximum allowed fee, the caller is not registered, or the fee is not a valid percentage.
      */
     function updateDelegateFee(uint128 feePct) external whenNotPaused {
-        require(feePct > 0, Errors.InvalidFeePct());
+        // sanity check: fee percentage must be less than or equal to the maximum allowed fee
         require(feePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());   
 
         DataTypes.Delegate storage delegate = delegates[msg.sender];
+        // sanity check: delegate must be registered
         require(delegate.isRegistered, Errors.DelegateNotRegistered());
 
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
 
         // if there is an incoming pending fee increase, apply it before updating the fee
         _applyPendingFeeIfNeeded(msg.sender, currentEpoch);   
 
-        uint256 currentFeePct = delegate.currentFeePct;
+        uint128 currentFeePct = delegate.currentFeePct;
 
         // if increase, only applicable from currentEpoch+FEE_INCREASE_DELAY_EPOCHS
         if(feePct > currentFeePct) {
@@ -409,21 +440,22 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Removes the delegate's registration status.
      *      Calls VotingEscrowMoca.unregisterAsDelegate() to mark the delegate as inactive.
      *      Note: registration fee is not refunded
-     * Emits a {DelegateUnregistered} event on success.
-     * Reverts if the caller is not registered.
      */
     function unregisterAsDelegate() external whenNotPaused {
         DataTypes.Delegate storage delegate = delegates[msg.sender];
         
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
+
+        // sanity check: delegate must not have active votes
         require(delegateEpochData[currentEpoch][msg.sender].totalVotesSpent == 0, Errors.CannotUnregisterWithActiveVotes());
+        // sanity check: delegate must be registered
         require(delegate.isRegistered, Errors.DelegateNotRegistered());
         
         // storage: unregister delegate
         delete delegate.isRegistered;
         
         // to mark as false
-        _veMoca().unregisterAsDelegate(msg.sender);
+        VEMOCA.unregisterAsDelegate(msg.sender);
 
         // event
         emit Events.DelegateUnregistered(msg.sender);
@@ -433,9 +465,8 @@ contract VotingController is Pausable, LowLevelWMoca {
 
 
     /**
-     * @notice Claims esMoca rewards for the caller for specified pools in a given epoch.
-     * @dev For veHolders who voted directly, allows claiming esMoca rewards for each pool in the specified epoch.
-     *      Users who voted in epoch N, can claim the pool verification fees accrued in epoch N+1. [bet on the future]
+     * @notice Called by voter to claim esMoca rewards for specified pools in a given epoch.
+     * @dev Users who voted in epoch N, can claim the pool verification fees accrued in epoch N+1. 
      *      Pools with zero rewards or zero user votes are skipped without reverting.
      *      Reverts if the user has already claimed for a pool, or if the pool does not exist.
      *      No explicit "claimed" flag is used; claim status is tracked via the Account struct: usersEpochPoolData[epoch][poolId][msg.sender].totalRewards
@@ -447,8 +478,6 @@ contract VotingController is Pausable, LowLevelWMoca {
      * - At least one poolId must be provided and exist.
      * - The caller must not have already claimed for each pool.
      * - At least one reward must be claimable.
-     *
-     * Emits a {RewardsClaimed} event on success.
      */
     function voterClaimRewards(uint256 epoch, bytes32[] calldata poolIds) external whenNotPaused {
         require(poolIds.length > 0, Errors.InvalidArray());
@@ -462,7 +491,7 @@ contract VotingController is Pausable, LowLevelWMoca {
             
             // Check pool exists and user has not claimed rewards yet
             require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
-            require(usersEpochPoolData[epoch][poolId][msg.sender].totalRewards == 0, Errors.NoRewardsToClaim());    
+            require(usersEpochPoolData[epoch][poolId][msg.sender].totalRewards == 0, Errors.AlreadyClaimed());    
 
             // Pool may be inactive but still have unclaimed prior rewards
 
@@ -498,7 +527,7 @@ contract VotingController is Pausable, LowLevelWMoca {
         epochs[epoch].totalRewardsClaimed += userTotalRewards;
 
         // Transfer esMoca to user
-        _esMoca().safeTransfer(msg.sender, userTotalRewards);
+        ESMOCA.safeTransfer(msg.sender, userTotalRewards);
 
         emit Events.RewardsClaimed(msg.sender, epoch, poolIds, userTotalRewards);
     }
@@ -542,7 +571,7 @@ contract VotingController is Pausable, LowLevelWMoca {
 
             // Transfer fee to delegate (per-delegate, as in original)
             if (delegateFee > 0) {
-                _esMoca().safeTransfer(delegate, delegateFee);
+                ESMOCA.safeTransfer(delegate, delegateFee);
                 emit Events.DelegateFeesClaimed(delegate, delegateFee);
             }
 
@@ -554,7 +583,7 @@ contract VotingController is Pausable, LowLevelWMoca {
         require(userTotalNetRewards > 0, Errors.NoRewardsToClaim());  // Check aggregate net >0
 
         // Single transfer of total net to user (caller)
-        _esMoca().safeTransfer(msg.sender, userTotalNetRewards);
+        ESMOCA.safeTransfer(msg.sender, userTotalNetRewards);
         emit Events.RewardsClaimedFromDelegateBatch(epoch, msg.sender, delegateList, poolIdsPerDelegate, userTotalNetRewards);
     }
 
@@ -591,7 +620,7 @@ contract VotingController is Pausable, LowLevelWMoca {
 
             // transfer net rewards to each delegator 
             if (userTotalNetRewards > 0) {
-                _esMoca().safeTransfer(delegator, userTotalNetRewards);
+                ESMOCA.safeTransfer(delegator, userTotalNetRewards);
                 emit Events.RewardsClaimedFromDelegate(epoch, delegator, delegate, poolIds, userTotalNetRewards);
             }
 
@@ -601,7 +630,7 @@ contract VotingController is Pausable, LowLevelWMoca {
 
         // batch transfer all accrued fees to delegate
         if (totalDelegateFees > 0) {
-            _esMoca().safeTransfer(delegate, totalDelegateFees);
+            ESMOCA.safeTransfer(delegate, totalDelegateFees);
             emit Events.DelegateFeesClaimed(delegate, totalDelegateFees);
         }
     }
@@ -613,14 +642,14 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Subsidies are claimable based on the verifier's expenditure accrued for each pool-epoch.
      *      Only the `assetAddress` of the verifier (as registered in PaymentsController) can call this function.
      * @param epoch The epoch number for which subsidies are being claimed.
-     * @param verifierId The identifier of the verifier claiming subsidies.
+     * @param verifierAddress The address of the verifier for which to claim subsidies.
      * @param poolIds Array of pool identifiers for which to claim subsidies.
      *
      * Requirements:
      * - The epoch must be fully finalized.
      * - Each poolId must exist and have allocated subsidies.
      */
-    function claimSubsidies(uint256 epoch, bytes32 verifierId, bytes32[] calldata poolIds) external whenNotPaused {
+    function claimSubsidies(uint256 epoch, address verifierAddress, bytes32[] calldata poolIds) external whenNotPaused {
         require(poolIds.length > 0, Errors.InvalidArray());
         
         // epoch must be finalized
@@ -641,7 +670,7 @@ contract VotingController is Pausable, LowLevelWMoca {
             // get verifier's accrued subsidies for {pool, epoch} & pool's total accrued subsidies for the epoch
             (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) // these are in USD8, 1e6 precision
                 // reverts if msg.sender is not the verifierId's asset address
-                = IPaymentsController(addressBook.getPaymentsController()).getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifierId, msg.sender);
+                = PAYMENTS_CONTROLLER.getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifierAddress, msg.sender);
 
             // poolAccruedSubsidies == 0 will revert on division; verifierAccruedSubsidies == 0 will be skipped | no need for checks
 
@@ -679,7 +708,7 @@ contract VotingController is Pausable, LowLevelWMoca {
 
         // transfer esMoca to verifier
         // note: must whitelist VotingController on esMoca for transfers
-        _esMoca().transfer(msg.sender, totalSubsidiesClaimed);      
+        ESMOCA.safeTransfer(msg.sender, totalSubsidiesClaimed);      
     }
 
 
@@ -697,7 +726,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @param epoch The epoch number for which to deposit subsidies.
      * @param subsidies The total amount of esMOCA subsidies to deposit (1e18 precision).
      */
-    function depositEpochSubsidies(uint256 epoch, uint128 subsidies) external onlyCronJob whenNotPaused {
+    function depositEpochSubsidies(uint256 epoch, uint128 subsidies) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
         //require(subsidies > 0, Errors.InvalidAmount()); --> subsidies can be 0
         require(epoch <= EpochMath.getCurrentEpochNumber(), Errors.CannotSetSubsidiesForFutureEpochs());
         
@@ -715,7 +744,7 @@ contract VotingController is Pausable, LowLevelWMoca {
         // if subsidies >0 and totalVotes >0: set totalSubsidies + transfer esMoca
         if(subsidies > 0 && epochPtr.totalVotes > 0) {
             // if there are no votes, we will not distribute subsidies
-            _esMoca().transferFrom(msg.sender, address(this), subsidies);
+            ESMOCA.safeTransferFrom(msg.sender, address(this), subsidies);
 
             // STORAGE: update total subsidies deposited for epoch + global
             epochPtr.totalSubsidiesDeposited = subsidies;
@@ -747,7 +776,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      *   - Each pool must exist, not be removed, and not already be processed for the epoch.
      *   - Only callable by cron job role when not paused.
      */
-    function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint128[] calldata rewards) external onlyCronJob whenNotPaused {
+    function finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint128[] calldata rewards) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
         require(poolIds.length > 0, Errors.InvalidArray());
         require(poolIds.length == rewards.length, Errors.MismatchedArrayLengths());
 
@@ -814,7 +843,7 @@ contract VotingController is Pausable, LowLevelWMoca {
         emit Events.EpochPartiallyFinalized(epoch, poolIds);
 
         // deposit rewards
-        _esMoca().transferFrom(msg.sender, address(this), totalRewards);
+        ESMOCA.safeTransferFrom(msg.sender, address(this), totalRewards);
 
         // check if epoch is fully finalized
         if(epochStorage.poolsFinalized == TOTAL_NUMBER_OF_POOLS) {
@@ -833,12 +862,12 @@ contract VotingController is Pausable, LowLevelWMoca {
      *      Reverts if the epoch is not finalized, the voting controller treasury address is unset, or there are no unclaimed rewards to sweep.
      * @param epoch The epoch number for which to sweep unclaimed and residual rewards.
      */
-    function withdrawUnclaimedRewards(uint256 epoch) external onlyAssetManager whenNotPaused {
+    function withdrawUnclaimedRewards(uint256 epoch) external onlyRole(Constants.ASSET_MANAGER_ROLE) whenNotPaused {
         // sanity check: withdraw delay must have passed
         require(epoch > EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
 
         // get treasury address
-        address votingControllerTreasury = accessController.VOTING_CONTROLLER_TREASURY();
+        address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
         require(votingControllerTreasury != address(0), Errors.InvalidAddress());
 
         // sanity check: epoch must be finalized [pool exists implicitly]
@@ -848,7 +877,7 @@ contract VotingController is Pausable, LowLevelWMoca {
         uint256 unclaimed = epochs[epoch].totalRewardsAllocated - epochs[epoch].totalRewardsClaimed;
         require(unclaimed > 0, Errors.NoUnclaimedRewardsToWithdraw());
         
-        _esMoca().safeTransfer(votingControllerTreasury, unclaimed);
+        ESMOCA.safeTransfer(votingControllerTreasury, unclaimed);
 
         emit Events.UnclaimedRewardsWithdrawn(votingControllerTreasury, epoch, unclaimed);
     }
@@ -860,12 +889,12 @@ contract VotingController is Pausable, LowLevelWMoca {
      *      Reverts if the epoch is not finalized, the delay has not passed, the voting controller treasury address is unset, or there are no unclaimed subsidies to sweep.
      * @param epoch The epoch number for which to sweep unclaimed and residual subsidies.
      */
-    function withdrawUnclaimedSubsidies(uint256 epoch) external onlyAssetManager whenNotPaused {
+    function withdrawUnclaimedSubsidies(uint256 epoch) external onlyRole(Constants.ASSET_MANAGER_ROLE) whenNotPaused {
         // sanity check: withdraw delay must have passed
         require(epoch > EpochMath.getCurrentEpochNumber() + UNCLAIMED_DELAY_EPOCHS, Errors.CanOnlyWithdrawUnclaimedAfterDelay());
 
         // get treasury address
-        address votingControllerTreasury = accessController.VOTING_CONTROLLER_TREASURY();
+        address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
         require(votingControllerTreasury != address(0), Errors.InvalidAddress());
 
         // sanity check: epoch must be finalized
@@ -876,7 +905,7 @@ contract VotingController is Pausable, LowLevelWMoca {
         require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
 
         // transfer esMoca to voting controller treasury
-        _esMoca().transfer(votingControllerTreasury, unclaimedSubsidies);
+        ESMOCA.safeTransfer(votingControllerTreasury, unclaimedSubsidies);
 
         // event
         emit Events.UnclaimedSubsidiesWithdrawn(votingControllerTreasury, epoch, unclaimedSubsidies);
@@ -887,11 +916,11 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Can only be called by a VotingController admin
      *      Reverts if the voting controller treasury address is unset, or there are no unclaimed registration fees to withdraw.
      */
-    function withdrawRegistrationFees() external payable onlyAssetManager whenNotPaused {
+    function withdrawRegistrationFees() external payable onlyRole(Constants.ASSET_MANAGER_ROLE) whenNotPaused {
         require(TOTAL_REGISTRATION_FEES > 0, Errors.NoRegistrationFeesToWithdraw());
 
         // get treasury address
-        address votingControllerTreasury = accessController.VOTING_CONTROLLER_TREASURY();
+        address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
         require(votingControllerTreasury != address(0), Errors.InvalidAddress());
 
         // sanity check: there must be registration fees to withdraw
@@ -902,7 +931,7 @@ contract VotingController is Pausable, LowLevelWMoca {
         REGISTRATION_FEES_CLAIMED += claimable;
 
         // Transfer Moca to user [wraps if transfer fails within gas limit]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, votingControllerTreasury, claimable, MOCA_TRANSFER_GAS_LIMIT);
+        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, votingControllerTreasury, claimable, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.RegistrationFeesWithdrawn(votingControllerTreasury, claimable);
     }
@@ -914,7 +943,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Only callable by VotingController admin. Value must be greater than 0 and less than PRECISION_BASE.
      * @param maxFeePct The new maximum delegate fee percentage (2 decimal precision, e.g., 100 = 1%).
      */
-    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyVotingControllerAdmin whenNotPaused {
+    function setMaxDelegateFeePct(uint128 maxFeePct) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(maxFeePct > 0, Errors.InvalidFeePct());
         require(maxFeePct < Constants.PRECISION_BASE, Errors.InvalidFeePct());
 
@@ -929,7 +958,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Only callable by VotingController admin. Value must be greater than 0 and a multiple of EpochMath.EPOCH_DURATION.
      * @param delayEpochs The new fee increase delay epochs.
      */
-    function setFeeIncreaseDelayEpochs(uint256 delayEpochs) external onlyVotingControllerAdmin whenNotPaused {
+    function setFeeIncreaseDelayEpochs(uint256 delayEpochs) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(delayEpochs > 0, Errors.InvalidDelayPeriod());
         require(delayEpochs % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
        
@@ -943,7 +972,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @param newDelayEpoch The new unclaimed delay epochs.
      * This delay applied to both withdrawUnclaimedRewards and withdrawUnclaimedSubsidies
      */
-    function setUnclaimedDelay(uint256 newDelayEpoch) external onlyVotingControllerAdmin whenNotPaused {
+    function setUnclaimedDelay(uint256 newDelayEpoch) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(newDelayEpoch > 0, Errors.InvalidDelayPeriod());
         require(newDelayEpoch % EpochMath.EPOCH_DURATION == 0, Errors.InvalidDelayPeriod());
 
@@ -952,7 +981,7 @@ contract VotingController is Pausable, LowLevelWMoca {
     }
 
     // TODO
-    function setDelegateRegistrationFee(uint256 newRegistrationFee) external onlyVotingControllerAdmin whenNotPaused {
+    function setDelegateRegistrationFee(uint256 newRegistrationFee) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         //require(newRegistrationFee > 0, Errors.InvalidRegistrationFee());  0 is acceptable
 
         emit Events.DelegateRegistrationFeeUpdated(REGISTRATION_FEE, newRegistrationFee);
@@ -965,7 +994,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Only callable by the IssuerStakingController admin.
      * @param newMocaTransferGasLimit The new gas limit for moca transfer.
      */
-    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyVotingControllerAdmin whenNotPaused {
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
 
         // cache old + update to new gas limit
@@ -984,7 +1013,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      *      Increments the global pool counter on successful creation.
      * @return poolId The unique identifier assigned to the newly created pool.
      */
-    function createPool() external onlyCronJob whenNotPaused returns (bytes32) {
+    function createPool() external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused returns (bytes32) {
         // prevent pool creation during active epoch finalization
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
         require(!epochs[currentEpoch].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
@@ -1037,7 +1066,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      *
      * @param poolId Unique identifier of the pool to be removed.
      */
-    function removePool(bytes32 poolId) external onlyCronJob whenNotPaused {
+    function removePool(bytes32 poolId) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
         require(pools[poolId].poolId != bytes32(0), Errors.PoolDoesNotExist());
 
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
@@ -1070,7 +1099,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @param currentEpoch The current epoch number.
      * @return True if a pending fee was applied and historical fee set, false otherwise.
      */
-    function _applyPendingFeeIfNeeded(address delegateAddr, uint256 currentEpoch) internal returns (bool) {
+    function _applyPendingFeeIfNeeded(address delegateAddr, uint128 currentEpoch) internal returns (bool) {
         DataTypes.Delegate storage delegatePtr = delegates[delegateAddr];
 
         // if there is a pending fee increase, apply it
@@ -1120,7 +1149,7 @@ contract VotingController is Pausable, LowLevelWMoca {
             delegatesEpochPoolData[epoch][poolId][delegate].totalRewards = delegatePoolRewards;
 
             // fetch: number of votes user delegated, to this delegate & the total votes managed by the delegate
-            uint128 userVotesAllocatedToDelegateForEpoch = IVotingEscrowMoca(addressBook.getVotingEscrowMoca()).getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
+            uint128 userVotesAllocatedToDelegateForEpoch = VEMOCA.getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
             uint128 delegateTotalVotesForEpoch = delegateEpochData[epoch][delegate].totalVotesSpent;
 
             // calc. user's gross rewards for the pool
@@ -1173,52 +1202,13 @@ contract VotingController is Pausable, LowLevelWMoca {
         return bytes32(keccak256(abi.encode(callerAddress, block.timestamp, salt)));
     }
 
-//-------------------------------Modifiers---------------------------------------------------------------
-    
-    // creating pools, removing pools
-    modifier onlyCronJob() {
-        require(accessController.isCronJob(msg.sender), Errors.OnlyCallableByCronJob());
-        _;
-    }
-
-    // for setting contract params
-    modifier onlyVotingControllerAdmin() {
-        require(accessController.isVotingControllerAdmin(msg.sender), Errors.OnlyCallableByVotingControllerAdmin());
-        _;
-    }
-
-    // for depositing/withdrawing assets [depositSubsidies(), finalizeEpoch(), withdrawUnclaimedX()]
-    modifier onlyAssetManager() {
-        require(accessController.isAssetManager(msg.sender), Errors.OnlyCallableByAssetManager());
-        _;
-    }
-
-    // pause
-    modifier onlyMonitor() {
-        require(accessController.isMonitor(msg.sender), Errors.OnlyCallableByMonitor());
-        _;
-    }
-
-    // for unpause + freeze 
-    modifier onlyGlobalAdmin() {
-        require(accessController.isGlobalAdmin(msg.sender), Errors.OnlyCallableByGlobalAdmin());
-        _;
-    }   
-    
-    // to exfil assets, when frozen
-    modifier onlyEmergencyExitHandler() {
-        require(accessController.isEmergencyExitHandler(msg.sender), Errors.OnlyCallableByEmergencyExitHandler());
-        _;
-    }
-
-
 //-------------------------------risk functions----------------------------------------------------------
 
     /**
      * @notice Pause the contract.
      * @dev Only callable by the Monitor [bot script].
      */
-    function pause() external whenNotPaused onlyMonitor {
+    function pause() external whenNotPaused onlyRole(Constants.MONITOR_ROLE) {
         _pause();
     }
 
@@ -1226,7 +1216,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @notice Unpause the contract.
      * @dev Only callable by the Global Admin [multi-sig].
      */
-    function unpause() external whenPaused onlyGlobalAdmin {
+    function unpause() external whenPaused onlyRole(DEFAULT_ADMIN_ROLE) {
         if(isFrozen == 1) revert Errors.IsFrozen(); 
         _unpause();
     }
@@ -1236,7 +1226,7 @@ contract VotingController is Pausable, LowLevelWMoca {
      * @dev Only callable by the Global Admin [multi-sig].
      *      This is a kill switch function
      */
-    function freeze() external whenPaused onlyGlobalAdmin {
+    function freeze() external whenPaused onlyRole(DEFAULT_ADMIN_ROLE) {
         if(isFrozen == 1) revert Errors.IsFrozen();
         isFrozen = 1;
         emit Events.ContractFrozen();
@@ -1249,18 +1239,18 @@ contract VotingController is Pausable, LowLevelWMoca {
      *      Only callable by the Emergency Exit Handler [bot script].
      *      This is a kill switch function
      */
-    function emergencyExit() external payable onlyEmergencyExitHandler {
+    function emergencyExit() external payable onlyRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE) {
         if(isFrozen == 0) revert Errors.NotFrozen();
 
         // get treasury address
-        address votingControllerTreasury = accessController.VOTING_CONTROLLER_TREASURY();
+        address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
         require(votingControllerTreasury != address(0), Errors.InvalidAddress());
 
         // exfil esMoca [rewards + subsidies]
-        escrowedMoca.safeTransfer(votingControllerTreasury, escrowedMoca.balanceOf(address(this)));
+        ESMOCA.safeTransfer(votingControllerTreasury, ESMOCA.balanceOf(address(this)));
 
         // exfil moca [registration fees]
-        _transferMocaAndWrapIfFailWithGasLimit(wMoca, votingControllerTreasury, address(this).balance, MOCA_TRANSFER_GAS_LIMIT);
+        _transferMocaAndWrapIfFailWithGasLimit(WMOCA, votingControllerTreasury, address(this).balance, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.EmergencyExit(votingControllerTreasury);
     }

@@ -8,29 +8,29 @@ interface IVotingEscrowMoca {
     // =============================== User Functions ===============================
     
     /**
-     * @notice Creates a new lock with the specified expiry, moca, esMoca, and optional delegate.
-     * @param expiry The timestamp when the lock will expire.
-     * @param moca The amount of MOCA to lock.
+     * @notice Creates a new lock with the specified expiry, esMoca, and optional delegate.
+     * @dev MOCA amount is sent via msg.value
+     * @param expiry The timestamp when the lock will expire (must be on epoch boundary).
      * @param esMoca The amount of esMOCA to lock.
-     * @param delegate The address to delegate voting power to (optional).
+     * @param delegate The address to delegate voting power to (optional, address(0) for no delegation).
      * @return lockId The unique identifier of the created lock.
      */
-    function createLock(uint128 expiry, uint256 moca, uint256 esMoca, address delegate) external returns (bytes32);
+    function createLock(uint128 expiry, uint128 esMoca, address delegate) external payable returns (bytes32);
 
     /**
      * @notice Increases the amount of MOCA and/or esMOCA in an existing lock.
+     * @dev MOCA amount is sent via msg.value
      * @param lockId The unique identifier of the lock to modify.
-     * @param mocaToIncrease The additional amount of MOCA to lock.
      * @param esMocaToIncrease The additional amount of esMOCA to lock.
      */
-    function increaseAmount(bytes32 lockId, uint128 mocaToIncrease, uint128 esMocaToIncrease) external;
+    function increaseAmount(bytes32 lockId, uint128 esMocaToIncrease) external payable;
 
     /**
      * @notice Increases the duration of an existing lock.
      * @param lockId The unique identifier of the lock to modify.
-     * @param durationToIncrease The additional duration to add to the lock (must be on epoch boundary).
+     * @param newExpiry The new expiry timestamp (must be on epoch boundary and greater than current expiry).
      */
-    function increaseDuration(bytes32 lockId, uint128 durationToIncrease) external;
+    function increaseDuration(bytes32 lockId, uint128 newExpiry) external;
 
     /**
      * @notice Withdraws principals of an expired lock.
@@ -42,6 +42,7 @@ interface IVotingEscrowMoca {
 
     /**
      * @notice Delegates a lock's voting power to a registered delegate.
+     * @dev Delegation impact occurs in the next epoch, not current.
      * @param lockId The unique identifier of the lock to delegate.
      * @param delegate The address of the registered delegate to receive voting power.
      */
@@ -49,12 +50,14 @@ interface IVotingEscrowMoca {
 
     /**
      * @notice Undelegates a lock's voting power from a registered delegate.
+     * @dev Undelegation impact occurs in the next epoch, not current.
      * @param lockId The unique identifier of the lock to undelegate.
      */
     function undelegateLock(bytes32 lockId) external;
 
     /**
      * @notice Switches the delegate of a lock to another registered delegate.
+     * @dev Delegation switch impact occurs in the next epoch, not current.
      * @param lockId The unique identifier of the lock.
      * @param newDelegate The address of the new delegate.
      */
@@ -64,13 +67,29 @@ interface IVotingEscrowMoca {
 
     /**
      * @notice Creates a lock on behalf of another user (admin function).
+     * @dev MOCA amount is sent via msg.value
      * @param user The address to create the lock for.
-     * @param expiry The timestamp when the lock will expire.
-     * @param moca The amount of MOCA to lock.
+     * @param expiry The timestamp when the lock will expire (must be on epoch boundary).
      * @param esMoca The amount of esMOCA to lock.
      * @return lockId The unique identifier of the created lock.
      */
-    function createLockFor(address user, uint128 expiry, uint256 moca, uint256 esMoca) external returns (bytes32);
+    function createLockFor(address user, uint128 expiry, uint128 esMoca) external payable returns (bytes32);
+
+    /**
+     * @notice Admin helper to batch update stale accounts to the current epoch.
+     * @dev Fixes OOG risks by applying pending deltas and decay in a separate transaction.
+     * @param accounts Array of addresses to update.
+     * @param isDelegate True if updating delegate accounts, False for user accounts.
+     */
+    function updateAccountsAndPendingDeltas(address[] calldata accounts, bool isDelegate) external;
+
+    /**
+     * @notice Admin helper to batch update stale user-delegate pairs to the current epoch.
+     * @dev Fixes OOG risks by applying pending deltas and decay in a separate transaction.
+     * @param users Array of user addresses.
+     * @param delegates Array of delegate addresses (must match length of users array).
+     */
+    function updateDelegatePairsAndPendingDeltas(address[] calldata users, address[] calldata delegates) external;
 
     // =============================== VotingController Functions ===============================
 
@@ -313,6 +332,14 @@ interface IVotingEscrowMoca {
      * @return The delegated veBalance at that time.
      */
     function delegatedAggregationHistory(address user, address delegate, uint256 eTime) external view returns (DataTypes.VeBalance memory);
+
+    /**
+     * @notice Returns the last updated timestamp for a user-delegate pair.
+     * @param user The user address.
+     * @param delegate The delegate address.
+     * @return The user-delegate pair's last updated timestamp.
+     */
+    function userDelegatePairLastUpdatedTimestamp(address user, address delegate) external view returns (uint256);
 
     /**
      * @notice Returns whether the contract is frozen.

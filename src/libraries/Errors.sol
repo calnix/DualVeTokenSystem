@@ -87,7 +87,7 @@ library Errors {
     error DelegateNotRegistered();
     error CannotUnregisterWithActiveVotes();
     //voterClaimRewards
-    error NoRewardsToClaim();
+    error AlreadyClaimed();
     //claimSubsidies
     error NoSubsidiesToClaim();
     error FutureEpoch();
