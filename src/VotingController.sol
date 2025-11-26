@@ -712,7 +712,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
 
-//-------------------------------onlyCronJob: depositEpochSubsidies, finalizeEpochRewardsSubsidies -----------------------------------------
+//------------------------------- CronJob Role: depositEpochSubsidies, finalizeEpochRewardsSubsidies -----------------------------------------
     // TODO
     //note: use cronjob instead of asset manager, due to frequency of calls
     //note: what if i have deposit/finazlie pull assets from treasury directly?
@@ -1004,16 +1004,16 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
     }
 
-//-------------------------------onlyVotingControllerAdmin: pool functions----------------------------------------------------
+//------------------------------- VotingControllerAdmin: pool functions----------------------------------------------------
 
     /**
      * @notice Creates a new voting pool and returns its unique identifier.
-     * @dev Callable only by VotingController admin (cron job role). Ensures poolId uniqueness by regenerating if a collision is detected.
+     * @dev Callable only by VotingController admin. Ensures poolId uniqueness by regenerating if a collision is detected.
      *      Pool creation is blocked during active end-of-epoch operations to maintain protocol consistency.
      *      Increments the global pool counter on successful creation.
      * @return poolId The unique identifier assigned to the newly created pool.
      */
-    function createPool() external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused returns (bytes32) {
+    function createPool() external whenNotPaused onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) returns (bytes32) {
         // prevent pool creation during active epoch finalization
         uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
         require(!epochs[currentEpoch].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());

@@ -46,7 +46,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     uint256 public isFrozen;
     
 
-//------------------------------- Mappings ------------------------------------------
+//------------------------------- Mappings --------------------------------------------------------------
 
     // --------- Global state ---------
     // scheduled global slope changes
@@ -84,7 +84,11 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) public userPendingDeltasForDelegate;    // pending deltas for user's delegated locks for a specific delegate
     mapping(address user => mapping(address delegate => uint128 lastUpdatedTimestamp)) public userDelegatedPairLastUpdatedTimestamp;                    // last updated timestamp for user-delegate pair
 
-//------------------------------- Constructor ------------------------------------------
+
+    // ----- Delegate Actions Per Epoch -----
+    mapping(bytes32 lockId => mapping(uint128 eTime => uint8 numOfDelegateActions)) public numOfDelegateActionsPerEpoch;
+
+//------------------------------- Constructor -----------------------------------------------------------
 
     constructor(address wMoca_, address esMoca_, address votingController_, uint256 mocaTransferGasLimit,
         address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
@@ -149,7 +153,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         _setRoleAdmin(Constants.CRON_JOB_ROLE, Constants.CRON_JOB_ADMIN_ROLE);
     }
 
-//------------------------------- External functions------------------------------------------
+//------------------------------- User functions---------------------------------------------------------
 
 
     // lock created is booked to currentEpochStart
@@ -428,7 +432,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     }
 
 
-//------------------------------ User Delegate functions-------------------------------------
+//------------------------------ Delegation functions----------------------------------------------------
 
     function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
         // sanity check: delegate is registered + not the same as the caller
@@ -443,6 +447,9 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // check: lock will end at or after the 3rd epoch from current epoch start
         uint128 currentEpochStart = _minimumDurationCheck(lock.expiry);     // also prevents delegating expired locks
+
+        // delegate action per epoch: increment [will overflow at 255 and block further delegate actions]
+        ++numOfDelegateActionsPerEpoch[lockId][currentEpochStart];
 
         // ------ Update global, user, delegate to currentEpochStart ------
         // STORAGE: updates lastUpdatedTimestamp & veBalance & slopeChange
@@ -511,6 +518,9 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // check: lock will end at or after the 3rd epoch from current epoch start
         uint128 currentEpochStart = _minimumDurationCheck(lock.expiry);
+
+        // delegate action per epoch: increment [will overflow at 255 and block further delegate actions]
+        ++numOfDelegateActionsPerEpoch[lockId][currentEpochStart];
 
         // ------ Update global, currentDelegate, newDelegate to currentEpochStart ------
         (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veCurrentDelegate_) = _updateAccountAndGlobalAndPendingDeltas(lock.delegate, currentEpochStart, true);
@@ -622,7 +632,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         emit Events.LockUndelegated(lockId, msg.sender, lock.delegate);
     }
 
-// ----------------------------- Update state functions -----------------------------------------------------------------
+// ----------------------------- CronJob: Update state functions ----------------------------------------
 
     /**
         Because state updates require iterating through every missed epoch,
@@ -708,7 +718,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     }
 
 
-//------------------------------ CronJob: createLockFor()---------------------------------------------------------------
+//------------------------------ CronJob: createLockFor()------------------------------------------------
 
     /** consider:
 
@@ -831,7 +841,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return (lockId, veIncoming_);
     }
 
-//------------------------------ Admin function: setMocaTransferGasLimit() ---------------------------------------------
+//------------------------------ Admin function: setMocaTransferGasLimit() ------------------------------
 
     /**
         * @notice Sets the gas limit for moca transfer.
@@ -872,7 +882,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         emit Events.DelegateUnregistered(delegate);
     }
 
-//------------------------------ Internal: update functions-----------------------------------------------------
+//------------------------------ Internal: update functions----------------------------------------------
 
 
     // does not update veGlobal. updates lastUpdatedTimestamp, totalSupplyAt[]
@@ -1133,7 +1143,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     }
     
 
-//------------------------------ Internal: helper functions-----------------------------------------------------
+//------------------------------ Internal: helper functions----------------------------------------------
 
     ///@dev Generate a vaultId. keccak256 is cheaper than using a counter with a SSTORE, even accounting for eventual collision retries.
     function _generateVaultId(uint256 salt, address user) internal view returns (bytes32) {
@@ -1172,8 +1182,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
     }
 
 
-//------------------------------ Internal: lib------------------------------------------------------------------
-   
+//------------------------------ Internal: lib-----------------------------------------------------------   
     /** note: for _subtractExpired(), _convertToVeBalance(), _getValueAt()
 
         On bias & slope calculations, we can use uint128 for all calculations.
@@ -1273,8 +1282,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return a.bias - decay;
     }
 
-//------------------------------ Internal: view functions-----------------------------------------------------
-
+//------------------------------ Internal: view functions------------------------------------------------
     // needed for totalSupplyAtTimestamp() & _viewAccountAndGlobalAndPendingDeltas
     function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint128 lastUpdatedAt, uint128 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {       
         // nothing to update: lastUpdate was within current epoch 
@@ -1372,7 +1380,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return (veGlobal_, veAccount_);
     }
 
-//-------------------------------Risk management--------------------------------------------------------
+//------------------------------ Risk management---------------------------------------------------------
 
     /**
      * @notice Pause contract. Cannot pause once frozen
@@ -1402,7 +1410,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         emit Events.ContractFrozen();
     }  
 
-    // @audit calnix: reentrancy guard? well only we can call the function; so no need for reentrancy guard
     /**
      * @notice Returns principal assets (esMoca, Moca) to users for specified locks 
      * @dev Only callable by the Emergency Exit Handler when the contract is frozen.
@@ -1425,42 +1432,39 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // get user's veBalance for each lock
         for(uint256 i; i < lockIds.length; ++i) {
-            DataTypes.Lock memory lock = locks[lockIds[i]];
+            DataTypes.Lock storage lockPtr = locks[lockIds[i]];
             
             // Skip invalid/already processed locks
-            if(lock.owner == address(0) || lock.isUnlocked) continue;        
+            if(lockPtr.owner == address(0) || lockPtr.isUnlocked) continue;        
+
+            // mark unlocked: principals to be returned
+            lockPtr.isUnlocked = true;
             
             // direct storage updates - only write changed fields
-            if(lock.esMoca > 0) {
+            if(lockPtr.esMoca > 0) {
                 
-                uint128 esMocaToReturn = lock.esMoca;
-                delete lock.esMoca;
+                uint128 esMocaToReturn = lockPtr.esMoca;
+                delete lockPtr.esMoca;
                 TOTAL_LOCKED_ESMOCA -= esMocaToReturn;
                 
                 // increment counter
                 totalEsMocaReturned += esMocaToReturn;
 
-                ESMOCA.safeTransfer(lock.owner, esMocaToReturn);
+                ESMOCA.safeTransfer(lockPtr.owner, esMocaToReturn);
             }
 
-            if(lock.moca > 0) {
+            if(lockPtr.moca > 0) {
 
-                uint128 mocaToReturn = lock.moca;
-                delete lock.moca;
+                uint128 mocaToReturn = lockPtr.moca;
+                delete lockPtr.moca;
                 TOTAL_LOCKED_MOCA -= mocaToReturn;  
 
                 // increment counter
                 totalMocaReturned += mocaToReturn;
 
                 // transfer moca [wraps if transfer fails within gas limit]
-                _transferMocaAndWrapIfFailWithGasLimit(WMOCA, lock.owner, mocaToReturn, MOCA_TRANSFER_GAS_LIMIT);
+                _transferMocaAndWrapIfFailWithGasLimit(WMOCA, lockPtr.owner, mocaToReturn, MOCA_TRANSFER_GAS_LIMIT);
             }
-
-            // mark unlocked: principals returned
-            lock.isUnlocked = true;
-
-            // STORAGE: update lock
-            locks[lockIds[i]] = lock;
 
             ++totalLocksProcessed;
         }
@@ -1470,7 +1474,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return (totalLocksProcessed, totalMocaReturned, totalEsMocaReturned);
     }
     
-//-------------------------------External: View functions-----------------------------------------------
+//------------------------------ View functions----------------------------------------------------------
 
     // can be for past or future queries 
     function totalSupplyAtTimestamp(uint128 timestamp) public view returns (uint128) {

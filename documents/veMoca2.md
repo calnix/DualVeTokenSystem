@@ -194,3 +194,117 @@ userDelegatedSlopeChanges[user][delegate][timestamp]       // Slope changes for 
 userPendingDeltasForDelegate[user][delegate][timestamp]    // Pending deltas for this pair
 userDelegatedPairLastUpdatedTimestamp[user][delegate]      // Last update for this pair
 ```
+
+## DOS-ing switchDelegate
+
+### The Attack:
+
+1. Create a lock with the entire supply of Moca, 8.89 billion 
+2. Delegate to delegate A
+3. Repeatedly call switchDelegate between A ↔ B within the same epoch
+4. Each switchDelegate call accumulates lockVeBalance into the pending additions/subtractions
+
+**Overflow Calculation**
+
+- `uint128.max` = 2^128 - 1 ≈ 3.4 × 10^38
+- `MAX_LOCK_DURATION` = 728 days = 62,899,200 seconds
+- Current timestamp ≈ 1.75 × 10^9 (year 2025)
+- Future expiry ≈ 1.81 × 10^9 seconds
+
+For minimum lock amount (assuming 1e18 wei / 1 MOCA):
+- slope = 1e18 / 62,899,200 ≈ 1.59 × 10^10
+- bias = slope × expiry = 1.59 × 10^10 × 1.81 × 10^9 ≈ 2.88 × 10^19
+
+Switches needed to overflow `bias` (limiting factor):
+`uint128.max / bias = 3.4 × 10^38 / 2.88 × 10^19 ≈ 1.18 × 10^19`
+
+= ≈11.8 quintillion switches (1.18 × 10^19) would be required to overflow.
+
+**Why This Attack is Impractical:**
+
+1. Gas Cost: ~100k gas per switch × 11.8e18 switches × 30 gwei [insufficient Moca Supply]
+2. Block Gas Limit: Would require more blocks than the heat death of the universe
+
+
+### The Attack under impractical scenario
+
+- the attacker commits the entire supply of MOCA 
+- the attacher also somehow has sufficient gas to execute the attack
+
+Essentially we are allowing the attacker to break the totalSupply of MOCA, to assess feasibility.
+If not possible under these conditions, then not possible at all.
+
+1. Total MOCA supply: 8.89 × 10^9 tokens = 8.89 × 10^27 wei
+2. MAX_LOCK_DURATION = 728 days = 62,899,200 seconds
+3. uint128.max ≈ 3.4 × 10^38
+4. Expiry ≈ 1.81 × 10^9 seconds
+
+**For a lock with ENTIRE MOCA supply:**
+```bash
+slope = 8.89 × 10^27 / 62,899,200 ≈ 1.413 × 10^20
+bias  = slope × expiry = 1.413 × 10^20 × 1.81 × 10^9 ≈ 2.56 × 10^29
+```
+
+**Switches needed to overflow:**
+```bash
+uint128.max / bias = 3.4 × 10^38 / 2.56 × 10^29 ≈ 1.33 × 10^9
+```
+≈ 1.33 billion switches
+
+### Feasibility on Moca Chain
+
+| Parameter              | Assumption       |
+|------------------------|------------------|
+| Block time             | 1 second         |
+| Gas per switchDelegate | ~150,000 gas     |
+| Block gas limit        | ~30,000,000 gas  |
+| Switches per block     | ~200             |
+
+`EPOCH_DURATION` = 14 days = 1,209,600 seconds
+
+
+| Metric                              | Value          |
+|-------------------------------------|----------------|
+| Blocks per epoch                    | 1,209,600      |
+| Switches per block (~30M gas limit) | ~200           |
+| Max switches per epoch              | ~242 million   |
+| Switches needed                     | ~1.33 billion  |
+
+## Assuming block gas limit is: 200,000,000
+
+**Recalculation with 200M Block Gas Limit**
+
+| Parameter                    | Value           |
+|------------------------------|-----------------|
+| Block gas limit              | 200,000,000     |
+| Gas per switchDelegate       | ~150,000        |
+| Switches per block           | 1,333           |
+| Blocks per epoch (14 days)   | 1,209,600       |
+| Max switches per epoch       | ~1.61 billion   |
+| Switches needed              | ~1.33 billion   |
+
+Result: Attack is theoretically possible if you ignore other constraints like max txns per block.
+
+With 200M block gas limit:
+1.33B needed < 1.61B max per epoch ✓
+
+**Attack Execution Requirements:**
+
+| Metric        | Value                                      |
+|---------------|--------------------------------------------|
+| Blocks needed | ~998,000 blocks                            |
+| Time required | ~11.5 days (within 14-day epoch)           |
+| Gas consumed  | ~2 × 10^14 gas                             |
+| Gas cost      | ~200,000 MOCA (~0.000022% of supply) @ 1 gwei |
+
+**Sensitivity to Gas Cost**
+
+The feasibility is on the edge depending on actual `switchDelegate` gas cost:
+
+| Gas per switch | Switches/block | Max per epoch | Feasible?        |
+|----------------|----------------|---------------|------------------|
+| 125,000        | 1,600          | 1.94B         | ✅ Yes           |
+| 150,000        | 1,333          | 1.61B         | ✅ Yes (barely)  |
+| 175,000        | 1,142          | 1.38B         | ✅ Yes (barely)  |
+| 200,000        | 1,000          | 1.21B         | ❌ No            |
+| 250,000        | 800            | 0.97B         | ❌ No            |
