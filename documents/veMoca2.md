@@ -308,3 +308,15 @@ The feasibility is on the edge depending on actual `switchDelegate` gas cost:
 | 175,000        | 1,142          | 1.38B         | ✅ Yes (barely)  |
 | 200,000        | 1,000          | 1.21B         | ❌ No            |
 | 250,000        | 800            | 0.97B         | ❌ No            |
+
+## accountLastUpdatedAt == 0 as a flag for a "new user" with no history
+
+- this check is seen in _update functions as well as their companion _view functions.
+- however, 0 is also the valid timestamp for Epoch 0, if the chain does not operate on Unix timestamp and Epoch [number of seconds that have elapsed since January 1, 1970]
+- if the chain was running its own time counter from genesis block, this would be a bug in that: 0 is also the valid timestamp for Epoch 0.
+
+Unix Time Reality: we are currently around epoch ~1430 (based on 14-day epochs since 1970).
+- In a live deployment, `currentEpochStart` will be a massive number (e.g., ~1,730,000,000). 
+- When a user interacts, their accountLastUpdatedAt is updated to this timestamp.
+
+

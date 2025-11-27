@@ -55,10 +55,12 @@ library Events {
     event LockAmountIncreased(bytes32 indexed lockId, address indexed owner, address delegate, uint128 mocaToAdd, uint128 esMocaToAdd);
     // increaseDuration
     event LockDurationIncreased(bytes32 indexed lockId, address indexed owner, address delegate, uint256 oldExpiry, uint256 newExpiry);
-
+    // unlock
+    event LockUnlocked(bytes32 indexed lockId, address indexed owner, uint256 moca, uint256 esMoca);
+    
     // createLockFor
     event LocksCreatedFor(address[] users, bytes32[] lockIds, uint256 totalMoca, uint256 totalEsMoca);
-
+    
     // delegate: register, unregister
     event DelegateRegistered(address indexed delegate);
     event DelegateUnregistered(address indexed delegate);
@@ -67,14 +69,14 @@ library Events {
     event LockDelegated(bytes32 indexed lockId, address indexed owner, address delegate);
     event DelegateUpdated(address indexed delegate, uint128 bias, uint128 slope);
     event DelegatedAggregationUpdated(address indexed user, address indexed delegate, uint128 bias, uint128 slope);
-
     // switchDelegate
     event LockDelegateSwitched(bytes32 indexed lockId, address indexed owner, address delegate, address newDelegate);
-    
-    //unlock
-    event LockUnlocked(bytes32 indexed lockId, address indexed owner, uint256 moca, uint256 esMoca);
     // undelegateLock
     event LockUndelegated(bytes32 indexed lockId, address indexed owner, address delegate);
+
+    // setVotingController
+    event VotingControllerUpdated(address newVotingController);
+
 
     // emergencyExit
     event EmergencyExit(bytes32[] lockIds, uint256 validLocks, uint256 totalMocaReturned, uint256 totalEsMocaReturned);

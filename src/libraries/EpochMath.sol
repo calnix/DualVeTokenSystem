@@ -67,14 +67,14 @@ library EpochMath {
     // ----- Unused functions [consider removing`]-----
 
     ///@dev returns current epoch end time
-    function getCurrentEpochEnd() internal view returns (uint128) {
+  /*  function getCurrentEpochEnd() internal view returns (uint128) {
         return getEpochEndTimestamp(getCurrentEpochNumber());
     }
 
     ///@dev returns epoch end time for a given timestamp
     function getEpochEndForTimestamp(uint128 timestamp) internal pure returns (uint128) {
         return getEpochStartForTimestamp(timestamp) + EPOCH_DURATION;
-    }
+    }*/
     
 
 

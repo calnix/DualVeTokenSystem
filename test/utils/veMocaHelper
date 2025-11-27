@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+import "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+
+import "../utils/TestingHarness.sol";
+/*
+
+contract veMocaHelper is TestingHarness {
+
+    /** note: why use dummy variable? 
+        When you call EpochMath.getCurrentEpochNumber() directly in a test, these internal functions get inlined into the test contract at compile time. 
+        This can cause issues with Foundry's runtime state modifications like vm.warp().
+        The issue is that the Solidity optimizer might be evaluating block.timestamp at a different point than expected, 
+        or caching values in unexpected ways when dealing with inlined library code.
+        So we need to use a dummy variable to prevent the compiler from inlining the functions.
+     */
+    uint256 private dummy; // so that solidity compiler does not optimize out the functions
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        vm.warp(EPOCH_DURATION);
+        assertTrue(getCurrentEpochStart() > 0, "Current epoch start time is greater than 0");
+    }
+
+
+}*/

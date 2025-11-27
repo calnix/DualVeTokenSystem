@@ -23,13 +23,13 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
     - Formula-based calculation determines veMOCA amount based on stake amount and duration
  */
 
-contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
+contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     using SafeERC20 for IERC20;
 
     address public immutable WMOCA;
     IERC20 public immutable ESMOCA;
-
-    address public immutable VOTING_CONTROLLER;
+    
+    address public VOTING_CONTROLLER; // mutable: can be set by VotingEscrowMocaAdmin
 
     // global principal amounts
     uint128 public TOTAL_LOCKED_MOCA;
@@ -90,12 +90,13 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
 //------------------------------- Constructor -----------------------------------------------------------
 
-    constructor(address wMoca_, address esMoca_, address votingController_, uint256 mocaTransferGasLimit,
+    constructor(address wMoca_, address esMoca_, uint256 mocaTransferGasLimit,
         address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
         address monitorBot, address emergencyExitHandler) {
 
-        // cannot deploy at T=0
-        require(block.timestamp > 0, Errors.InvalidTimestamp());
+        //@audit calnix: possibly redundant: only matters if chain is not following UNIX timestamp for block.timestamp
+        // sanity check: chain is operating on Unix timestamp 
+        //require(block.timestamp > EpochMath.EPOCH_DURATION, Errors.InvalidTimestamp());
 
         // wrapped moca 
         require(wMoca_ != address(0), Errors.InvalidAddress());
@@ -104,10 +105,6 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         // esMoca 
         require(esMoca_ != address(0), Errors.InvalidAddress());
         ESMOCA = IERC20(esMoca_);
-
-        // check: voting controller is set
-        VOTING_CONTROLLER = votingController_;
-        require(VOTING_CONTROLLER != address(0), Errors.InvalidAddress());
 
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
@@ -165,13 +162,11 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         // check: expiry is a valid epoch time [must end on an epoch boundary]
         require(EpochMath.isValidEpochTime(expiry), Errors.InvalidEpochTime());
 
-        // check: lock duration is within allowed range
-        require(expiry >= block.timestamp + EpochMath.MIN_LOCK_DURATION, Errors.InvalidLockDuration());
-        require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, Errors.InvalidLockDuration());
-
-
         // check: lock will minimally exist for 3 epochs [current + 2 more epochs]
         uint128 currentEpochStart = _minimumDurationCheck(expiry);
+        // check: lock duration is within allowed range [min check handled by _minimumDurationCheck]
+        require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, Errors.InvalidLockDuration());
+
 
         // init veDelegate & veDelegatePair
         DataTypes.VeBalance memory veDelegate_;
@@ -278,7 +273,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // sanity check: lock exists, user is the owner, lock is not expired
         require(oldLock.owner == msg.sender, Errors.InvalidLockId());
-        require(oldLock.expiry > block.timestamp, Errors.LockExpired());
+        //require(oldLock.expiry > block.timestamp, Errors.LockExpired()); --> handled implicitly by _minimumDurationCheck
 
         // check: lock will end at or after the 3 epochs from current epoch start [current + 2 more epochs]
         uint128 currentEpochStart = _minimumDurationCheck(oldLock.expiry);
@@ -331,7 +326,7 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // sanity check: lock exists, user is the owner, lock is not expired
         require(oldLock.owner == msg.sender, Errors.InvalidLockId());
-        require(oldLock.expiry > block.timestamp, Errors.LockExpired());
+        //require(oldLock.expiry > block.timestamp, Errors.LockExpired()); --> handled implicitly by _minimumDurationCheck
 
         // check: new expiry is a valid epoch time & within allowed range
         uint128 newExpiry = oldLock.expiry + durationToIncrease;
@@ -856,6 +851,14 @@ contract veMocaV2 is LowLevelWMoca, AccessControlEnumerable, Pausable {
         MOCA_TRANSFER_GAS_LIMIT = newMocaTransferGasLimit;
 
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
+    }
+
+    function setVotingController(address newVotingController) external onlyRole(Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE) {
+        require(newVotingController != address(0), Errors.InvalidAddress());
+        require(VOTING_CONTROLLER != newVotingController, Errors.InvalidAddress());
+        
+        VOTING_CONTROLLER = newVotingController;
+        emit Events.VotingControllerUpdated(newVotingController);
     }
 
 //------------------------------ VotingController.sol functions------------------------------------------

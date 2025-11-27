@@ -14,7 +14,7 @@ library Constants {
     uint256 internal constant PRECISION_BASE = 10_000;   
     
     // Minimum lock amount to prevent precision loss in voting power calculations
-    uint256 internal constant MIN_LOCK_AMOUNT = 1E13 wei;  // 0.00001 MOCA/esMOCA
+    uint128 internal constant MIN_LOCK_AMOUNT = 1E13 wei;  // 0.00001 MOCA/esMOCA
 
     uint256 internal constant USD8_PRECISION = 1E6; // 6dp precision
     uint256 internal constant MOCA_PRECISION = 1E18;
