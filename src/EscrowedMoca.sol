@@ -86,8 +86,8 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
         address escrowedMocaTreasury, address emergencyExitHandler, address assetManager,
         uint256 votersPenaltyPct, address wMoca_, uint256 mocaTransferGasLimit) ERC20("esMoca", "esMOCA") {    
 
-        // sanity check: < 100%; can be 0 [all penalties to treasury]       
-        require(votersPenaltyPct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        // sanity check: <= 100%; can be 0 [all penalties to treasury]       
+        require(votersPenaltyPct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
         VOTERS_PENALTY_PCT = votersPenaltyPct;
 
         // wrapped moca 
@@ -410,7 +410,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      */
     function setVotersPenaltyPct(uint256 votersPenaltyPct) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) whenNotPaused {
         // 2dp precision (XX.yy) | range:[1,10_000] 100%: 10_000 | 1%: 100 | 0.1%: 10 | 0.01%: 1 
-        require(votersPenaltyPct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        require(votersPenaltyPct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
 
         uint256 oldVotersPenaltyPct = VOTERS_PENALTY_PCT;
         VOTERS_PENALTY_PCT = votersPenaltyPct;
