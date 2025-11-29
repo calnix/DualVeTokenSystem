@@ -1165,10 +1165,10 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
     // --------- negative tests: setVotersPenaltyPct() ---------
 
         // invalid percentage: 100%
-        function test_EscrowedMocaAdminCannot_SetInvalidVotersPenaltyPct_GreaterThanOrEqual100() public {
+        function test_EscrowedMocaAdminCannot_SetInvalidVotersPenaltyPct_GreaterThan100() public {
             vm.startPrank(escrowedMocaAdmin);
             vm.expectRevert(Errors.InvalidPercentage.selector);
-            esMoca.setVotersPenaltyPct(Constants.PRECISION_BASE);
+            esMoca.setVotersPenaltyPct(Constants.PRECISION_BASE+1);
             vm.stopPrank();
         }
 
