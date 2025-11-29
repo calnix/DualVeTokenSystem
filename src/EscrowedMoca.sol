@@ -86,8 +86,8 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
         address escrowedMocaTreasury, address emergencyExitHandler, address assetManager,
         uint256 votersPenaltyPct, address wMoca_, uint256 mocaTransferGasLimit) ERC20("esMoca", "esMOCA") {    
 
-        // sanity check: <= 100%; can be 0 [all penalties to treasury]       
-        require(votersPenaltyPct <= Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        // sanity check: < 100%; can be 0 [all penalties to treasury]       
+        require(votersPenaltyPct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
         VOTERS_PENALTY_PCT = votersPenaltyPct;
 
         // wrapped moca 
@@ -167,7 +167,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      * @custom:requirements `redemptionOption` must be enabled and configured.
      * Emits {RedemptionScheduled} or {Redeemed} depending on lock duration.
      */
-    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount, uint256 minExpectedReceivable) external payable whenNotPaused {
+    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount, uint256 minExpectedReceivable, uint256 expectedRedemptionTimestamp) external whenNotPaused {
         // sanity checks: amount & balance
         require(redemptionAmount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
@@ -230,10 +230,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
             }
         }
 
-        // 4. Calculate redemption timestamp 
-        uint128 redemptionTimestamp = uint128(block.timestamp) + option.lockDuration;
-
-        // 5. Handle instant redemptions
+        // 4. Handle instant redemptions
         if(option.lockDuration == 0) { 
 
             // event emitted for FE to display the redemption details
@@ -242,10 +239,17 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
             // Transfer Moca to user [wraps if transfer fails within gas limit]
             _transferMocaAndWrapIfFailWithGasLimit(WMOCA, msg.sender, mocaReceivable, MOCA_TRANSFER_GAS_LIMIT);
 
-        } else {    // 5.1 Schedule redemption [user must claim later]
+        } else {    // 4.1 Schedule redemption [user must claim later]
+
+            // calculate redemption timestamp 
+            uint128 redemptionTimestamp = uint128(block.timestamp) + option.lockDuration;
+
+            // sanity check: redemption timestamp is as expected
+            // to address sudden changes to the redemption timestamp, just before the user calls selectRedemptionOption()
+            require(redemptionTimestamp == expectedRedemptionTimestamp, Errors.InvalidRedemptionTimestamp());
 
             // store redemption amount to storage
-            redemptionSchedule[msg.sender][redemptionTimestamp] = mocaReceivable;
+            redemptionSchedule[msg.sender][redemptionTimestamp] += mocaReceivable;
 
             // increment pending counters by the mocaReceivable [global + user]
             TOTAL_MOCA_PENDING_REDEMPTION += mocaReceivable;
@@ -264,7 +268,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      *      Note: does not burn esMoca tokens - that is done during selectRedemptionOption() call.
      * @param redemptionTimestamps The timestamps at which the redemptions become available for claim.
      */
-    function claimRedemptions(uint256[] calldata redemptionTimestamps) external payable whenNotPaused {
+    function claimRedemptions(uint256[] calldata redemptionTimestamps) external whenNotPaused {
         uint256 length = redemptionTimestamps.length;
         require(length > 0, Errors.InvalidArray());
 
@@ -470,7 +474,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      * @param addresses The addresses to update whitelist status for.
      * @param isWhitelisted True to whitelist, false to remove from whitelist.
      */
-    function setWhitelistStatus(address[] calldata addresses, bool isWhitelisted) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) whenNotPaused {
+    function setWhitelistStatus(address[] calldata addresses, bool isWhitelisted) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) {
         uint256 length = addresses.length;
         require(length > 0, Errors.InvalidArray());
 
@@ -494,7 +498,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      * @dev Only callable by the EscrowedMocaAdmin.
      * @param newMocaTransferGasLimit The new gas limit for moca transfer.
      */
-    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) whenNotPaused {
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyRole(ESCROWED_MOCA_ADMIN_ROLE) {
         require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
 
         // cache old + update to new gas limit
@@ -566,11 +570,11 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      * @notice Exfiltrate all esMoca held in the contract to the users.
      * @dev Intended for emergency use only when the contract is frozen.
      *      If called by a user, they should pass an array of length 1 with their own address.
-     *      If called by the emergency exit handler, they should pass an array of length > 1 with the addresses of the users to exit.
+     *      If called by the emergency exit handler, they should pass an array of length >= 1 with the addresses of the users to exit.
      *      Note: does not clear mapping redemptionSchedule; this is a non-issue since the contract is frozen.
      * @param users Array of user addresses to exfiltrate esMoca for.
      */
-    function emergencyExit(address[] calldata users) external payable {
+    function emergencyExit(address[] calldata users) external {
         require(isFrozen == 1, Errors.NotFrozen());
         require(users.length > 0, Errors.InvalidArray());
 
@@ -582,6 +586,9 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
             if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
                 if (msg.sender != user) {
                     revert Errors.OnlyCallableByEmergencyExitHandlerOrUser();
+                } else{
+                    // is user calling 
+                    require(users.length == 1, Errors.InvalidArray());
                 }
             }
 

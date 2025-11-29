@@ -116,6 +116,7 @@ library Errors {
     error EndOfEpochOpsUnderway();
 
 // --------- EscrowedMoca.sol ---------
+    error InvalidRedemptionTimestamp();
     error RedemptionOptionAlreadyEnabled();
     error RedemptionOptionAlreadyDisabled();
     error WhitelistStatusUnchanged();

@@ -1003,5 +1003,7 @@ contract StateE2_User1_CreateLock2_Test is StateE2_User1_CreateLock2 {
         uint128 userVotingPower_After = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
         assertEq(userVotingPower_After, userVotingPower_Before + votingPowerOfLock2, "Voting Power of new lock");
     }
+
+    // --- state transition:  ---
 }
     

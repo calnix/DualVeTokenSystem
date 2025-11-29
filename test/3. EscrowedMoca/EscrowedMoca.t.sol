@@ -298,7 +298,7 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
                     vm.expectEmit(true, true, false, true, address(esMoca));
                     emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
                     
-                    esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount, expectedMocaReceivable);
+                    esMoca.selectRedemptionOption(optionId, redemptionAmount, expectedMocaReceivable, block.timestamp + lockDuration);
                 vm.stopPrank();
                 
                 // --- assert ---
@@ -364,7 +364,7 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
                 emit Events.RedemptionScheduled(user2, redemptionAmount, 0, block.timestamp + lockDuration);
 
                 // full redemption with no penalty | 60 days lock
-                esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount, redemptionAmount); 
+                esMoca.selectRedemptionOption(optionId, redemptionAmount, redemptionAmount, block.timestamp + lockDuration); 
 
             vm.stopPrank();
 
@@ -399,12 +399,12 @@ abstract contract StateT0_UsersScheduleTheirRedemptions is StateT0_RedemptionOpt
 
         // user1 schedules a redemption: penalties booked + redemption scheduled 
         vm.startPrank(user1);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount / 2, user1Amount / 4);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, user1Amount / 2, user1Amount / 4, block.timestamp + 30 days);
         vm.stopPrank();
 
         // user2 schedules a redemption: penalties booked + redemption scheduled
         vm.startPrank(user2);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption2_60Days, user2Amount, user2Amount);
+            esMoca.selectRedemptionOption(redemptionOption2_60Days, user2Amount, user2Amount, block.timestamp + 60 days);
         vm.stopPrank();
     }
 }
@@ -418,14 +418,14 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
         function testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsZero() public {
             vm.startPrank(user1);
             vm.expectRevert(Errors.InvalidAmount.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, 0, 0);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, 0, 0, block.timestamp + 30 days);
             vm.stopPrank();
         }
 
         function testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsGreaterThanBalance() public {
             vm.startPrank(user1);
             vm.expectRevert(Errors.InsufficientBalance.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount + 1, user1Amount + 1);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, user1Amount + 1, user1Amount + 1, block.timestamp + 30 days);
             vm.stopPrank();
         }
 
@@ -443,7 +443,7 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
             vm.startPrank(user3);
             vm.expectRevert(Errors.TotalMocaEscrowedExceeded.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, 10 ether, 10 ether);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, 10 ether, 10 ether, block.timestamp + 30 days);
             vm.stopPrank();
         }
 
@@ -451,7 +451,29 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
         function testRevert_UserCannot_SelectRedemptionOption_WhenRedemptionOptionIsDisabled() public {
             vm.startPrank(user1);
             vm.expectRevert(Errors.RedemptionOptionAlreadyDisabled.selector);
-            esMoca.selectRedemptionOption{value: 0}(5, user1Amount/2, user1Amount/2);
+            esMoca.selectRedemptionOption(5, user1Amount/2, user1Amount/2, block.timestamp + 30 days);
+            vm.stopPrank();
+        }
+
+        // select redemption option with incorrect expected redemption timestamp
+        function testRevert_UserCannot_SelectRedemptionOption_WhenExpectedRedemptionTimestampIsInvalid() public {
+            // Get the redemption option details
+            (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            
+            // Calculate the correct redemption timestamp
+            uint256 correctRedemptionTimestamp = block.timestamp + lockDuration;
+            
+            // Use an incorrect expected timestamp (off by 1 second)
+            uint256 incorrectRedemptionTimestamp = correctRedemptionTimestamp + 1;
+            
+            // Calculate expected receivable
+            uint256 redemptionAmount = user1Amount / 4;
+            uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
+            
+            // Attempt to select redemption option with incorrect expected timestamp
+            vm.startPrank(user1);
+            vm.expectRevert(Errors.InvalidRedemptionTimestamp.selector);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, redemptionAmount, expectedMocaReceivable, incorrectRedemptionTimestamp);
             vm.stopPrank();
         }
 
@@ -463,7 +485,7 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
             vm.startPrank(user1);
                 vm.expectRevert(Errors.InvalidArray.selector);
-                esMoca.claimRedemptions{value: 0}(timestamps);
+                esMoca.claimRedemptions(timestamps);
             vm.stopPrank();
         }
 
@@ -473,7 +495,7 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
             vm.startPrank(user1);
                 vm.expectRevert(Errors.InvalidTimestamp.selector);
-                esMoca.claimRedemptions{value: 0}(timestamps);
+                esMoca.claimRedemptions(timestamps);
             vm.stopPrank();
         }
 
@@ -484,137 +506,205 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
             vm.startPrank(user3);
                 vm.expectRevert(Errors.NothingToClaim.selector);
-                esMoca.claimRedemptions{value: 0}(timestamps);
+                esMoca.claimRedemptions(timestamps);
             vm.stopPrank();
         }
 
     // --------- positive test: claimRedemptions() for instant redemption ---------
 
-    function test_User3Can_SelectRedemptionOptionInstant_ReceivesMocaImmediately() public {
-        // Setup
-        uint256 instantRedeemAmount = user3Amount / 2;
-        (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption3_Instant);
+        function test_User3Can_SelectRedemptionOptionInstant_ReceivesMocaImmediately() public {
+            // Setup
+            uint256 instantRedeemAmount = user3Amount / 2;
+            (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption3_Instant);
 
-        // Execute instant redemption
-        {
-            // balances before
-            uint256 user3MocaBefore = user3.balance;
-            uint256 user3EsMocaBefore = esMoca.balanceOf(user3);
-            uint256 totalSupplyBefore = esMoca.totalSupply();
-            uint256 contractMocaBefore = address(esMoca).balance;
-            // pending before
-            uint256 TOTAL_MOCA_PENDING_REDEMPTION_before = esMoca.TOTAL_MOCA_PENDING_REDEMPTION();
-            uint256 userTotalMocaPendingRedemption_before = esMoca.userTotalMocaPendingRedemption(user3);
-            // penalties before
-            uint256 ACCRUED_PENALTY_TO_VOTERS_before = esMoca.ACCRUED_PENALTY_TO_VOTERS();
-            uint256 ACCRUED_PENALTY_TO_TREASURY_before = esMoca.ACCRUED_PENALTY_TO_TREASURY();
+            // Execute instant redemption
+            {
+                // balances before
+                uint256 user3MocaBefore = user3.balance;
+                uint256 user3EsMocaBefore = esMoca.balanceOf(user3);
+                uint256 totalSupplyBefore = esMoca.totalSupply();
+                uint256 contractMocaBefore = address(esMoca).balance;
+                // pending before
+                uint256 TOTAL_MOCA_PENDING_REDEMPTION_before = esMoca.TOTAL_MOCA_PENDING_REDEMPTION();
+                uint256 userTotalMocaPendingRedemption_before = esMoca.userTotalMocaPendingRedemption(user3);
+                // penalties before
+                uint256 ACCRUED_PENALTY_TO_VOTERS_before = esMoca.ACCRUED_PENALTY_TO_VOTERS();
+                uint256 ACCRUED_PENALTY_TO_TREASURY_before = esMoca.ACCRUED_PENALTY_TO_TREASURY();
 
-            // calculation for receivable/penalty
-            uint256 expectedMocaReceivable = instantRedeemAmount * receivablePct / Constants.PRECISION_BASE;
-            uint256 expectedPenalty = instantRedeemAmount - expectedMocaReceivable;
-            // calculate penalty amount
-            uint256 penaltyToVoters = expectedPenalty * esMoca.VOTERS_PENALTY_PCT() / Constants.PRECISION_BASE;
-            uint256 penaltyToTreasury = expectedPenalty - penaltyToVoters;
+                // calculation for receivable/penalty
+                uint256 expectedMocaReceivable = instantRedeemAmount * receivablePct / Constants.PRECISION_BASE;
+                uint256 expectedPenalty = instantRedeemAmount - expectedMocaReceivable;
+                // calculate penalty amount
+                uint256 penaltyToVoters = expectedPenalty * esMoca.VOTERS_PENALTY_PCT() / Constants.PRECISION_BASE;
+                uint256 penaltyToTreasury = expectedPenalty - penaltyToVoters;
 
-            // Event expectations
-            //vm.expectEmit(true, true, false, true, address(esMoca));
-            //emit IERC20.Transfer(user3, address(0), expectedMocaReceivable);
+                // Event expectations
+                //vm.expectEmit(true, true, false, true, address(esMoca));
+                //emit IERC20.Transfer(user3, address(0), expectedMocaReceivable);
 
-            vm.expectEmit(true, false, false, false, address(esMoca));
-            emit Events.PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
+                vm.expectEmit(true, false, false, false, address(esMoca));
+                emit Events.PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
 
 
-            vm.expectEmit(true, false, false, false, address(esMoca));
-            emit Events.Redeemed(user3, expectedMocaReceivable, expectedPenalty);
+                vm.expectEmit(true, false, false, false, address(esMoca));
+                emit Events.Redeemed(user3, expectedMocaReceivable, expectedPenalty);
 
-            // Execute
-            vm.prank(user3);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption3_Instant, instantRedeemAmount, expectedMocaReceivable);
+                // Execute
+                vm.prank(user3);
+                esMoca.selectRedemptionOption(redemptionOption3_Instant, instantRedeemAmount, expectedMocaReceivable, block.timestamp + lockDuration);
 
-            // --- assert ---
-            
-            // esMoca: balance & totalSupply should decrement
-            assertEq(esMoca.balanceOf(user3), user3EsMocaBefore - instantRedeemAmount, "esMoca balance should decrease by redeemed amount");
-            assertEq(esMoca.totalSupply(), totalSupplyBefore - instantRedeemAmount, "totalSupply should decrease by redeemed amount");
-            
-            // pending: TOTAL_MOCA_PENDING_REDEMPTION & userTotalMocaPendingRedemption should increment
-            assertEq(esMoca.TOTAL_MOCA_PENDING_REDEMPTION(), TOTAL_MOCA_PENDING_REDEMPTION_before, "TOTAL_MOCA_PENDING_REDEMPTION should NOT increment");
-            assertEq(esMoca.userTotalMocaPendingRedemption(user3), 0, "userTotalMocaPendingRedemption should be 0");
+                // --- assert ---
+                
+                // esMoca: balance & totalSupply should decrement
+                assertEq(esMoca.balanceOf(user3), user3EsMocaBefore - instantRedeemAmount, "esMoca balance should decrease by redeemed amount");
+                assertEq(esMoca.totalSupply(), totalSupplyBefore - instantRedeemAmount, "totalSupply should decrease by redeemed amount");
+                
+                // pending: TOTAL_MOCA_PENDING_REDEMPTION & userTotalMocaPendingRedemption should increment
+                assertEq(esMoca.TOTAL_MOCA_PENDING_REDEMPTION(), TOTAL_MOCA_PENDING_REDEMPTION_before, "TOTAL_MOCA_PENDING_REDEMPTION should NOT increment");
+                assertEq(esMoca.userTotalMocaPendingRedemption(user3), 0, "userTotalMocaPendingRedemption should be 0");
 
-            // penalties should increment
-            assertEq(esMoca.ACCRUED_PENALTY_TO_VOTERS(), ACCRUED_PENALTY_TO_VOTERS_before + penaltyToVoters, "penaltyToVoters not accrued correctly");
-            assertEq(esMoca.ACCRUED_PENALTY_TO_TREASURY(), ACCRUED_PENALTY_TO_TREASURY_before + penaltyToTreasury, "penaltyToTreasury not accrued correctly");
+                // penalties should increment
+                assertEq(esMoca.ACCRUED_PENALTY_TO_VOTERS(), ACCRUED_PENALTY_TO_VOTERS_before + penaltyToVoters, "penaltyToVoters not accrued correctly");
+                assertEq(esMoca.ACCRUED_PENALTY_TO_TREASURY(), ACCRUED_PENALTY_TO_TREASURY_before + penaltyToTreasury, "penaltyToTreasury not accrued correctly");
 
-            // user: moca balance should increment
-            assertEq(user3.balance, user3MocaBefore + expectedMocaReceivable, "MOCA balance should increase immediately by mocaReceivable");
-            // contract: MOCA should decrease by amount sent out
-            assertEq(address(esMoca).balance, contractMocaBefore - expectedMocaReceivable, "Contract MOCA should decrease by mocaReceivable");
+                // user: moca balance should increment
+                assertEq(user3.balance, user3MocaBefore + expectedMocaReceivable, "MOCA balance should increase immediately by mocaReceivable");
+                // contract: MOCA should decrease by amount sent out
+                assertEq(address(esMoca).balance, contractMocaBefore - expectedMocaReceivable, "Contract MOCA should decrease by mocaReceivable");
+            }
+
+            // Verify redemption schedule
+            uint256 mocaReceivableAfter = esMoca.redemptionSchedule(user3, block.timestamp);
+            assertEq(mocaReceivableAfter, 0, "mocaReceivable in schedule should equal amount received");
         }
-
-        // Verify redemption schedule
-        uint256 mocaReceivableAfter = esMoca.redemptionSchedule(user3, block.timestamp);
-        assertEq(mocaReceivableAfter, 0, "mocaReceivable in schedule should equal amount received");
-    }
 
     // --------- positive test: claimRedemptions() for multiple timestamps ---------
 
-    function test_User1Can_ClaimRedemptions_MultipleTimestamps() public {
-        // Get lock duration for the redemption option
-        (uint128 lockDuration,uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption1_30Days);
-        
-        // calculation for receivable/penalty
-        uint256 amountForRedemption = user1Amount / 4; 
-        uint256 expectedMocaReceivable = amountForRedemption * receivablePct / Constants.PRECISION_BASE;
-        uint256 expectedPenalty = amountForRedemption - expectedMocaReceivable;
-
-        // --- Setup: user1 creates multiple redemptions ---
-        vm.startPrank(user1);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable);
-            // Store the redemption timestamp
-            uint256 timestamp1 = block.timestamp + lockDuration; 
-        
-            skip(1 days);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable);
-            // Store the redemption timestamp
-            uint256 timestamp2 = block.timestamp + lockDuration; 
-        vm.stopPrank();
-
-        // Fast forward to when both are claimable (warp to when second one is claimable)
-        skip(timestamp2 + 1);
-        
-        // --- Calculate total claimable ---
-        uint256 mocaReceivable1 = esMoca.redemptionSchedule(user1, timestamp1);
-        uint256 mocaReceivable2 = esMoca.redemptionSchedule(user1, timestamp2);
-        uint256 totalClaimable = mocaReceivable1 + mocaReceivable2;
-        
-        // --- Before state ---
-        uint256 user1BalanceBefore = user1.balance;
-        uint256 TOTAL_MOCA_PENDING_REDEMPTION_before = esMoca.TOTAL_MOCA_PENDING_REDEMPTION();
-        uint256 totalSupplyBefore = esMoca.totalSupply();
-        uint256 userTotalMocaPendingRedemption_before = esMoca.userTotalMocaPendingRedemption(user1);
-    
-        // create array of timestamps to claim
-        uint256[] memory timestamps = new uint256[](2);
-            timestamps[0] = timestamp1;
-            timestamps[1] = timestamp2;
-        uint256[] memory mocaReceivables = new uint256[](2);
-            mocaReceivables[0] = mocaReceivable1;
-            mocaReceivables[1] = mocaReceivable2;
+        function test_User1Can_ClaimRedemptions_MultipleTimestamps() public {
+            // Get lock duration for the redemption option
+            (uint128 lockDuration,uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption1_30Days);
             
-        // --- Events ---
-        vm.expectEmit(true, true, false, true, address(esMoca));
-        emit Events.RedemptionsClaimed(user1, timestamps, mocaReceivables);
+            // calculation for receivable/penalty
+            uint256 amountForRedemption = user1Amount / 4; 
+            uint256 expectedMocaReceivable = amountForRedemption * receivablePct / Constants.PRECISION_BASE;
+            uint256 expectedPenalty = amountForRedemption - expectedMocaReceivable;
 
-        // --- Execute ---
-        vm.prank(user1);
-        esMoca.claimRedemptions{value: 0}(timestamps);
+            // --- Setup: user1 creates multiple redemptions ---
+            vm.startPrank(user1);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable, block.timestamp + lockDuration);
+                // Store the redemption timestamp
+                uint256 timestamp1 = block.timestamp + lockDuration; 
+            
+                skip(1 days);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable, block.timestamp + lockDuration);
+                // Store the redemption timestamp
+                uint256 timestamp2 = block.timestamp + lockDuration; 
+            vm.stopPrank();
 
-        // --- After state ---
-        assertEq(user1.balance, user1BalanceBefore + totalClaimable, "User should receive both redemptions");
-        assertEq(esMoca.totalSupply(), totalSupplyBefore, "totalSupply unchanged");
-        assertEq(esMoca.TOTAL_MOCA_PENDING_REDEMPTION(), TOTAL_MOCA_PENDING_REDEMPTION_before - totalClaimable, "Pending redemptions should be decremented");
-        assertEq(esMoca.userTotalMocaPendingRedemption(user1), userTotalMocaPendingRedemption_before - totalClaimable, "userTotalMocaPendingRedemption should be decremented");
-    }
+            // Fast forward to when both are claimable (warp to when second one is claimable)
+            skip(timestamp2 + 1);
+            
+            // --- Calculate total claimable ---
+            uint256 mocaReceivable1 = esMoca.redemptionSchedule(user1, timestamp1);
+            uint256 mocaReceivable2 = esMoca.redemptionSchedule(user1, timestamp2);
+            uint256 totalClaimable = mocaReceivable1 + mocaReceivable2;
+            
+            // --- Before state ---
+            uint256 user1BalanceBefore = user1.balance;
+            uint256 TOTAL_MOCA_PENDING_REDEMPTION_before = esMoca.TOTAL_MOCA_PENDING_REDEMPTION();
+            uint256 totalSupplyBefore = esMoca.totalSupply();
+            uint256 userTotalMocaPendingRedemption_before = esMoca.userTotalMocaPendingRedemption(user1);
+        
+            // create array of timestamps to claim
+            uint256[] memory timestamps = new uint256[](2);
+                timestamps[0] = timestamp1;
+                timestamps[1] = timestamp2;
+            uint256[] memory mocaReceivables = new uint256[](2);
+                mocaReceivables[0] = mocaReceivable1;
+                mocaReceivables[1] = mocaReceivable2;
+                
+            // --- Events ---
+            vm.expectEmit(true, true, false, true, address(esMoca));
+            emit Events.RedemptionsClaimed(user1, timestamps, mocaReceivables);
+
+            // --- Execute ---
+            vm.prank(user1);
+            esMoca.claimRedemptions(timestamps);
+
+            // --- After state ---
+            assertEq(user1.balance, user1BalanceBefore + totalClaimable, "User should receive both redemptions");
+            assertEq(esMoca.totalSupply(), totalSupplyBefore, "totalSupply unchanged");
+            assertEq(esMoca.TOTAL_MOCA_PENDING_REDEMPTION(), TOTAL_MOCA_PENDING_REDEMPTION_before - totalClaimable, "Pending redemptions should be decremented");
+            assertEq(esMoca.userTotalMocaPendingRedemption(user1), userTotalMocaPendingRedemption_before - totalClaimable, "userTotalMocaPendingRedemption should be decremented");
+        }
+
+
+        function test_User1Can_ClaimRedemptions_MultipleRedemptionsAtSameTimestamp() public {
+            // Get lock duration for the redemption option
+            (uint128 lockDuration,uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            
+            // Skip time to use a different timestamp than the one from setUp
+            skip(lockDuration + 1);
+
+            // calculation for receivable/penalty
+            uint256 amountForRedemption = user1Amount / 4; 
+            uint256 expectedMocaReceivable = amountForRedemption * receivablePct / Constants.PRECISION_BASE;
+            uint256 expectedPenalty = amountForRedemption - expectedMocaReceivable;
+
+            // --- Setup: user1 creates multiple redemptions for the same timestamp ---
+            vm.startPrank(user1);
+                // First redemption
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable, block.timestamp + lockDuration);
+                // Store the redemption timestamp
+                uint256 timestamp1 = block.timestamp + lockDuration; 
+            
+                // Second redemption at the same timestamp (no time skip)
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable, block.timestamp + lockDuration);
+                // This should have the same timestamp as timestamp1
+                uint256 timestamp2 = block.timestamp + lockDuration; 
+            vm.stopPrank();
+
+            // Verify both redemptions are at the same timestamp
+            assertEq(timestamp1, timestamp2, "Both redemptions should be at the same timestamp");
+
+            // Fast forward to when redemptions are claimable
+            skip(lockDuration + 1);
+            
+            // --- Calculate total claimable ---
+            // Since both redemptions are at the same timestamp, they should be accumulated
+            uint256 mocaReceivableAtTimestamp = esMoca.redemptionSchedule(user1, timestamp1);
+            uint256 expectedTotalClaimable = expectedMocaReceivable * 2; // Two redemptions
+            assertEq(mocaReceivableAtTimestamp, expectedTotalClaimable, "Redemptions should be accumulated at the same timestamp");
+            
+            // --- Before state ---
+            uint256 user1BalanceBefore = user1.balance;
+            uint256 TOTAL_MOCA_PENDING_REDEMPTION_before = esMoca.TOTAL_MOCA_PENDING_REDEMPTION();
+            uint256 totalSupplyBefore = esMoca.totalSupply();
+            uint256 userTotalMocaPendingRedemption_before = esMoca.userTotalMocaPendingRedemption(user1);
+        
+            // create array of timestamps to claim (only one timestamp since both redemptions are at the same time)
+            uint256[] memory timestamps = new uint256[](1);
+                timestamps[0] = timestamp1;
+            uint256[] memory mocaReceivables = new uint256[](1);
+                mocaReceivables[0] = mocaReceivableAtTimestamp;
+                
+            // --- Events ---
+            vm.expectEmit(true, true, false, true, address(esMoca));
+            emit Events.RedemptionsClaimed(user1, timestamps, mocaReceivables);
+
+            // --- Execute ---
+            vm.prank(user1);
+            esMoca.claimRedemptions(timestamps);
+
+            // --- After state ---
+            assertEq(user1.balance, user1BalanceBefore + expectedTotalClaimable, "User should receive both redemptions");
+            assertEq(esMoca.totalSupply(), totalSupplyBefore, "totalSupply unchanged");
+            assertEq(esMoca.TOTAL_MOCA_PENDING_REDEMPTION(), TOTAL_MOCA_PENDING_REDEMPTION_before - expectedTotalClaimable, "Pending redemptions should be decremented");
+            assertEq(esMoca.userTotalMocaPendingRedemption(user1), userTotalMocaPendingRedemption_before - expectedTotalClaimable, "userTotalMocaPendingRedemption should be decremented");
+            
+            // Verify redemption schedule is cleared
+            assertEq(esMoca.redemptionSchedule(user1, timestamp1), 0, "Redemption schedule should be cleared after claiming");
+        }
 
     // --------- tests: claimPenalties() ---------
 
@@ -769,7 +859,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
         
             vm.startPrank(user2);
                 vm.expectRevert(Errors.NothingToClaim.selector);
-                esMoca.claimRedemptions{value: 0}(timestamps);
+                esMoca.claimRedemptions(timestamps);
             vm.stopPrank();
         }
 
@@ -778,7 +868,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
             vm.expectRevert(Errors.InvalidTimestamp.selector);
             uint256[] memory timestamps = new uint256[](1);
             timestamps[0] = block.timestamp + 1;
-            esMoca.claimRedemptions{value: 0}(timestamps);
+            esMoca.claimRedemptions(timestamps);
             vm.stopPrank();
         }
 
@@ -809,7 +899,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
 
             // --- Execute ---
             vm.startPrank(user1);
-                esMoca.claimRedemptions{value: 0}(timestamps);
+                esMoca.claimRedemptions(timestamps);
             vm.stopPrank();
             
             // --- after balances & state ---
@@ -1005,7 +1095,7 @@ contract StateT60Days_UserTwoHasRedemptionScheduled_Test is StateT60Days_UserTwo
 
             // claimRedemptions
             vm.startPrank(user2);
-            esMoca.claimRedemptions{value: 0}(redemptionTimestamps);
+            esMoca.claimRedemptions(redemptionTimestamps);
             vm.stopPrank();
 
             // --- after balances & state ---
@@ -1074,7 +1164,7 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
 
     // --------- negative tests: setVotersPenaltyPct() ---------
 
-        // invalid percentage: >= 100%
+        // invalid percentage: 100%
         function test_EscrowedMocaAdminCannot_SetInvalidVotersPenaltyPct_GreaterThanOrEqual100() public {
             vm.startPrank(escrowedMocaAdmin);
             vm.expectRevert(Errors.InvalidPercentage.selector);
@@ -1118,7 +1208,7 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
                     vm.expectEmit(true, true, false, true, address(esMoca));
                     emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
 
-                    esMoca.selectRedemptionOption{value: 0}(optionId, redemptionAmount, expectedMocaReceivable);
+                    esMoca.selectRedemptionOption(optionId, redemptionAmount, expectedMocaReceivable, block.timestamp + lockDuration);
                 vm.stopPrank();
                 
                 // --- Assert immediate effects ---
@@ -1222,7 +1312,7 @@ contract StateT60Days_DisableRedemptionOption_Test is StateT60Days_DisableRedemp
         function testRevert_UserCannot_SelectRedemptionOption() public {
             vm.startPrank(user1);
             vm.expectRevert(Errors.RedemptionOptionAlreadyDisabled.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, user1Amount/4, user1Amount/4);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, user1Amount/4, user1Amount/4, block.timestamp + 30 days);
             vm.stopPrank();
         }
 
@@ -1297,7 +1387,7 @@ contract StateT60Days_EnableRedemptionOption_Test is StateT60Days_EnableRedempti
                 
                 // User selects redemption option
                 vm.prank(user1);
-                esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, amount, expectedMocaReceivable);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, amount, expectedMocaReceivable, block.timestamp + lockDuration);
                 
                 // After-state checks
                 uint256 userEsMocaBalanceAfter = esMoca.balanceOf(user1);
@@ -1378,7 +1468,7 @@ abstract contract StateT60Days_SetWhitelistStatus is StateT60Days_EnableRedempti
 
         // user to selectRedemptionOption, so that there are penalties in frozen state to claim via emergencyExitPenalties()
        vm.startPrank(user1);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption1_30Days, redemptionAmount, expectedMocaReceivable); // 10% of user1's balance
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, redemptionAmount, expectedMocaReceivable, block.timestamp + lockDuration); // 10% of user1's balance
         vm.stopPrank();
     }
 }
@@ -1639,7 +1729,7 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
         function testRevert_UserCannot_SelectRedemptionOption_WhenPaused() public {
             vm.startPrank(user1);
             vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.selectRedemptionOption{value: 0}(redemptionOption2_60Days, 50 ether, 50 ether);
+            esMoca.selectRedemptionOption(redemptionOption2_60Days, 50 ether, 50 ether, block.timestamp + 60 days);
             vm.stopPrank();
         }
 
@@ -1648,7 +1738,7 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
             vm.expectRevert(Pausable.EnforcedPause.selector);
             uint256[] memory timestamps = new uint256[](1);
             timestamps[0] = block.timestamp + 60 days;
-            esMoca.claimRedemptions{value: 0}(timestamps);
+            esMoca.claimRedemptions(timestamps);
             vm.stopPrank();
         }
 
@@ -1694,24 +1784,30 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
             vm.stopPrank();
         }
 
-        function testRevert_EscrowedMocaAdminCannot_SetWhitelistStatus_WhenPaused() public {
+
+    // ----- positive tests: functions that can be called when paused ------
+
+        function test_EscrowedMocaAdminCan_SetMocaTransferGasLimit_WhenPaused() public {
+            vm.startPrank(escrowedMocaAdmin);
+            esMoca.setMocaTransferGasLimit(3000);
+            vm.stopPrank();
+
+            assertEq(esMoca.MOCA_TRANSFER_GAS_LIMIT(), 3000);
+        }
+
+        function test_EscrowedMocaAdminCan_SetWhitelistStatus_WhenPaused() public {
             // array + bool
             address[] memory addrs = new address[](1);
             addrs[0] = user2;
             bool isWhitelisted = true;
 
             vm.startPrank(escrowedMocaAdmin);
-            vm.expectRevert(Pausable.EnforcedPause.selector);
             esMoca.setWhitelistStatus(addrs, isWhitelisted);
             vm.stopPrank();
+
+        assertTrue(esMoca.whitelist(user2), "user2 should be whitelisted");
         }
 
-        function testRevert_EscrowedMocaAdminCannot_SetMocaTransferGasLimit_WhenPaused() public {
-            vm.startPrank(escrowedMocaAdmin);
-            vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.setMocaTransferGasLimit(3000);
-            vm.stopPrank();
-        }
 
 
     // --------- negative tests: unpause() ---------
@@ -1751,7 +1847,7 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
             address[] memory users = new address[](1);
             users[0] = user1;
             vm.expectRevert(Errors.NotFrozen.selector);
-            esMoca.emergencyExit{value: 0}(users);
+            esMoca.emergencyExit(users);
         }
 
         function test_GlobalAdminCan_Freeze() public {
@@ -1802,7 +1898,7 @@ contract StateT60Days_Frozen_Test is StateT60Days_Frozen {
             address[] memory users = new address[](0);
             vm.prank(emergencyExitHandler);
             vm.expectRevert(Errors.InvalidArray.selector);
-            esMoca.emergencyExit{value: 0}(users);
+            esMoca.emergencyExit(users);
         }
 
         function testRevert_EmergencyExit_NeitherEmergencyExitHandlerNorUser() public {
@@ -1811,7 +1907,18 @@ contract StateT60Days_Frozen_Test is StateT60Days_Frozen {
          
             vm.prank(user2);
             vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandlerOrUser.selector);
-            esMoca.emergencyExit{value: 0}(users);
+            esMoca.emergencyExit(users);
+        }
+
+        function testRevert_UserCannot_EmergencyExit_MultipleUsers() public {
+            // array of users to exit
+            address[] memory users = new address[](2);
+            users[0] = user1;
+            users[1] = user1;
+
+            vm.prank(user1);
+            vm.expectRevert(Errors.InvalidArray.selector);
+            esMoca.emergencyExit(users);
         }
 
         function test_UserCan_EmergencyExit_Themselves() public {
@@ -1834,7 +1941,7 @@ contract StateT60Days_Frozen_Test is StateT60Days_Frozen {
             emit Events.EmergencyExitEscrowedMoca(users, totalMocaToReceive);
 
             vm.prank(user1);
-            esMoca.emergencyExit{value: 0}(users);
+            esMoca.emergencyExit(users);
 
             // after: user
             assertEq(esMoca.balanceOf(user1), 0, "User esMoca should be burned");
@@ -1883,7 +1990,7 @@ contract StateT60Days_Frozen_Test is StateT60Days_Frozen {
 
             // execute
             vm.prank(emergencyExitHandler);
-            esMoca.emergencyExit{value: 0}(users);
+            esMoca.emergencyExit(users);
 
             // after: user
             assertEq(esMoca.balanceOf(user1), 0, "user1: esMoca should be burned");
@@ -1918,7 +2025,7 @@ contract StateT60Days_Frozen_Test is StateT60Days_Frozen {
             users[0] = user1;
             
             vm.prank(emergencyExitHandler);
-            esMoca.emergencyExit{value: 0}(users);
+            esMoca.emergencyExit(users);
 
 
             // user
