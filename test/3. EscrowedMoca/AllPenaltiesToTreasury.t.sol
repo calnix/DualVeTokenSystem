@@ -55,7 +55,7 @@ contract AllPenaltiesToTreasury_Test is AllPenaltiesToTreasury {
                 vm.expectEmit(true, true, false, true, address(esMoca));
                 emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
 
-                esMoca.selectRedemptionOption(optionId, expectedOption, redemptionAmount, expectedMocaReceivable);
+                esMoca.selectRedemptionOption(optionId, expectedOption, redemptionAmount);
             vm.stopPrank();
             
             // --- Assert immediate effects ---

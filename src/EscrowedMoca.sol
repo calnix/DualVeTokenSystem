@@ -162,14 +162,15 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
     /**
      * @notice Redeems esMoca for Moca using a specified redemption option. Transfers native Moca; if transfer fails within gas limit, wraps to wMoca and transfers the wMoca to user.
      * @dev Redemption is irreversible once initiated. Users select from available redemption options, each with distinct lock durations and penalty structures.
-     * @param redemptionAmount Amount of esMoca to redeem.
      * @param redemptionOption Redemption option index. (0: Standard, 1: Early, 2: Instant)
+     * @param expectedOption Expected redemption option.
+     * @param redemptionAmount Amount of esMoca to redeem.
      * @custom:requirements `redemptionOption` must be enabled and configured.
      * Emits {RedemptionScheduled} or {Redeemed} depending on lock duration.
      */
-    function selectRedemptionOption(uint256 redemptionOption, DataTypes.RedemptionOption calldata expectedOption, uint256 redemptionAmount, uint256 minExpectedReceivable) external whenNotPaused {
+    function selectRedemptionOption(uint256 redemptionOption, DataTypes.RedemptionOption calldata expectedOption, uint256 redemptionAmount) external whenNotPaused {
         // sanity checks: amounts & balance
-        require(redemptionAmount > 0 && minExpectedReceivable > 0, Errors.InvalidAmount());
+        require(redemptionAmount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
         
         // invariant: should never be triggered
@@ -194,16 +195,11 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
             penaltyAmount = redemptionAmount - mocaReceivable;
 
             // sanity checks: ensure penaltyAmount & mocaReceivable are > 0 [flooring]
-            require(mocaReceivable >= minExpectedReceivable, Errors.InvalidAmount()); 
             require(penaltyAmount > 0, Errors.InvalidAmount()); 
 
             // we block cases where penaltyAmount is floored to 0,
             // when selecting a redemption option, the user must honour its penalty, and receive a non-zero amount of moca. 
             // this prevents users from abusing the system(or getting griefed), and protects protocol from rounding/misconfiguration errors.
-
-            // we block cases where mocaReceivable is less than minExpectedReceivable,
-            // this prevents cases where selectRedemptionOption is sent right after a change in the penalty fee,
-            // resulting in a lower mocaReceivable than expected.
         }
 
         // 2. Burn esMoca tokens from the caller
@@ -310,7 +306,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
     }
 
 
-//-------------------------------CronJob functions-----------------------------------------
+//-------------------------------CronJob functions--------------------------------------------------------
 
     /**
      * @notice Escrows native Moca on behalf of multiple users.
@@ -376,7 +372,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
         emit Events.PenaltyClaimed(esMocaTreasury, totalClaimable);
     }
 
-//-------------------------------AssetManager: releaseEscrowedMoca -----------------------------------------
+//-------------------------------AssetManager: releaseEscrowedMoca ---------------------------------------
 
     /**
      * @notice Allows caller to release their esMoca to moca instantly.
