@@ -25,6 +25,12 @@ contract AllPenaltiesToTreasury_Test is AllPenaltiesToTreasury {
         uint256 redemptionAmount = user1Amount / 4;
         uint256 optionId = redemptionOption1_30Days;
         (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(optionId);
+
+        DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+            lockDuration: lockDuration,
+            receivablePct: receivablePct,
+            isEnabled: true
+        });
         
         // Block 1: Execute redemption and verify immediate effects
         {
@@ -49,7 +55,7 @@ contract AllPenaltiesToTreasury_Test is AllPenaltiesToTreasury {
                 vm.expectEmit(true, true, false, true, address(esMoca));
                 emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
 
-                esMoca.selectRedemptionOption(optionId, redemptionAmount, expectedMocaReceivable, block.timestamp + lockDuration);
+                esMoca.selectRedemptionOption(optionId, expectedOption, redemptionAmount, expectedMocaReceivable);
             vm.stopPrank();
             
             // --- Assert immediate effects ---

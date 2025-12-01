@@ -12,11 +12,11 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 **Tests:**
 
 ### ✅ Constructor Tests
-- `test_Constructor()` - Verifies all constructor parameters are set correctly (accessController, wMoca, gas limits, penalty percentages, ERC20 metadata)
+- `test_Constructor()` - Verifies all constructor parameters are set correctly (treasury address, wMoca, gas limits, penalty percentages, ERC20 metadata)
 
 ### ❌ Constructor Validation Tests
 - `testRevert_ConstructorChecks()` - Tests all constructor parameter validations:
-  - Zero address for accessController
+  - Zero address for globalAdmin
   - votersPenaltyPct > 100%
   - Invalid wMoca address
   - mocaTransferGasLimit < 2300
@@ -64,7 +64,7 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 - `testRevert_EscrowedMocaAdmin_SetRedemptionOption_InvalidLockDuration()` - Lock duration must be ≤ 888 days
 
 ### ❌ Claim Penalties When Empty
-- `testRevert_AssetManagerCannot_ClaimPenalties_WhenZero()` - Cannot claim penalties when none exist
+- `testRevert_CronJobCannot_ClaimPenalties_WhenZero()` - Cannot claim penalties when none exist
 
 ### ✅ State Transition: Select Redemption Options
 - `test_User1Can_SelectRedemptionOption_30Days()` - User1 schedules partial redemption (50% of balance) with 30-day lock
@@ -81,10 +81,11 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 **Tests:**
 
 ### ❌ Select Redemption Option Validation Tests
-- `testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsZero()` - Cannot redeem 0 amount
+- `testRevert_UserCannot_SelectRedemptionOption_WhenAmountsAreZero()` - Cannot redeem with 0 amounts (tests redemptionAmount=0, minExpectedReceivable=0, or both)
 - `testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsGreaterThanBalance()` - Cannot redeem more than balance
 - `testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsGreaterThanTotalSupply()` - Invariant check: redemption amount cannot exceed totalSupply
 - `testRevert_UserCannot_SelectRedemptionOption_WhenRedemptionOptionIsDisabled()` - Cannot use disabled redemption option
+- `testRevert_RedemptionOptionInput_DoesNotMatchOptionInStorage()` - Input expectedOption must match stored redemption option (lockDuration and receivablePct)
 
 ### ❌ Claim Redemptions Validation Tests
 - `testRevert_User1Cannot_ClaimRedemptions_EmptyArray()` - Cannot claim with empty timestamp array
@@ -92,16 +93,17 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 - `testRevert_User3_NoRedemptionsScheduled_NothingToClaim()` - Cannot claim if no redemptions scheduled
 
 ### ✅ Instant Redemption Test
-- `test_User3Can_RedeemInstant_ReceivesMocaImmediately()` - User3 performs instant redemption (80% penalty) and receives MOCA immediately
+- `test_User3Can_SelectRedemptionOptionInstant_ReceivesMocaImmediately()` - User3 performs instant redemption (80% penalty) and receives MOCA immediately
 
-### ✅ Multiple Redemptions Test
-- `test_UserCan_ClaimRedemptions_MultipleTimestamps()` - User1 schedules multiple redemptions at different times and claims them all together
+### ✅ Multiple Redemptions Tests
+- `test_User1Can_ClaimRedemptions_MultipleTimestamps()` - User1 schedules multiple redemptions at different times and claims them all together
+- `test_User1Can_ClaimRedemptions_MultipleRedemptionsAtSameTimestamp()` - User1 schedules multiple redemptions at the same timestamp, verifies they aggregate, and claims them together
 
 ### ❌ Claim Penalties Access Control
-- `testRevert_UserCannot_ClaimPenalties()` - Only assetManager can claim penalties
+- `testRevert_UserCannot_ClaimPenalties()` - Only cronJob can claim penalties
 
 ### ✅ Claim Penalties
-- `test_AssetManagerCan_ClaimPenalties_AssetsSentToTreasury()` - AssetManager successfully claims all accrued penalties to treasury
+- `test_CronJobCan_ClaimPenalties_AssetsSentToTreasury()` - CronJob successfully claims all accrued penalties to treasury
 
 ---
 
@@ -109,15 +111,15 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 
 **Setup:**
 - Fast forward 30 days
-- AssetManager has claimed all penalties
+- CronJob has claimed all penalties
 
 **Tests:**
 
 ### ✅ Penalty State Verification
-- `test_AssetManagerHas_ClaimedPenalties_AssetsWithTreasury()` - Confirms all penalties have been claimed and are with treasury
+- `test_CronJobHas_ClaimedPenalties_AssetsWithTreasury()` - Confirms all penalties have been claimed and are with treasury
 
 ### ❌ Claim Penalties When None Available
-- `test_AssetManagerCannot_ClaimPenalties_WhenZero()` - Cannot claim when no new penalties exist
+- `test_CronJobCannot_ClaimPenalties_WhenZero()` - Cannot claim when no new penalties exist
 
 ### ❌ Release Escrowed MOCA Validation Tests
 - `testRevert_UserCannot_ReleaseEscrowedMoca()` - Only assetManager can release escrowed MOCA
@@ -174,7 +176,7 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 **Tests:**
 
 ### ❌ Invalid Penalty Percentage
-- `test_EscrowedMocaAdminCannot_SetInvalidVotersPenaltyPct_GreaterThanOrEqual100()` - Cannot set penalty percentage ≥ 100%
+- `test_EscrowedMocaAdminCannot_SetInvalidVotersPenaltyPct_GreaterThan100()` - Cannot set penalty percentage > 100%
 
 ### ✅ Verify New Penalty Split
 - `test_User1_CanRedeem_Quarter_WithOption1()` - User1 redeems with new 50/50 penalty split, verify correct distribution
@@ -241,7 +243,7 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 
 ### ❌ Whitelist Validation Tests
 - `testRevert_EscrowedMocaAdminCannot_SetWhitelistStatus_ZeroAddress()` - Cannot whitelist zero address
-- `testRevert_EscrowedMocaAdmin_WhitelistStatusUnchanged()` - Cannot set same whitelist status twice
+- `testRevert_EscrowedMocaAdminCannot_SetWhitelistStatus_WhitelistStatusUnchanged()` - Cannot set same whitelist status twice
 
 ### ✅ Remove From Whitelist
 - `test_EscrowedMocaAdminCan_SetWhitelistStatus_ToFalse()` - Admin removes user1 from whitelist
@@ -259,7 +261,7 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 - `testRevert_UserCannot_Pause()` - Only monitor can pause
 
 ### ❌ Freeze Before Pause
-- `testRevert_GlobalAdminCannot_Freeze_WhenContractIsNotPaused()` - Cannot freeze unpausable contract
+- `testRevert_GlobalAdminCannot_Freeze_WhenContractIsNotPaused()` - Cannot freeze unpaused contract
 
 ### ✅ State Transition: Pause Contract
 - `test_MonitorCan_Pause()` - Monitor successfully pauses contract
@@ -276,33 +278,38 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 ### ❌ Cannot Pause When Already Paused
 - `testRevert_MonitorCannot_Pause_WhenContractIsPaused()` - Cannot pause already-paused contract
 
-### ❌ All Functions Blocked When Paused (8 tests)
+### ✅ Functions That Work When Paused
+- `test_User1WhoIsWhitelistedCan_Transfer_WhenPaused()` - Whitelisted users can still transfer when paused
+- `test_User1WhoIsWhitelistedCan_TransferFrom_WhenPaused()` - Whitelisted users can still transferFrom when paused
+- `test_CronJobCan_ClaimPenalities_WhenPaused()` - CronJob can claim penalties when paused
+- `test_EscrowedMocaAdminCan_SetMocaTransferGasLimit_WhenPaused()` - Admin can set gas limit when paused
+- `test_EscrowedMocaAdminCan_SetWhitelistStatus_WhenPaused()` - Admin can set whitelist status when paused
+
+### ❌ User Functions Blocked When Paused
 - `testRevert_UserCannot_EscrowMoca_WhenPaused()`
 - `testRevert_UserCannot_SelectRedemptionOption_WhenPaused()`
 - `testRevert_UserCannot_ClaimRedemptions_WhenPaused()`
+
+### ❌ CronJob Functions Blocked When Paused
 - `testRevert_AssetManagerCannot_EscrowMocaOnBehalf_WhenPaused()`
-- `testRevert_AssetManagerCannot_ClaimPenalties_WhenPaused()`
+
+### ❌ AssetManager Functions Blocked When Paused
 - `testRevert_AssetManagerCannot_ReleaseEscrowedMoca_WhenPaused()`
+
+### ❌ Admin Functions Blocked When Paused
 - `testRevert_EscrowedMocaAdminCannot_SetVotersPenaltyPct_WhenPaused()`
 - `testRevert_EscrowedMocaAdminCannot_SetRedemptionOption_WhenPaused()`
 - `testRevert_EscrowedMocaAdminCannot_SetRedemptionOptionStatus_WhenPaused()`
-- `testRevert_EscrowedMocaAdminCannot_SetWhitelistStatus_WhenPaused()`
-- `testRevert_EscrowedMocaAdminCannot_SetMocaTransferGasLimit_WhenPaused()`
-- `testRevert_User1Cannot_Transfer_WhenPaused()`
-- `testRevert_UserCannot_TransferFrom_WhenPaused()`
 
 ### ❌ Emergency Exit Only When Frozen
-- `testRevert_EmergencyExitHandlerCannot_EmergencyExitPenalties_WhenNotFrozen()` - Can only call when frozen
+- `testRevert_EmergencyExitHandlerCannot_EmergencyExit_WhenNotFrozen()` - Can only call when frozen
 
 ### ❌ Unpause Access Control
 - `test_MonitorCannot_Unpause()` - Only globalAdmin can unpause
-- `test_MonitorCannot_PauseAgain()` - Monitor cannot pause again
+- `testRevert_MonitorCannot_PauseAgain()` - Monitor cannot pause again
 
 ### ✅ Unpause
 - `test_GlobalAdminCan_Unpause()` - GlobalAdmin can unpause contract
-
-### ❌ Emergency Exit Before Freeze
-- `testRevert_EmergencyExitHandlerCannot_EmergencyExit_WhenNotFrozen()` - Cannot emergency exit when not frozen
 
 ### ✅ State Transition: Freeze Contract
 - `test_GlobalAdminCan_Freeze()` - GlobalAdmin freezes the contract
@@ -324,6 +331,7 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 ### ❌ Emergency Exit Validation Tests
 - `testRevert_EmergencyExit_EmptyArray()` - Cannot emergency exit with empty user array
 - `testRevert_EmergencyExit_NeitherEmergencyExitHandlerNorUser()` - Only emergencyExitHandler or the user themselves can call
+- `testRevert_UserCannot_EmergencyExit_MultipleUsers()` - User can only exit themselves (array length must be 1)
 
 ### ✅ User Self Emergency Exit
 - `test_UserCan_EmergencyExit_Themselves()` - User1 can emergency exit their own position
@@ -334,12 +342,8 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 ### ✅ Emergency Exit With Pending Redemptions
 - `test_EmergencyExitHandlerCan_EmergencyExit_WithPendingRedemptions()` - Emergency exit includes both esMOCA balance and pending redemptions
 
-### ❌ Emergency Exit Penalties Validation Tests
-- `testRevert_emergencyExitPenalties_TreasuryAddressZero()` - Treasury address must be valid
-- `testRevert_EmergencyExitHandlerCannot_EmergencyExitPenalties_WhenNoPenalties()` - Cannot claim when no penalties exist
-
-### ✅ Emergency Exit Penalties
-- `test_EmergencyExitHandlerCan_EmergencyExitPenalties()` - EmergencyExitHandler sends all accrued penalties to treasury
+### ✅ Claim Penalties When Frozen
+- `test_CronJobCan_ClaimPenalties()` - CronJob can claim accrued penalties even when frozen
 
 ---
 
@@ -359,7 +363,7 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
 ## Test Summary Statistics
 
 - **Total Test States:** 12 main states + 1 alternative branch
-- **Total Test Functions:** ~80+ individual test cases
+- **Total Test Functions:** ~90+ individual test cases
 - **Test Coverage:**
   - Constructor validation
   - Access control for all privileged functions
@@ -371,3 +375,6 @@ This document outlines the complete test flow for the EscrowedMoca contract, org
   - Pause/unpause/freeze mechanisms
   - Emergency exit procedures
   - Multi-user scenarios
+  - Functions callable when paused vs blocked
+  - Multiple redemptions at same timestamp (aggregation)
+  - Redemption option parameter validation (expectedOption matching)

@@ -167,9 +167,9 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      * @custom:requirements `redemptionOption` must be enabled and configured.
      * Emits {RedemptionScheduled} or {Redeemed} depending on lock duration.
      */
-    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount, uint256 minExpectedReceivable, uint256 expectedRedemptionTimestamp) external whenNotPaused {
-        // sanity checks: amount & balance
-        require(redemptionAmount > 0, Errors.InvalidAmount());
+    function selectRedemptionOption(uint256 redemptionOption, DataTypes.RedemptionOption calldata expectedOption, uint256 redemptionAmount, uint256 minExpectedReceivable) external whenNotPaused {
+        // sanity checks: amounts & balance
+        require(redemptionAmount > 0 && minExpectedReceivable > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= redemptionAmount, Errors.InsufficientBalance());
         
         // invariant: should never be triggered
@@ -178,6 +178,9 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
         // get redemption option + ensure that redemption option is enabled
         DataTypes.RedemptionOption memory option = redemptionOptions[redemptionOption];
         require(option.isEnabled, Errors.RedemptionOptionAlreadyDisabled());
+
+        // compare w/ expectedOption to ensure that the redemption option is not changed
+        require(option.lockDuration == expectedOption.lockDuration && option.receivablePct == expectedOption.receivablePct, Errors.InvalidRedemptionOption());
 
         // 1. Calculate moca receivable + penalty
         uint256 mocaReceivable;
@@ -243,10 +246,6 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
 
             // calculate redemption timestamp 
             uint128 redemptionTimestamp = uint128(block.timestamp) + option.lockDuration;
-
-            // sanity check: redemption timestamp is as expected
-            // to address sudden changes to the redemption timestamp, just before the user calls selectRedemptionOption()
-            require(redemptionTimestamp == expectedRedemptionTimestamp, Errors.InvalidRedemptionTimestamp());
 
             // store redemption amount to storage
             redemptionSchedule[msg.sender][redemptionTimestamp] += mocaReceivable;

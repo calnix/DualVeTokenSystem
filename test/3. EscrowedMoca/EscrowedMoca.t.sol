@@ -288,7 +288,13 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
                 // calculate penalty amount
                 uint256 penaltyToVoters = expectedPenalty * esMoca.VOTERS_PENALTY_PCT() / Constants.PRECISION_BASE;
                 uint256 penaltyToTreasury = expectedPenalty - penaltyToVoters;
-                
+
+                DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                    lockDuration: lockDuration,
+                    receivablePct: receivablePct,
+                    isEnabled: true
+                });
+
                 // --- redeem ---
                 vm.startPrank(user1);               
     
@@ -297,8 +303,8 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
 
                     vm.expectEmit(true, true, false, true, address(esMoca));
                     emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
-                    
-                    esMoca.selectRedemptionOption(optionId, redemptionAmount, expectedMocaReceivable, block.timestamp + lockDuration);
+
+                    esMoca.selectRedemptionOption(optionId, expectedOption, redemptionAmount, expectedMocaReceivable);
                 vm.stopPrank();
                 
                 // --- assert ---
@@ -355,6 +361,11 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
             uint256 penaltyToVoters = expectedPenalty * esMoca.VOTERS_PENALTY_PCT() / Constants.PRECISION_BASE;
             uint256 penaltyToTreasury = expectedPenalty - penaltyToVoters;
             
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct,
+                isEnabled: true
+            });
 
             // --- redeem ---
             vm.startPrank(user2);
@@ -364,7 +375,7 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
                 emit Events.RedemptionScheduled(user2, redemptionAmount, 0, block.timestamp + lockDuration);
 
                 // full redemption with no penalty | 60 days lock
-                esMoca.selectRedemptionOption(optionId, redemptionAmount, redemptionAmount, block.timestamp + lockDuration); 
+                esMoca.selectRedemptionOption(optionId, expectedOption, redemptionAmount, expectedMocaReceivable); 
 
             vm.stopPrank();
 
@@ -394,17 +405,32 @@ contract StateT0_RedemptionOptionsSet_Test is StateT0_RedemptionOptionsSet {
 // note: user1 has a redemption scheduled | partial redemption
 abstract contract StateT0_UsersScheduleTheirRedemptions is StateT0_RedemptionOptionsSet {
 
+
     function setUp() public virtual override {
         super.setUp();
 
+        (uint128 lockDuration1, uint128 receivablePct1, bool isEnabled1) = esMoca.redemptionOptions(redemptionOption1_30Days);
+        DataTypes.RedemptionOption memory expectedOption1 = DataTypes.RedemptionOption({
+            lockDuration: lockDuration1,
+            receivablePct: receivablePct1,
+            isEnabled: isEnabled1
+        });
+
         // user1 schedules a redemption: penalties booked + redemption scheduled 
         vm.startPrank(user1);
-            esMoca.selectRedemptionOption(redemptionOption1_30Days, user1Amount / 2, user1Amount / 4, block.timestamp + 30 days);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption1, user1Amount / 2, user1Amount / 4);
         vm.stopPrank();
+
+        (uint128 lockDuration2, uint128 receivablePct2, bool isEnabled2) = esMoca.redemptionOptions(redemptionOption2_60Days);
+        DataTypes.RedemptionOption memory expectedOption2 = DataTypes.RedemptionOption({
+            lockDuration: lockDuration2,
+            receivablePct: receivablePct2,
+            isEnabled: isEnabled2
+        });
 
         // user2 schedules a redemption: penalties booked + redemption scheduled
         vm.startPrank(user2);
-            esMoca.selectRedemptionOption(redemptionOption2_60Days, user2Amount, user2Amount, block.timestamp + 60 days);
+            esMoca.selectRedemptionOption(redemptionOption2_60Days, expectedOption2, user2Amount, user2Amount);
         vm.stopPrank();
     }
 }
@@ -415,23 +441,56 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
     // --------- negative tests: selectRedemptionOption() ---------
 
-        function testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsZero() public {
+        function testRevert_UserCannot_SelectRedemptionOption_WhenAmountsAreZero() public {
+
+            (uint128 lockDuration1, uint128 receivablePct1, bool isEnabled1) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            DataTypes.RedemptionOption memory expectedOption1 = DataTypes.RedemptionOption({
+                lockDuration: lockDuration1,
+                receivablePct: receivablePct1,
+                isEnabled: isEnabled1
+            });
+
             vm.startPrank(user1);
-            vm.expectRevert(Errors.InvalidAmount.selector);
-            esMoca.selectRedemptionOption(redemptionOption1_30Days, 0, 0, block.timestamp + 30 days);
+                vm.expectRevert(Errors.InvalidAmount.selector);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption1, 0, 0);
+            vm.stopPrank();
+
+            
+            vm.startPrank(user1);
+                vm.expectRevert(Errors.InvalidAmount.selector);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption1, 1 ether, 0);
+            vm.stopPrank();
+            
+            vm.startPrank(user1);
+                vm.expectRevert(Errors.InvalidAmount.selector);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption1, 0, 1 ether);
             vm.stopPrank();
         }
 
         function testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsGreaterThanBalance() public {
+            (uint128 lockDuration1, uint128 receivablePct1, bool isEnabled1) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            DataTypes.RedemptionOption memory expectedOption1 = DataTypes.RedemptionOption({
+                lockDuration: lockDuration1,
+                receivablePct: receivablePct1,
+                isEnabled: isEnabled1
+            });
+
             vm.startPrank(user1);
             vm.expectRevert(Errors.InsufficientBalance.selector);
-            esMoca.selectRedemptionOption(redemptionOption1_30Days, user1Amount + 1, user1Amount + 1, block.timestamp + 30 days);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption1, user1Amount + 1, user1Amount + 1);
             vm.stopPrank();
         }
 
         // invariant check
         function testRevert_UserCannot_SelectRedemptionOption_WhenAmountIsGreaterThanTotalSupply() public {
-            
+
+            (uint128 lockDuration1, uint128 receivablePct1, bool isEnabled1) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            DataTypes.RedemptionOption memory expectedOption1 = DataTypes.RedemptionOption({
+                lockDuration: lockDuration1,
+                receivablePct: receivablePct1,
+                isEnabled: isEnabled1
+            });
+
             // modify storage to set totalSupply to 1
             stdstore
                 .target(address(esMoca))
@@ -443,37 +502,49 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
             vm.startPrank(user3);
             vm.expectRevert(Errors.TotalMocaEscrowedExceeded.selector);
-            esMoca.selectRedemptionOption(redemptionOption1_30Days, 10 ether, 10 ether, block.timestamp + 30 days);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption1, 10 ether, 10 ether);
             vm.stopPrank();
         }
 
         // select redemption option that has not been setup: isEnabled = false
         function testRevert_UserCannot_SelectRedemptionOption_WhenRedemptionOptionIsDisabled() public {
+            (uint128 lockDuration, uint128 receivablePct, bool isEnabled) = esMoca.redemptionOptions(5);
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct,
+                isEnabled: isEnabled
+            });
+
             vm.startPrank(user1);
             vm.expectRevert(Errors.RedemptionOptionAlreadyDisabled.selector);
-            esMoca.selectRedemptionOption(5, user1Amount/2, user1Amount/2, block.timestamp + 30 days);
+            esMoca.selectRedemptionOption(5, expectedOption, user1Amount/2, user1Amount/2);
             vm.stopPrank();
         }
 
-        // select redemption option with incorrect expected redemption timestamp
-        function testRevert_UserCannot_SelectRedemptionOption_WhenExpectedRedemptionTimestampIsInvalid() public {
-            // Get the redemption option details
-            (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption1_30Days);
-            
-            // Calculate the correct redemption timestamp
-            uint256 correctRedemptionTimestamp = block.timestamp + lockDuration;
-            
-            // Use an incorrect expected timestamp (off by 1 second)
-            uint256 incorrectRedemptionTimestamp = correctRedemptionTimestamp + 1;
-            
-            // Calculate expected receivable
-            uint256 redemptionAmount = user1Amount / 4;
-            uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
-            
-            // Attempt to select redemption option with incorrect expected timestamp
+        // input redemption option does not match stored redemption option
+        function testRevert_RedemptionOptionInput_DoesNotMatchOptionInStorage() public {
+            (uint128 lockDuration, uint128 receivablePct, bool isEnabled) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration + 1,
+                receivablePct: receivablePct,
+                isEnabled: isEnabled
+            });
+
             vm.startPrank(user1);
-            vm.expectRevert(Errors.InvalidRedemptionTimestamp.selector);
-            esMoca.selectRedemptionOption(redemptionOption1_30Days, redemptionAmount, expectedMocaReceivable, incorrectRedemptionTimestamp);
+              vm.expectRevert(Errors.InvalidRedemptionOption.selector);
+              esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption, user1Amount/2, user1Amount/2);
+            vm.stopPrank();
+
+
+            DataTypes.RedemptionOption memory expectedOption2 = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct + 1,
+                isEnabled: isEnabled
+            });
+
+            vm.startPrank(user1);
+              vm.expectRevert(Errors.InvalidRedemptionOption.selector);
+              esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption2, user1Amount/2, user1Amount/2);
             vm.stopPrank();
         }
 
@@ -515,7 +586,13 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
         function test_User3Can_SelectRedemptionOptionInstant_ReceivesMocaImmediately() public {
             // Setup
             uint256 instantRedeemAmount = user3Amount / 2;
-            (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption3_Instant);
+            (uint128 lockDuration, uint128 receivablePct, bool isEnabled) = esMoca.redemptionOptions(redemptionOption3_Instant);
+
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct,
+                isEnabled: true
+            });
 
             // Execute instant redemption
             {
@@ -551,7 +628,7 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
                 // Execute
                 vm.prank(user3);
-                esMoca.selectRedemptionOption(redemptionOption3_Instant, instantRedeemAmount, expectedMocaReceivable, block.timestamp + lockDuration);
+                esMoca.selectRedemptionOption(redemptionOption3_Instant, expectedOption, instantRedeemAmount, expectedMocaReceivable);
 
                 // --- assert ---
                 
@@ -582,7 +659,12 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
         function test_User1Can_ClaimRedemptions_MultipleTimestamps() public {
             // Get lock duration for the redemption option
-            (uint128 lockDuration,uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            (uint128 lockDuration,uint128 receivablePct, bool isEnabled) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct,
+                isEnabled: isEnabled
+            });
             
             // calculation for receivable/penalty
             uint256 amountForRedemption = user1Amount / 4; 
@@ -591,12 +673,12 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
             // --- Setup: user1 creates multiple redemptions ---
             vm.startPrank(user1);
-                esMoca.selectRedemptionOption(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable, block.timestamp + lockDuration);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption, amountForRedemption, expectedMocaReceivable);
                 // Store the redemption timestamp
                 uint256 timestamp1 = block.timestamp + lockDuration; 
             
                 skip(1 days);
-                esMoca.selectRedemptionOption(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable, block.timestamp + lockDuration);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption, amountForRedemption, expectedMocaReceivable);
                 // Store the redemption timestamp
                 uint256 timestamp2 = block.timestamp + lockDuration; 
             vm.stopPrank();
@@ -641,7 +723,12 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
 
         function test_User1Can_ClaimRedemptions_MultipleRedemptionsAtSameTimestamp() public {
             // Get lock duration for the redemption option
-            (uint128 lockDuration,uint128 receivablePct,) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            (uint128 lockDuration,uint128 receivablePct, bool isEnabled) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct,
+                isEnabled: isEnabled
+            });
             
             // Skip time to use a different timestamp than the one from setUp
             skip(lockDuration + 1);
@@ -654,12 +741,12 @@ contract StateT0_UsersScheduleTheirRedemptions_Test is StateT0_UsersScheduleThei
             // --- Setup: user1 creates multiple redemptions for the same timestamp ---
             vm.startPrank(user1);
                 // First redemption
-                esMoca.selectRedemptionOption(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable, block.timestamp + lockDuration);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption, amountForRedemption, expectedMocaReceivable);
                 // Store the redemption timestamp
                 uint256 timestamp1 = block.timestamp + lockDuration; 
             
                 // Second redemption at the same timestamp (no time skip)
-                esMoca.selectRedemptionOption(redemptionOption1_30Days, amountForRedemption, expectedMocaReceivable, block.timestamp + lockDuration);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption, amountForRedemption, expectedMocaReceivable);
                 // This should have the same timestamp as timestamp1
                 uint256 timestamp2 = block.timestamp + lockDuration; 
             vm.stopPrank();
@@ -1180,6 +1267,11 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
             uint256 redemptionAmount = user1Amount / 4;
             uint256 optionId = redemptionOption1_30Days;
             (uint128 lockDuration, uint128 receivablePct,) = esMoca.redemptionOptions(optionId);
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct,
+                isEnabled: true
+            });
             
             // Block 1: Execute redemption and verify immediate effects
             {
@@ -1208,7 +1300,7 @@ contract StateT60Days_ChangePenaltySplit_Test is StateT60Days_ChangePenaltySplit
                     vm.expectEmit(true, true, false, true, address(esMoca));
                     emit Events.RedemptionScheduled(user1, expectedMocaReceivable, expectedPenalty, block.timestamp + lockDuration);
 
-                    esMoca.selectRedemptionOption(optionId, redemptionAmount, expectedMocaReceivable, block.timestamp + lockDuration);
+                    esMoca.selectRedemptionOption(optionId, expectedOption, redemptionAmount, expectedMocaReceivable);
                 vm.stopPrank();
                 
                 // --- Assert immediate effects ---
@@ -1310,9 +1402,16 @@ contract StateT60Days_DisableRedemptionOption_Test is StateT60Days_DisableRedemp
     // --------- negative tests: selectRedemptionOption() ---------
 
         function testRevert_UserCannot_SelectRedemptionOption() public {
+            (uint128 lockDuration, uint128 receivablePct, bool isEnabled) = esMoca.redemptionOptions(redemptionOption1_30Days);
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct,
+                isEnabled: isEnabled
+            });
+
             vm.startPrank(user1);
             vm.expectRevert(Errors.RedemptionOptionAlreadyDisabled.selector);
-            esMoca.selectRedemptionOption(redemptionOption1_30Days, user1Amount/4, user1Amount/4, block.timestamp + 30 days);
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption, user1Amount/4, user1Amount/4);
             vm.stopPrank();
         }
 
@@ -1369,6 +1468,12 @@ contract StateT60Days_EnableRedemptionOption_Test is StateT60Days_EnableRedempti
             // Verify option is enabled
             (,,bool isEnabled) = esMoca.redemptionOptions(redemptionOption1_30Days);
             assertTrue(isEnabled, "Redemption option should be enabled before selection");
+
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: uint128(lockDuration),
+                receivablePct: uint128(optionPct),
+                isEnabled: true
+            });
             
             // Execute redemption
             {
@@ -1387,7 +1492,7 @@ contract StateT60Days_EnableRedemptionOption_Test is StateT60Days_EnableRedempti
                 
                 // User selects redemption option
                 vm.prank(user1);
-                esMoca.selectRedemptionOption(redemptionOption1_30Days, amount, expectedMocaReceivable, block.timestamp + lockDuration);
+                esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption, amount, expectedMocaReceivable);
                 
                 // After-state checks
                 uint256 userEsMocaBalanceAfter = esMoca.balanceOf(user1);
@@ -1465,10 +1570,15 @@ abstract contract StateT60Days_SetWhitelistStatus is StateT60Days_EnableRedempti
         (uint128 lockDuration, uint128 receivablePct, ) = esMoca.redemptionOptions(redemptionOption1_30Days);
         uint256 expectedMocaReceivable = (redemptionAmount * receivablePct) / Constants.PRECISION_BASE;
 
+        DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+            lockDuration: lockDuration,
+            receivablePct: receivablePct,
+            isEnabled: true
+        });
 
         // user to selectRedemptionOption, so that there are penalties in frozen state to claim via emergencyExitPenalties()
        vm.startPrank(user1);
-            esMoca.selectRedemptionOption(redemptionOption1_30Days, redemptionAmount, expectedMocaReceivable, block.timestamp + lockDuration); // 10% of user1's balance
+            esMoca.selectRedemptionOption(redemptionOption1_30Days, expectedOption, redemptionAmount, expectedMocaReceivable); // 10% of user1's balance
         vm.stopPrank();
     }
 }
@@ -1727,9 +1837,16 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
         }
 
         function testRevert_UserCannot_SelectRedemptionOption_WhenPaused() public {
+            (uint128 lockDuration, uint128 receivablePct, bool isEnabled) = esMoca.redemptionOptions(redemptionOption2_60Days);
+            DataTypes.RedemptionOption memory expectedOption = DataTypes.RedemptionOption({
+                lockDuration: lockDuration,
+                receivablePct: receivablePct,
+                isEnabled: isEnabled
+            });
+            
             vm.startPrank(user1);
             vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.selectRedemptionOption(redemptionOption2_60Days, 50 ether, 50 ether, block.timestamp + 60 days);
+            esMoca.selectRedemptionOption(redemptionOption2_60Days, expectedOption, 50 ether, 50 ether);
             vm.stopPrank();
         }
 
