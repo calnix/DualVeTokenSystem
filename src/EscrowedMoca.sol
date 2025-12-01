@@ -577,14 +577,10 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
         for(uint256 i; i < users.length; ++i) {
             address user = users[i];
 
-            // check: if NOT emergency exit handler, AND NOT, the user themselves: revert
+            // check: if NOT emergency exit handler, user can only exit themselves
             if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
-                if (msg.sender != user) {
-                    revert Errors.OnlyCallableByEmergencyExitHandlerOrUser();
-                } else{
-                    // is user calling 
-                    require(users.length == 1, Errors.InvalidArray());
-                }
+                // check: user can only exit themselves
+                require(msg.sender == user && users.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrUser());
             }
 
             // get user's esMoca balance
