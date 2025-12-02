@@ -2023,7 +2023,7 @@ contract StateT60Days_Frozen_Test is StateT60Days_Frozen {
             users[1] = user1;
 
             vm.prank(user1);
-            vm.expectRevert(Errors.InvalidArray.selector);
+            vm.expectRevert(Errors.OnlyCallableByEmergencyExitHandlerOrUser.selector);
             esMoca.emergencyExit(users);
         }
 

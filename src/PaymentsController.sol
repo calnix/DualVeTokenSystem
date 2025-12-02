@@ -1154,10 +1154,11 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         for(uint256 i; i < verifiers.length; ++i) {
             
             address verifier = verifiers[i];
-
-            // check: if NOT emergency exit handler, AND NOT, the verifier themselves: revert
-            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != verifier) {
-                revert Errors.OnlyCallableByEmergencyExitHandlerOrVerifier();
+            
+            // check: if NOT emergency exit handler, verifier can only exit themselves
+            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
+                // check: verifier can only exit themselves
+                require(msg.sender == verifier && verifiers.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrVerifier());
             }
 
             // cache verifier pointer
@@ -1217,9 +1218,10 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
             address issuer = issuers[i];
 
-            // check: if NOT emergency exit handler, AND NOT, the issuer themselves: revert
-            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender) && msg.sender != issuer) {
-                revert Errors.OnlyCallableByEmergencyExitHandlerOrIssuer();
+            // check: if NOT emergency exit handler, issuer can only exit themselves
+            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
+                // check: issuer can only exit themselves
+                require(msg.sender == issuer && issuers.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrIssuer());
             }
 
             // cache pointer
