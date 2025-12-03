@@ -627,7 +627,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         emit Events.LockUndelegated(lockId, msg.sender, lock.delegate);
     }
 
-// ----------------------------- CronJob: Update state functions ----------------------------------------
+//------------------------------ CronJob: Update state functions ----------------------------------------
 
     /**
         Because state updates require iterating through every missed epoch,
@@ -750,33 +750,15 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         DataTypes.VeBalance memory veGlobal_ = _updateGlobal(veGlobal, lastUpdatedTimestamp, currentEpochStart);
 
 
-        // counters: track totals
-        uint128 totalEsMoca;
-        uint128 totalMoca;
-        uint128 totalSlopeChanges;
-
-        // to store lockIds
-        bytes32[] memory lockIds = new bytes32[](length);
-        
-        for(uint256 i; i < length; ++i) {
-
-            DataTypes.VeBalance memory veIncoming_;
-            (lockIds[i], veIncoming_) = _createSingleLock(users[i], mocaAmounts[i], esMocaAmounts[i], expiry, currentEpochStart);
-
-            // Aggregate Global Stats in memory
-            veGlobal_ = _add(veGlobal_, veIncoming_);
-            totalSlopeChanges += veIncoming_.slope;
-            
-            // accumulate totals: for verification
-            totalMoca += mocaAmounts[i];
-            totalEsMoca += esMocaAmounts[i];
-        }
+        // Create locks and aggregate results
+        (bytes32[] memory lockIds, uint128 totalMoca, uint128 totalEsMoca, uint128 totalSlopeChanges, DataTypes.VeBalance memory updatedVeGlobal_) 
+            = _createLocksBatch(users, mocaAmounts, esMocaAmounts, expiry, currentEpochStart, veGlobal_);
         
         // check: msg.value matches totalMoca
         require(msg.value == totalMoca, Errors.InvalidAmount());
 
         // STORAGE: update global veBalance after all locks
-        veGlobal = veGlobal_;
+        veGlobal = updatedVeGlobal_;
         slopeChanges[expiry] += totalSlopeChanges;
         emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
 
@@ -792,6 +774,43 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return lockIds;
     }
 
+
+    function _createLocksBatch(
+        address[] memory users,
+        uint128[] memory mocaAmounts,
+        uint128[] memory esMocaAmounts,
+        uint128 expiry,
+        uint128 currentEpochStart,
+        DataTypes.VeBalance memory veGlobal_
+    ) internal returns (bytes32[] memory, uint128, uint128, uint128, DataTypes.VeBalance memory) {
+       
+        // counters: track totals
+        uint128 totalEsMoca;
+        uint128 totalMoca;
+        uint128 totalSlopeChanges;
+
+        // to store lockIds
+        uint256 length = users.length;
+        bytes32[] memory lockIds = new bytes32[](length);
+
+        // loop through users, create locks, aggregate global stats, accumulate totals
+        for(uint256 i; i < length; ++i) {
+
+            DataTypes.VeBalance memory veIncoming_;
+            (lockIds[i], veIncoming_) = _createSingleLock(users[i], mocaAmounts[i], esMocaAmounts[i], expiry, currentEpochStart);
+
+            // Aggregate Global Stats in memory
+            veGlobal_ = _add(veGlobal_, veIncoming_);
+            totalSlopeChanges += veIncoming_.slope;
+            
+            // accumulate totals: for verification
+            totalMoca += mocaAmounts[i];
+            totalEsMoca += esMocaAmounts[i];
+        }
+        
+        return (lockIds, totalMoca, totalEsMoca, totalSlopeChanges, veGlobal_);
+    }
+    
     function _createSingleLock(address user, uint128 moca, uint128 esMoca, uint128 expiry, uint128 currentEpochStart) internal returns (bytes32, DataTypes.VeBalance memory) {
         // update user veBalance: [STORAGE: updates userLastUpdatedTimestamp]
         (, DataTypes.VeBalance memory veUser_) = _updateAccountAndGlobalAndPendingDeltas(user, currentEpochStart, false);

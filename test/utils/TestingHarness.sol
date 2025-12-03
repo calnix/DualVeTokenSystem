@@ -13,7 +13,7 @@ import {IAccessControlEnumerable, IAccessControl} from "openzeppelin-contracts/c
 import {IssuerStakingController} from "../../src/IssuerStakingController.sol";
 import {PaymentsController} from "../../src/PaymentsController.sol";
 import {EscrowedMoca} from "../../src/EscrowedMoca.sol";
-import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
+//import {VotingEscrowMoca} from "../../src/VotingEscrowMoca.sol";
 //import {VotingController} from "../../src/VotingController.sol";
 
 
@@ -41,7 +41,7 @@ abstract contract TestingHarness is Test {
     IssuerStakingController public issuerStakingController;
     PaymentsController public paymentsController;
     EscrowedMoca public esMoca;
-    VotingEscrowMoca public veMoca;
+    //VotingEscrowMoca public veMoca;
     //VotingController public votingController;
     
     // mocks
@@ -152,7 +152,7 @@ abstract contract TestingHarness is Test {
         // 3. Deploy EscrowedMoca [10% penalty split for voters, 90% for treasury]
         esMoca = new EscrowedMoca(globalAdmin, escrowedMocaAdmin, monitorAdmin, cronJobAdmin, monitor, esMocaTreasury, emergencyExitHandler, assetManager, 1000, address(mockWMoca), MOCA_TRANSFER_GAS_LIMIT); 
 
-       
+   /*    
         // 4. Deploy VotingEscrowMoca
         veMoca = new VotingEscrowMoca(address(mockWMoca), address(esMoca), MOCA_TRANSFER_GAS_LIMIT,
             globalAdmin, 
@@ -169,7 +169,7 @@ abstract contract TestingHarness is Test {
             addrs[0] = address(veMoca);
             esMoca.setWhitelistStatus(addrs, true);
         vm.stopPrank();
-
+*/
 
         
         // ---- Misc. ---------
