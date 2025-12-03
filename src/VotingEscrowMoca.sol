@@ -6,12 +6,14 @@ import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeE
 import {AccessControlEnumerable, AccessControl} from "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-// libraries
+// internal libraries
 import {Constants} from "./libraries/Constants.sol";
 import {EpochMath} from "./libraries/EpochMath.sol";
 import {DataTypes} from "./libraries/DataTypes.sol";
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
+// external libraries
+import {VeEmergencyExitLib} from "./libraries/VeEmergencyExitLib.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";
@@ -1447,53 +1449,17 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         require(isFrozen == 1, Errors.NotFrozen());
         require(lockIds.length > 0, Errors.InvalidArray());
 
-        // Track totals for single event emission
-        uint128 totalMocaReturned;
-        uint128 totalEsMocaReturned;
-        uint128 totalLocksProcessed;
 
-        // get user's veBalance for each lock
-        for(uint256 i; i < lockIds.length; ++i) {
-            DataTypes.Lock storage lockPtr = locks[lockIds[i]];
-            
-            // Skip invalid/already processed locks
-            if(lockPtr.owner == address(0) || lockPtr.isUnlocked) continue;        
-
-            // mark unlocked: principals to be returned
-            lockPtr.isUnlocked = true;
-            
-            // direct storage updates - only write changed fields
-            if(lockPtr.esMoca > 0) {
-                
-                uint128 esMocaToReturn = lockPtr.esMoca;
-                delete lockPtr.esMoca;
-                TOTAL_LOCKED_ESMOCA -= esMocaToReturn;
-                
-                // increment counter
-                totalEsMocaReturned += esMocaToReturn;
-
-                ESMOCA.safeTransfer(lockPtr.owner, esMocaToReturn);
-            }
-
-            if(lockPtr.moca > 0) {
-
-                uint128 mocaToReturn = lockPtr.moca;
-                delete lockPtr.moca;
-                TOTAL_LOCKED_MOCA -= mocaToReturn;  
-
-                // increment counter
-                totalMocaReturned += mocaToReturn;
-
-                // transfer moca [wraps if transfer fails within gas limit]
-                _transferMocaAndWrapIfFailWithGasLimit(WMOCA, lockPtr.owner, mocaToReturn, MOCA_TRANSFER_GAS_LIMIT);
-            }
-
-            ++totalLocksProcessed;
-        }
-
-        if(totalLocksProcessed > 0) emit Events.EmergencyExit(lockIds, totalLocksProcessed, totalMocaReturned, totalEsMocaReturned);
-
-        return (totalLocksProcessed, totalMocaReturned, totalEsMocaReturned);
+        return EmergencyExitLib.executeEmergencyExit(
+            lockIds,
+            locks,
+            ESMOCA,
+            TOTAL_LOCKED_MOCA,
+            TOTAL_LOCKED_ESMOCA,
+            WMOCA,
+            MOCA_TRANSFER_GAS_LIMIT,
+            _transferMocaAndWrapIfFailWithGasLimit
+        );
     }
     
 //------------------------------ View functions----------------------------------------------------------
