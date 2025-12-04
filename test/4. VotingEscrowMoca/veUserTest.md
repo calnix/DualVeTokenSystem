@@ -22,6 +22,20 @@ Owners cannot undelegate or switch delegates during the final two epochs of a lo
 
 # Test Sequence
 
+```
+StateE1_Deploy
+    └── StateE1_User1_CreateLock1
+            └── StateE2_CronJobUpdatesState
+                    └── StateE2_User1_CreateLock2
+                            └── StateE2_User1_IncreaseAmountLock2
+                                    └── StateE2_User1_IncreaseDurationLock2
+                                            └── StateE3_User2_CreateLock3
+                                                    └── StateE4_User1_UnlocksLock1
+                                                            └── StateE4_PauseContract
+                                                                    └── StateE4_FreezeContract
+```
+
+
 ## E1: StateE1_User1_CreateLock1
 
 - user1 creates lock 1

@@ -565,7 +565,7 @@ abstract contract StateE1_Deploy is TestingHarness {
         // But we check it's at least not increased
         assertLe(bias, beforeState.global.veGlobal.bias, "veGlobal bias must not increase");
         assertLe(slope, beforeState.global.veGlobal.slope, "veGlobal slope must not increase");
-        
+                
         assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.global.TOTAL_LOCKED_MOCA - mocaAmt, "Total Locked MOCA must be decremented");
         assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.global.TOTAL_LOCKED_ESMOCA - esMocaAmt, "Total Locked esMOCA must be decremented");
         assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global lastUpdatedTimestamp must be updated");
@@ -1064,6 +1064,14 @@ contract StateE2_User1_CreateLock2_Test is StateE2_User1_CreateLock2 {
 
     // ---- negative tests: increaseAmount ----
 
+    function testRevert_IncreaseAmount_LockNotOwned() public {
+        // lock not owned by user
+        vm.expectRevert(Errors.InvalidLockId.selector);
+
+        vm.prank(user2);
+        veMoca.increaseAmount(lock2_Id, 100 ether);
+    }
+
     function testRevert_IncreaseAmount_InvalidLockId() public {
         // invalid lock id
         vm.expectRevert(Errors.InvalidLockId.selector);
@@ -1309,6 +1317,15 @@ contract StateE2_User1_IncreaseAmountLock2_Test is StateE2_User1_IncreaseAmountL
     }
 
     // ---- negative tests: increaseDuration ----
+
+    
+        function testRevert_IncreaseDuration_LockNotOwned() public {
+            // lock not owned by user
+            vm.expectRevert(Errors.InvalidLockId.selector);
+
+            vm.prank(user2);
+            veMoca.increaseDuration(lock2_Id, EPOCH_DURATION);
+        }
 
         function testRevert_IncreaseDuration_InvalidLockDuration() public {
             // invalid lock duration
@@ -2456,6 +2473,15 @@ contract StateE4_User1_UnlocksLock1_Test is StateE4_User1_UnlocksLock1 {
         veMoca.emergencyExit(lockIds);
     }
 
+    function testRevert_Freeze_WhenNotPaused() public {
+        assertFalse(veMoca.paused(), "Contract should not be paused");
+        assertEq(veMoca.isFrozen(), 0, "Contract should not be frozen");
+
+        vm.expectRevert(Pausable.ExpectedPause.selector);
+        vm.prank(globalAdmin);
+        veMoca.freeze();
+    }
+
     function test_PauseContract() public {
         vm.startPrank(monitor);
             veMoca.pause();
@@ -2599,20 +2625,20 @@ contract StateE4_PauseContract_Test is StateE4_PauseContract {
     // --- negative tests: unpause ---
 
         function testRevert_MonitorCannotUnpause() public {
-            vm.expectRevert();
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, monitor, veMoca.DEFAULT_ADMIN_ROLE()));
             vm.prank(monitor);
             veMoca.unpause();
         }
 
         function testRevert_UserCannotUnpause() public {
-            vm.expectRevert();
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, veMoca.DEFAULT_ADMIN_ROLE()));
             vm.prank(user1);
             veMoca.unpause();
         }
 
         function testRevert_AdminCannotUnpause() public {
             // votingEscrowMocaAdmin is not globalAdmin (DEFAULT_ADMIN_ROLE)
-            vm.expectRevert();
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, votingEscrowMocaAdmin, veMoca.DEFAULT_ADMIN_ROLE()));
             vm.prank(votingEscrowMocaAdmin);
             veMoca.unpause();
         }
@@ -2629,6 +2655,12 @@ contract StateE4_PauseContract_Test is StateE4_PauseContract {
     }
 
     // --- state transition: globalAdmin can freeze contract -----
+
+    function testRevert_Freeze_Unauthorized() public {
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, veMoca.DEFAULT_ADMIN_ROLE()));
+        vm.prank(user1);
+        veMoca.freeze();
+    }
 
     function test_GlobalAdminCanFreeze() public {
         assertTrue(veMoca.paused(), "Contract should be paused");
@@ -2661,6 +2693,18 @@ contract StateE4_FreezeContract_Test is StateE4_FreezeContract {
         function test_ContractIsFrozen() public {
             assertEq(veMoca.isFrozen(), 1, "Contract should be frozen");
             assertTrue(veMoca.paused(), "Contract should be paused");
+        }
+
+        function testRevert_Freeze_Twice() public {
+            vm.expectRevert(Errors.IsFrozen.selector);
+            vm.prank(globalAdmin);
+            veMoca.freeze();
+        }
+
+        function testRevert_Unpause_WhenFrozen() public {
+            vm.expectRevert(Errors.IsFrozen.selector);
+            vm.prank(globalAdmin);
+            veMoca.unpause();
         }
 
     // --- negative tests: emergencyExit -----
@@ -2888,3 +2932,14 @@ contract StateE4_FreezeContract_Test is StateE4_FreezeContract {
         assertEq(totalEsMoca, 0, "No esMOCA should be returned");
     }
 }
+
+
+
+
+
+/**
+others:
+ test_CreateLock_EsMocaOnly / test_CreateLock_MocaOnly
+
+
+ */

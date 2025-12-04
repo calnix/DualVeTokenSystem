@@ -6,6 +6,7 @@ optimizer = true
 optimizer_runs = 1
 via_ir = true
 dynamic_test_linking = true
+extra_output = ["storageLayout"]
 
 [lint]
     exclude_lints = ["mixed-case-function", "unwrapped-modifier-logic", "unsafe-typecast"]
