@@ -75,7 +75,9 @@ contract VotingEscrowMocaInvariant is TestingHarness {
 
     /// @notice Invariant: Voting Power Conservation
     /// Sum of all users' (Personal + Delegated) VP must equal Global Total Supply.
-    /// This ensures that delegation transfers are zero-sum (no VP created or lost during transfer).
+    /// This ensures that delegation transfers are zero-sum and accounted for.
+    /// This passes even with the 'Immediate Increase' edge case because the extra VP 
+    /// is correctly added to the Delegate's balance in the contract.
     function invariant_VotingPowerConservation() external view {
         if (veMoca.isFrozen() == 1) return;
 
@@ -84,12 +86,28 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         uint128 currentTimestamp = uint128(block.timestamp);
 
         for (uint i = 0; i < actors.length; i++) {
-            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, false); // Personal
-            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, true);  // Delegated
+            // Personal VP (isDelegate = false)
+            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, false);
+            // Delegated VP (isDelegate = true)
+            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, true);
         }
 
         uint128 globalTotalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
         assertApproxEqAbs(totalVP, globalTotalSupply, 1, "User VP Sum != Global Supply");
+    }
+
+    // Invariant 4: Lock History / Data consistency
+    function invariant_LockData() external view {
+        bytes32[] memory locks = handler.getActiveLocks();
+        for (uint i = 0; i < locks.length; i++) {
+            DataTypes.VeBalance memory ve = veMoca.getLockVeBalance(locks[i]);
+            (,,, uint128 moca, uint128 esMoca, uint128 expiry,) = veMoca.locks(locks[i]);
+            
+            uint128 expectedSlope = (moca + esMoca) / EpochMath.MAX_LOCK_DURATION;
+            
+            assertEq(ve.slope, expectedSlope, "Lock Slope Mismatch");
+            assertEq(ve.bias, ve.slope * expiry, "Lock Bias Mismatch");
+        }
     }
 
     function invariant_ProtocolState() external view {
