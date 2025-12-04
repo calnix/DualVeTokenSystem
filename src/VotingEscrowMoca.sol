@@ -334,7 +334,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // sanity check: lock exists + user is the owner
         require(lock.owner == msg.sender, Errors.InvalidOwner());
-        // sanity check: lock is expired 
+        // sanity check: lock must be expired 
         require(lock.expiry <= block.timestamp, Errors.InvalidExpiry());
         // sanity check: lock is not already unlocked
         require(lock.isUnlocked == false, Errors.InvalidLockState());

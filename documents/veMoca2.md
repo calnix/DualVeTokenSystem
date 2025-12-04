@@ -320,3 +320,53 @@ Unix Time Reality: we are currently around epoch ~1430 (based on 14-day epochs s
 - When a user interacts, their accountLastUpdatedAt is updated to this timestamp.
 
 
+## totalSupplyAt Mapping
+
+`mapping(uint128 eTime => uint128 totalSupply) public totalSupplyAt;`
+
+Purpose: Stores historical snapshots of total voting power at epoch boundaries.
+
+**How it works:**
+- Updated lazily during state transitions when _updateGlobal() processes pending epochs
+- For each epoch boundary crossed, the contract:
+    1. Applies scheduled slope changes (removes expired locks' contributions)
+    2. Calculates the total voting power at that timestamp
+    3. Stores the result in totalSupplyAt[epochStartTimestamp]
+
+**Key behavior:**
+- totalSupplyAt[epochN_Start] represents the total voting power at the boundary between epoch N-1 and epoch N
+- This is equivalent to the VP at the end of epoch N-1 (after processing expirations at that boundary)
+- Actions occurring during an epoch are reflected in veGlobal, not in totalSupplyAt until the next epoch transition
+
+**Usage:**
+
+```ruby
+| Query                          | Returns                                                      |
+|--------------------------------|--------------------------------------------------------------|
+| `totalSupplyAt[epoch4Start]`   | Historical VP at end of epoch 3 / start of epoch 4           |
+| `totalSupplyAtTimestamp(ts)`   | Calculated VP at any timestamp (uses current veGlobal)       |
+```
+
+**Example:**
+```solidity
+// To get historical VP at the end of epoch 3:
+uint128 vpAtEndOfEpoch3 = totalSupplyAt[getEpochStartTimestamp(4)];
+
+// To get current/projected VP at any timestamp:
+uint128 vpNow = totalSupplyAtTimestamp(block.timestamp);
+```
+
+Note: totalSupplyAt[epochStart] is a HISTORICAL snapshot
+- It's booked when transitioning TO that epoch and reflects the state at that moment
+- DIFFERENT from balanceAtEpochEnd which uses CURRENT state
+
+### Key differences from balanceAtEpochEnd:
+
+```ruby
+| Aspect                      | totalSupplyAt[epochStart]                    | balanceAtEpochEnd(user, epoch)              |
+|-----------------------------|----------------------------------------------|---------------------------------------------|
+| Type                        | Historical snapshot (stored mapping)         | View function (calculated)                  |
+| State used                  | State at the time of epoch transition        | CURRENT checkpoint state                    |
+| Includes intra-epoch actions| NO - only reflects state at epoch START      | YES - uses current locks                    |
+| Decay direction             | Later epochs MAY be higher (if locks added)  | Later epochs always lower (pure decay)      |
+```
