@@ -53,6 +53,22 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         assertEq(veMoca.TOTAL_LOCKED_MOCA(), handler.ghost_totalLockedMoca(), "Ghost MOCA Mismatch");
         assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), handler.ghost_totalLockedEsMoca(), "Ghost esMOCA Mismatch");
     }
+
+    /// @notice Invariant: On-Chain Lock Inventory vs TOTAL_LOCKED_*
+    function invariant_TotalLockedConsistency() external view {
+        bytes32[] memory locks = handler.getActiveLocks();
+        uint128 sumMoca;
+        uint128 sumEsMoca;
+        
+        for (uint i; i < locks.length; ++i) {
+            (,,, uint128 moca, uint128 esMoca,,) = veMoca.locks(locks[i]);
+            sumMoca += moca;
+            sumEsMoca += esMoca;
+        }
+        
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), sumMoca, "TOTAL_LOCKED_MOCA mismatch");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), sumEsMoca, "TOTAL_LOCKED_ESMOCA mismatch");
+    }
     
     function invariant_TimeConsistency() external view {
         assertLe(veMoca.lastUpdatedTimestamp(), block.timestamp, "Global lastUpdate is in future");
@@ -65,7 +81,7 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         uint128 sumVotingPower = 0;
         uint128 currentTimestamp = uint128(block.timestamp);
 
-        for (uint256 i = 0; i < locks.length; i++) {
+        for (uint256 i; i < locks.length; ++i) {
             sumVotingPower += veMoca.getLockVotingPowerAt(locks[i], currentTimestamp);
         }
 
@@ -73,8 +89,6 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         assertApproxEqAbs(globalTotalSupply, sumVotingPower, 1, "Global VP != Sum of Locks");
     }
 
-    /// @notice Invariant: Voting Power Conservation
-    /// Sum of all users' (Personal + Delegated) VP must equal Global Total Supply.
     function invariant_VotingPowerConservation() external view {
         if (veMoca.isFrozen() == 1) return;
 
@@ -82,19 +96,18 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         uint128 totalVP = 0;
         uint128 currentTimestamp = uint128(block.timestamp);
 
-        for (uint i = 0; i < actors.length; i++) {
-            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, false); // Personal
-            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, true);  // Delegated
+        for (uint i; i < actors.length; ++i) {
+            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, false); 
+            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, true);  
         }
 
         uint128 globalTotalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
         assertApproxEqAbs(totalVP, globalTotalSupply, 1, "User VP Sum != Global Supply");
     }
 
-    // Invariant 4: Lock History / Data consistency / Slope Math
     function invariant_ActiveLockSlope() external view {
         bytes32[] memory locks = handler.getActiveLocks();
-        for (uint i = 0; i < locks.length; i++) {
+        for (uint i; i < locks.length; ++i) {
             DataTypes.VeBalance memory ve = veMoca.getLockVeBalance(locks[i]);
             (,,, uint128 moca, uint128 esMoca, uint128 expiry,) = veMoca.locks(locks[i]);
             
@@ -105,18 +118,17 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         }
     }
 
-    // Invariant: Slope Changes Consistency
     function invariant_SlopeChanges() external view {
         if (veMoca.isFrozen() == 1) return; 
         
         bytes32[] memory locks = handler.getActiveLocks();
         
-        for (uint i = 0; i < locks.length; i++) {
+        for (uint i; i < locks.length; ++i) {
             (,,,,, uint128 targetExpiry,) = veMoca.locks(locks[i]);
             
-            uint128 expectedSlopeChange = 0;
+            uint128 expectedSlopeChange;
             
-            for (uint j = 0; j < locks.length; j++) {
+            for (uint j; j < locks.length; ++j) {
                 (,,, uint128 m, uint128 es, uint128 e,) = veMoca.locks(locks[j]);
                 if (e == targetExpiry) {
                      expectedSlopeChange += (m + es) / EpochMath.MAX_LOCK_DURATION;
@@ -126,10 +138,9 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         }
     }
 
-    // Invariant: Expiry Alignment
     function invariant_LockExpiryAlignment() external view {
         bytes32[] memory locks = handler.getActiveLocks();
-        for (uint i = 0; i < locks.length; i++) {
+        for (uint i; i < locks.length; ++i) {
             (,,,,, uint128 expiry,) = veMoca.locks(locks[i]);
             assertEq(expiry % EpochMath.EPOCH_DURATION, 0, "Lock expiry not aligned to epoch");
         }
@@ -143,7 +154,7 @@ contract VotingEscrowMocaInvariant is TestingHarness {
 
     function invariant_UnlockedLockState() external view {
         bytes32[] memory locks = handler.getActiveLocks();
-        for (uint i = 0; i < locks.length; i++) {
+        for (uint i; i < locks.length; ++i) {
             (,,, uint128 moca, uint128 esMoca,, bool isUnlocked) = veMoca.locks(locks[i]);
             if (isUnlocked) {
                 assertEq(moca, 0, "Unlocked lock has moca");
@@ -154,7 +165,7 @@ contract VotingEscrowMocaInvariant is TestingHarness {
 
     function invariant_DelegationRegistration() external view {
         bytes32[] memory locks = handler.getActiveLocks();
-        for (uint i = 0; i < locks.length; i++) {
+        for (uint i; i < locks.length; ++i) {
             (,, address delegate,,,,) = veMoca.locks(locks[i]);
             if (delegate != address(0)) {
                 assertTrue(veMoca.isRegisteredDelegate(delegate), "Delegate not registered");
@@ -164,7 +175,7 @@ contract VotingEscrowMocaInvariant is TestingHarness {
 
     function invariant_NoSelfDelegation() external view {
         bytes32[] memory locks = handler.getActiveLocks();
-        for (uint i = 0; i < locks.length; i++) {
+        for (uint i; i < locks.length; ++i) {
             (, address owner, address delegate,,,,) = veMoca.locks(locks[i]);
             if (delegate != address(0)) {
                 assertNotEq(owner, delegate, "Owner delegated to self");
@@ -176,7 +187,7 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         bytes32[] memory locks = handler.getActiveLocks();
         uint128 currentTimestamp = uint128(block.timestamp);
         
-        for (uint i = 0; i < locks.length; i++) {
+        for (uint i; i < locks.length; ++i) {
             (,,,,, uint128 expiry,) = veMoca.locks(locks[i]);
             if (currentTimestamp >= expiry) {
                 uint128 vp = veMoca.getLockVotingPowerAt(locks[i], currentTimestamp);
@@ -190,7 +201,7 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         uint128 currentTimestamp = uint128(block.timestamp);
         uint128 totalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
 
-        for (uint i = 0; i < actors.length; i++) {
+        for (uint i; i < actors.length; ++i) {
             uint128 userVP = veMoca.balanceOfAt(actors[i], currentTimestamp, false);
             uint128 delegateVP = veMoca.balanceOfAt(actors[i], currentTimestamp, true);
             
