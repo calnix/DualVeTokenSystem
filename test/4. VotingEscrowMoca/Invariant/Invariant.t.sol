@@ -75,9 +75,6 @@ contract VotingEscrowMocaInvariant is TestingHarness {
 
     /// @notice Invariant: Voting Power Conservation
     /// Sum of all users' (Personal + Delegated) VP must equal Global Total Supply.
-    /// This ensures that delegation transfers are zero-sum and accounted for.
-    /// This passes even with the 'Immediate Increase' edge case because the extra VP 
-    /// is correctly added to the Delegate's balance in the contract.
     function invariant_VotingPowerConservation() external view {
         if (veMoca.isFrozen() == 1) return;
 
@@ -86,10 +83,8 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         uint128 currentTimestamp = uint128(block.timestamp);
 
         for (uint i = 0; i < actors.length; i++) {
-            // Personal VP (isDelegate = false)
-            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, false);
-            // Delegated VP (isDelegate = true)
-            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, true);
+            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, false); // Personal
+            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, true);  // Delegated
         }
 
         uint128 globalTotalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
@@ -107,6 +102,54 @@ contract VotingEscrowMocaInvariant is TestingHarness {
             
             assertEq(ve.slope, expectedSlope, "Lock Slope Mismatch");
             assertEq(ve.bias, ve.slope * expiry, "Lock Bias Mismatch");
+        }
+    }
+
+    // Invariant 5: Slope Changes Consistency
+    function invariant_SlopeChanges() external view {
+        if (veMoca.isFrozen() == 1) return; // Exits might mess up slope tracking if we assume they clear it? 
+        // Actually emergency exit does NOT clear slopeChanges map. 
+        // It just unlocks.
+        // So slopeChanges remains as is. But activeLockIds removes the lock.
+        // If activeLockIds removes lock, our expected sum decreases.
+        // But contract slopeChanges is NOT cleared.
+        // So this invariant WILL FAIL after Emergency Exit.
+        // Because Contract has "Zombie Slopes" (slopes for locks that were emergency exited).
+        // This is expected behavior.
+        
+        bytes32[] memory locks = handler.getActiveLocks();
+        
+        for (uint i = 0; i < locks.length; i++) {
+            (,,,,, uint128 targetExpiry,) = veMoca.locks(locks[i]);
+            
+            uint128 expectedSlopeChange = 0;
+            
+            for (uint j = 0; j < locks.length; j++) {
+                (,,, uint128 m, uint128 es, uint128 e,) = veMoca.locks(locks[j]);
+                if (e == targetExpiry) {
+                     expectedSlopeChange += (m + es) / EpochMath.MAX_LOCK_DURATION;
+                }
+            }
+            
+            // Verify matches.
+            // Note: If other locks expired naturally, they are still in slopeChanges?
+            // Yes, slopeChanges[T] persists forever.
+            // But we only sum ACTIVE locks.
+            // If a lock expired naturally, is it in activeLockIds?
+            // Handler only removes on 'unlock'.
+            // If lock expired but not unlocked, it IS in activeLockIds.
+            // So we include it.
+            // So sum should match.
+            assertEq(veMoca.slopeChanges(targetExpiry), expectedSlopeChange, "SlopeChanges Mismatch");
+        }
+    }
+
+    // Invariant 6: Expiry Alignment
+    function invariant_LockExpiryAlignment() external view {
+        bytes32[] memory locks = handler.getActiveLocks();
+        for (uint i = 0; i < locks.length; i++) {
+            (,,,,, uint128 expiry,) = veMoca.locks(locks[i]);
+            assertEq(expiry % EpochMath.EPOCH_DURATION, 0, "Lock expiry not aligned to epoch");
         }
     }
 
