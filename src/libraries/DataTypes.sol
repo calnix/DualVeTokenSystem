@@ -177,6 +177,13 @@ library DataTypes {
         DataTypes.VeBalance subtractions;
     }
 
+    // for delegateLock, switchDelegate, undelegateLock
+    enum DelegationAction {
+        Delegate,
+        Switch,
+        Undelegate
+    }
+
 // --------- EscrowedMoca.sol -------
 
     struct RedemptionOption {
