@@ -8,6 +8,12 @@ via_ir = true
 dynamic_test_linking = true
 extra_output = ["storageLayout"]
 
+#[invariant]
+#runs = 256
+#depth = 15
+#fail_on_revert = false
+
+
 [lint]
     exclude_lints = ["mixed-case-function", "unwrapped-modifier-logic", "unsafe-typecast"]
     ignore = ['*.t.sol']

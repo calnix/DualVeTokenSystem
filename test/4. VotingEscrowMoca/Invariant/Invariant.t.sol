@@ -60,35 +60,38 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), handler.ghost_totalLockedEsMoca(), "Ghost esMOCA Mismatch");
     }
     
-    /// @notice Invariant C: Lock Data Consistency
-    /// The veBalance derived from a lock struct should match the helper getter.
-    /// This validates the `_convertToVeBalance` logic implicitly.
-    function invariant_LockConsistency() external view {
-        // We can pick a random lock from the handler to verify
-        // Note: Invariants usually run on the state; we iterate a few if possible or rely on randomness
-        // Since we can't pass args to invariants, we assume if state is corrupt, other checks fail.
-        // We can check the global counter vs ghost.
-        // But here we can check if `TOTAL_LOCKED` is non-negative (implicit in uint).
-    }
-
     /// @notice Invariant D: Global State Hygiene
     /// lastUpdatedTimestamp should never be in the future relative to block.timestamp
     function invariant_TimeConsistency() external view {
         assertLe(veMoca.lastUpdatedTimestamp(), block.timestamp, "Global lastUpdate is in future");
     }
 
-    /// @notice Invariant E: No Phantom Voting Power
-    /// If there are no locked assets, the global voting power bias should ideally be 0
-    /// (or decayed to 0 if updated). 
-    function invariant_EmptyState() external {
-        if (veMoca.TOTAL_LOCKED_MOCA() == 0 && veMoca.TOTAL_LOCKED_ESMOCA() == 0) {
-            // Note: we can't easily check veGlobal() == 0 because it might be stale (needs update).
-            // But if we simulate an update it should be 0.
-            
-            // However, we can check that if we are truly empty, we shouldn't have negative logic 
-            // (handled by Solidity underflow protection).
+    /// @notice Invariant F: Global Voting Power Integrity
+    /// Calculates the sum of voting power of all active locks maintained by the Handler
+    /// and compares it to the contract's `totalSupplyAtTimestamp`.
+    function invariant_GlobalVotingPowerSum() external view {
+        bytes32[] memory locks = handler.getActiveLocks();
+        uint128 sumVotingPower = 0;
+        uint128 currentTimestamp = uint128(block.timestamp);
+
+        for (uint256 i = 0; i < locks.length; i++) {
+            // Get VP using contract's view function for the specific lock
+            // This relies on the individual lock math being correct (checked by unit tests)
+            // But validates that the Aggregated Global State matches the Sum of Parts.
+            sumVotingPower += veMoca.getLockVotingPowerAt(locks[i], currentTimestamp);
         }
+
+        uint128 globalTotalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+        
+        // Allow for tiny precision loss if any, though VE math usually exact for integer steps
+        // If exact match fails due to 1-wei rounding (rare in this implementation), use approx.
+        assertApproxEqAbs(globalTotalSupply, sumVotingPower, 1, "Global VP != Sum of Locks");
     }
+
+    /// @notice Invariant G: Delegation Sum Check
+    /// For any user, their 'balanceOfAt(user, now, isDelegate=true)' should equal:
+    /// Sum(lock.votingPower) for all locks delegated to them.
+    /// This is hard to check efficiently without an off-chain indexer, but we can sample random actors.
 }
 
 /** running

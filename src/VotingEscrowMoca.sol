@@ -1470,7 +1470,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
     function getLockVotingPowerAt(bytes32 lockId, uint128 timestamp) external view returns (uint128) {
         DataTypes.Lock memory lockPtr = locks[lockId];
-        if(lockPtr.expiry <= block.timestamp) return 0;
+        if(lockPtr.expiry <= timestamp) return 0;
 
         return _getValueAt(_convertToVeBalance(lockPtr), timestamp);
     }
