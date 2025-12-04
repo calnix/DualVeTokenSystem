@@ -59,7 +59,6 @@ contract VotingEscrowMocaInvariant is TestingHarness {
     }
 
     function invariant_GlobalVotingPowerSum() external view {
-        // Emergency Exit breaks global state consistency by design
         if (veMoca.isFrozen() == 1) return;
 
         bytes32[] memory locks = handler.getActiveLocks();
@@ -72,6 +71,25 @@ contract VotingEscrowMocaInvariant is TestingHarness {
 
         uint128 globalTotalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
         assertApproxEqAbs(globalTotalSupply, sumVotingPower, 1, "Global VP != Sum of Locks");
+    }
+
+    /// @notice Invariant: Voting Power Conservation
+    /// Sum of all users' (Personal + Delegated) VP must equal Global Total Supply.
+    /// This ensures that delegation transfers are zero-sum (no VP created or lost during transfer).
+    function invariant_VotingPowerConservation() external view {
+        if (veMoca.isFrozen() == 1) return;
+
+        address[] memory actors = handler.getActors();
+        uint128 totalVP = 0;
+        uint128 currentTimestamp = uint128(block.timestamp);
+
+        for (uint i = 0; i < actors.length; i++) {
+            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, false); // Personal
+            totalVP += veMoca.balanceOfAt(actors[i], currentTimestamp, true);  // Delegated
+        }
+
+        uint128 globalTotalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+        assertApproxEqAbs(totalVP, globalTotalSupply, 1, "User VP Sum != Global Supply");
     }
 
     function invariant_ProtocolState() external view {

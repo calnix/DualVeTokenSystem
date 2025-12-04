@@ -18,6 +18,10 @@ contract Handler is Test {
     uint256 public ghost_totalLockedMoca;
     uint256 public ghost_totalLockedEsMoca;
     
+    // Delegation Ghost State
+    mapping(bytes32 => uint256) public ghost_delegationEffectEpoch;
+    mapping(bytes32 => address) public ghost_previousDelegate; // Who held it before current state?
+
     // State Tracking
     bytes32[] public activeLockIds;
     address[] public actors;
@@ -41,39 +45,36 @@ contract Handler is Test {
         wMoca = _wMoca;
         esMoca = _esMoca;
 
-        // Roles
         admin = msg.sender; 
         monitor = makeAddr("monitor");
         cronJob = makeAddr("cronJob");
         emergencyHandler = makeAddr("emergencyHandler");
 
-        // Actors
         for (uint256 i; i < 3; ++i) {
             address actor = makeAddr(string(abi.encodePacked("Actor", i)));
             actors.push(actor);
-            
-            // Fund
             vm.deal(actor, 10_000_000 ether);
             deal(address(esMoca), actor, 10_000_000 ether);
-            
-            // Approve
             vm.startPrank(actor);
             esMoca.approve(address(ve), type(uint256).max);
             vm.stopPrank();
         }
-        
-        // Fund CronJob for createLockFor
         vm.deal(cronJob, 10_000_000 ether);
     }
 
-    // ------------------- USER ACTIONS -------------------
+    // Helper to update ghost delegation state
+    function _updateGhostDelegation(bytes32 lockId, address oldDelegate) internal {
+        ghost_delegationEffectEpoch[lockId] = EpochMath.getCurrentEpochNumber() + 1;
+        ghost_previousDelegate[lockId] = oldDelegate;
+    }
+
+    // ------------------- ACTIONS -------------------
 
     function createLock(uint128 mocaAmount, uint128 esMocaAmount, uint256 durationSeed, uint256 actorSeed) external useActor(actorSeed) {
-        if (ve.paused()) return; // Cannot create if paused
+        if (ve.paused()) return;
 
         uint128 minAmount = Constants.MIN_LOCK_AMOUNT;
         if (uint256(mocaAmount) + esMocaAmount < minAmount) mocaAmount = uint128(minAmount);
-        
         mocaAmount = uint128(bound(mocaAmount, 0, 1_000_000 ether));
         esMocaAmount = uint128(bound(esMocaAmount, 0, 1_000_000 ether));
 
@@ -81,7 +82,6 @@ contract Handler is Test {
         uint128 minExpiry = currentEpochStart + (3 * EpochMath.EPOCH_DURATION);
         uint128 maxExpiry = uint128(block.timestamp) + uint128(EpochMath.MAX_LOCK_DURATION);
         maxExpiry = (maxExpiry / EpochMath.EPOCH_DURATION) * EpochMath.EPOCH_DURATION;
-        
         if (minExpiry > maxExpiry) return;
 
         uint128 expiry = uint128(bound(durationSeed, minExpiry, maxExpiry));
@@ -92,20 +92,19 @@ contract Handler is Test {
         ghost_totalLockedMoca += mocaAmount;
         ghost_totalLockedEsMoca += esMocaAmount;
         activeLockIds.push(lockId);
+        
+        // Initial state: Not delegated. Effect epoch 0 (active). Previous: 0.
+        ghost_delegationEffectEpoch[lockId] = 0;
+        ghost_previousDelegate[lockId] = address(0);
     }
 
     function increaseAmount(uint256 lockIndexSeed, uint128 mocaAdd, uint128 esMocaAdd) external {
         if (activeLockIds.length == 0) return;
-        
-        uint256 idx = bound(lockIndexSeed, 0, activeLockIds.length - 1);
-        bytes32 lockId = activeLockIds[idx];
-        
-        // Corrected unpacking: skip lockId(1), skip delegate(1), skip moca(1), skip esMoca(1)
+        bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
         (, address owner, , , , uint128 expiry, bool isUnlocked) = ve.locks(lockId);
         
         if (owner == address(0) || isUnlocked) return;
-        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
-        if (expiry < currentEpochStart + (3 * EpochMath.EPOCH_DURATION)) return;
+        if (expiry < EpochMath.getCurrentEpochStart() + (3 * EpochMath.EPOCH_DURATION)) return;
 
         uint128 minAmount = Constants.MIN_LOCK_AMOUNT;
         if (uint256(mocaAdd) + esMocaAdd < minAmount) mocaAdd = uint128(minAmount);
@@ -122,18 +121,13 @@ contract Handler is Test {
 
     function increaseDuration(uint256 lockIndexSeed, uint128 epochsToAdd) external {
         if (activeLockIds.length == 0) return;
-        
-        uint256 idx = bound(lockIndexSeed, 0, activeLockIds.length - 1);
-        bytes32 lockId = activeLockIds[idx];
-        // Corrected unpacking: skip lockId(1), skip delegate(1), skip moca(1), skip esMoca(1)
+        bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
         (, address owner, , , , uint128 expiry, bool isUnlocked) = ve.locks(lockId);
 
         if (isUnlocked) return;
-
         epochsToAdd = uint128(bound(epochsToAdd, 1, 52)); 
         uint128 durationIncrease = epochsToAdd * EpochMath.EPOCH_DURATION;
         uint128 newExpiry = expiry + durationIncrease;
-
         if (newExpiry > block.timestamp + EpochMath.MAX_LOCK_DURATION) return;
 
         vm.startPrank(owner);
@@ -143,11 +137,8 @@ contract Handler is Test {
 
     function unlock(uint256 lockIndexSeed) external {
         if (activeLockIds.length == 0) return;
-        
         uint256 idx = bound(lockIndexSeed, 0, activeLockIds.length - 1);
         bytes32 lockId = activeLockIds[idx];
-
-        // Corrected unpacking: skip lockId(1), skip delegate(1)
         (, address owner, , uint128 mocaAmt, uint128 esMocaAmt, uint128 expiry, bool isUnlocked) = ve.locks(lockId);
 
         if (isUnlocked || block.timestamp < expiry) return;
@@ -165,52 +156,51 @@ contract Handler is Test {
     function delegateLock(uint256 lockIndexSeed, uint256 delegateIndexSeed) external {
         if (activeLockIds.length == 0) return;
         bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
-        
-        // Corrected unpacking: skip lockId(1), skip delegate(1), skip moca(1), skip esMoca(1), skip expiry(1)
         (, address owner, , , , , bool isUnlocked) = ve.locks(lockId);
         
         if (owner == address(0) || isUnlocked) return;
-
         address target = actors[bound(delegateIndexSeed, 0, actors.length - 1)];
         if (target == owner) return;
 
         _ensureDelegateRegistered(target);
 
         vm.startPrank(owner);
-        try ve.delegateLock(lockId, target) {} catch {}
+        // Current delegate is 0 (required for delegateLock)
+        try ve.delegateLock(lockId, target) {
+            _updateGhostDelegation(lockId, address(0)); 
+        } catch {}
         vm.stopPrank();
     }
 
     function switchDelegate(uint256 lockIndexSeed, uint256 newDelegateSeed) external {
         if (activeLockIds.length == 0) return;
         bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
-        
-        // Corrected unpacking: skip lockId(1), keep delegate(1), skip moca(1), skip esMoca(1), skip expiry(1)
         (, address owner, address currentDelegate, , , , bool isUnlocked) = ve.locks(lockId);
         
         if (owner == address(0) || isUnlocked || currentDelegate == address(0)) return;
-
         address target = actors[bound(newDelegateSeed, 0, actors.length - 1)];
         if (target == currentDelegate) return;
 
         _ensureDelegateRegistered(target);
 
         vm.startPrank(owner);
-        try ve.switchDelegate(lockId, target) {} catch {}
+        try ve.switchDelegate(lockId, target) {
+            _updateGhostDelegation(lockId, currentDelegate);
+        } catch {}
         vm.stopPrank();
     }
 
     function undelegateLock(uint256 lockIndexSeed) external {
         if (activeLockIds.length == 0) return;
         bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
-        
-        // Corrected unpacking: skip lockId(1), keep delegate(1), skip moca(1), skip esMoca(1), skip expiry(1)
         (, address owner, address currentDelegate, , , , bool isUnlocked) = ve.locks(lockId);
         
         if (owner == address(0) || isUnlocked || currentDelegate == address(0)) return;
 
         vm.startPrank(owner);
-        try ve.undelegateLock(lockId) {} catch {}
+        try ve.undelegateLock(lockId) {
+            _updateGhostDelegation(lockId, currentDelegate);
+        } catch {}
         vm.stopPrank();
     }
 
@@ -218,7 +208,6 @@ contract Handler is Test {
 
     function createLockFor(uint256 amountSeed, uint256 durationSeed) external {
         if (ve.paused()) return;
-
         address user = actors[bound(amountSeed, 0, actors.length - 1)];
         uint128 mocaAmt = uint128(bound(amountSeed, 1 ether, 100_000 ether));
         
@@ -238,6 +227,8 @@ contract Handler is Test {
         try ve.createLockFor{value: mocaAmt}(users, esMocas, mocas, expiry) returns (bytes32[] memory ids) {
             ghost_totalLockedMoca += mocaAmt;
             activeLockIds.push(ids[0]);
+            ghost_delegationEffectEpoch[ids[0]] = 0;
+            ghost_previousDelegate[ids[0]] = address(0);
         } catch {}
         vm.stopPrank();
     }
@@ -260,11 +251,8 @@ contract Handler is Test {
     function emergencyExit(uint256 lockIndexSeed) external {
         if (activeLockIds.length == 0) return;
         if (ve.isFrozen() == 0) return;
-
         uint256 idx = bound(lockIndexSeed, 0, activeLockIds.length - 1);
         bytes32 lockId = activeLockIds[idx];
-        
-        // Corrected unpacking: skip lockId(1), skip delegate(1)
         (,,, uint128 mocaAmt, uint128 esMocaAmt,, bool isUnlocked) = ve.locks(lockId);
         if (isUnlocked) return;
 
