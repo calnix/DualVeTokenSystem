@@ -91,8 +91,8 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         assertApproxEqAbs(totalVP, globalTotalSupply, 1, "User VP Sum != Global Supply");
     }
 
-    // Invariant 4: Lock History / Data consistency
-    function invariant_LockData() external view {
+    // Invariant 4: Lock History / Data consistency / Slope Math
+    function invariant_ActiveLockSlope() external view {
         bytes32[] memory locks = handler.getActiveLocks();
         for (uint i = 0; i < locks.length; i++) {
             DataTypes.VeBalance memory ve = veMoca.getLockVeBalance(locks[i]);
@@ -105,17 +105,9 @@ contract VotingEscrowMocaInvariant is TestingHarness {
         }
     }
 
-    // Invariant 5: Slope Changes Consistency
+    // Invariant: Slope Changes Consistency
     function invariant_SlopeChanges() external view {
-        if (veMoca.isFrozen() == 1) return; // Exits might mess up slope tracking if we assume they clear it? 
-        // Actually emergency exit does NOT clear slopeChanges map. 
-        // It just unlocks.
-        // So slopeChanges remains as is. But activeLockIds removes the lock.
-        // If activeLockIds removes lock, our expected sum decreases.
-        // But contract slopeChanges is NOT cleared.
-        // So this invariant WILL FAIL after Emergency Exit.
-        // Because Contract has "Zombie Slopes" (slopes for locks that were emergency exited).
-        // This is expected behavior.
+        if (veMoca.isFrozen() == 1) return; 
         
         bytes32[] memory locks = handler.getActiveLocks();
         
@@ -130,21 +122,11 @@ contract VotingEscrowMocaInvariant is TestingHarness {
                      expectedSlopeChange += (m + es) / EpochMath.MAX_LOCK_DURATION;
                 }
             }
-            
-            // Verify matches.
-            // Note: If other locks expired naturally, they are still in slopeChanges?
-            // Yes, slopeChanges[T] persists forever.
-            // But we only sum ACTIVE locks.
-            // If a lock expired naturally, is it in activeLockIds?
-            // Handler only removes on 'unlock'.
-            // If lock expired but not unlocked, it IS in activeLockIds.
-            // So we include it.
-            // So sum should match.
             assertEq(veMoca.slopeChanges(targetExpiry), expectedSlopeChange, "SlopeChanges Mismatch");
         }
     }
 
-    // Invariant 6: Expiry Alignment
+    // Invariant: Expiry Alignment
     function invariant_LockExpiryAlignment() external view {
         bytes32[] memory locks = handler.getActiveLocks();
         for (uint i = 0; i < locks.length; i++) {
@@ -156,6 +138,64 @@ contract VotingEscrowMocaInvariant is TestingHarness {
     function invariant_ProtocolState() external view {
         if (veMoca.isFrozen() == 1) {
             assertTrue(veMoca.paused(), "Frozen but not Paused");
+        }
+    }
+
+    function invariant_UnlockedLockState() external view {
+        bytes32[] memory locks = handler.getActiveLocks();
+        for (uint i = 0; i < locks.length; i++) {
+            (,,, uint128 moca, uint128 esMoca,, bool isUnlocked) = veMoca.locks(locks[i]);
+            if (isUnlocked) {
+                assertEq(moca, 0, "Unlocked lock has moca");
+                assertEq(esMoca, 0, "Unlocked lock has esMoca");
+            }
+        }
+    }
+
+    function invariant_DelegationRegistration() external view {
+        bytes32[] memory locks = handler.getActiveLocks();
+        for (uint i = 0; i < locks.length; i++) {
+            (,, address delegate,,,,) = veMoca.locks(locks[i]);
+            if (delegate != address(0)) {
+                assertTrue(veMoca.isRegisteredDelegate(delegate), "Delegate not registered");
+            }
+        }
+    }
+
+    function invariant_NoSelfDelegation() external view {
+        bytes32[] memory locks = handler.getActiveLocks();
+        for (uint i = 0; i < locks.length; i++) {
+            (, address owner, address delegate,,,,) = veMoca.locks(locks[i]);
+            if (delegate != address(0)) {
+                assertNotEq(owner, delegate, "Owner delegated to self");
+            }
+        }
+    }
+
+    function invariant_VotingPowerDecay() external view {
+        bytes32[] memory locks = handler.getActiveLocks();
+        uint128 currentTimestamp = uint128(block.timestamp);
+        
+        for (uint i = 0; i < locks.length; i++) {
+            (,,,,, uint128 expiry,) = veMoca.locks(locks[i]);
+            if (currentTimestamp >= expiry) {
+                uint128 vp = veMoca.getLockVotingPowerAt(locks[i], currentTimestamp);
+                assertEq(vp, 0, "Expired lock has voting power");
+            }
+        }
+    }
+
+    function invariant_UserBalanceBounded() external view {
+        address[] memory actors = handler.getActors();
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 totalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+
+        for (uint i = 0; i < actors.length; i++) {
+            uint128 userVP = veMoca.balanceOfAt(actors[i], currentTimestamp, false);
+            uint128 delegateVP = veMoca.balanceOfAt(actors[i], currentTimestamp, true);
+            
+            assertLe(userVP, totalSupply, "User Personal VP > Total Supply");
+            assertLe(delegateVP, totalSupply, "User Delegated VP > Total Supply");
         }
     }
 }
