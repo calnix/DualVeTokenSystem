@@ -1,13 +1,14 @@
-    // SPDX-License-Identifier: BUSL-1.1
-    pragma solidity 0.8.27;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
 
-    import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
-    import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
-    import "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+import "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
 
-    import "../utils/TestingHarness.sol";
+import "../utils/TestingHarness.sol";
+import {Constants} from "../../src/libraries/Constants.sol";
 
-    //note: vm.warp(EPOCH_DURATION);
+//note: vm.warp(EPOCH_DURATION);
 abstract contract StateE1_Deploy is TestingHarness {    
 
     // PERIODICITY:  does not account for leap year or leap seconds
@@ -32,7 +33,7 @@ abstract contract StateE1_Deploy is TestingHarness {
         assertTrue(getCurrentEpochStart() > 0, "Current epoch start time is greater than 0");
     }
         
-    // =============== EPOCH MATH ===============
+// ================= EPOCH MATH =================
 
         ///@dev returns epoch number for a given timestamp
         function getEpochNumber(uint128 timestamp) public returns (uint128) {
@@ -90,7 +91,7 @@ abstract contract StateE1_Deploy is TestingHarness {
             return timestamp % EPOCH_DURATION == 0;
         }
 
-    // ================= STATE VERIFICATION HELPERS =================
+// ================= STATE VERIFICATION HELPERS =================
 
     
     function getLock(bytes32 lockId) public view returns (DataTypes.Lock memory) {
@@ -174,7 +175,7 @@ abstract contract StateE1_Deploy is TestingHarness {
         state.totalLockedEsMoca = veMoca.TOTAL_LOCKED_ESMOCA();
         state.lastUpdatedTimestamp = veMoca.lastUpdatedTimestamp();
         
-        // mappings: slopeChanges, totalSupplyAt
+        // global mappings: slopeChanges, totalSupplyAt
         state.slopeChange = veMoca.slopeChanges(expiry);
         if (newExpiry != 0) {
             state.slopeChangeNewExpiry = veMoca.slopeChanges(newExpiry);
@@ -261,8 +262,7 @@ abstract contract StateE1_Deploy is TestingHarness {
         bytes32 lockId, 
         uint128 mocaAmt, 
         uint128 esMocaAmt, 
-        uint128 expiry, 
-        address delegate
+        uint128 expiry
     ) internal {
         uint128 currentEpochStart = getCurrentEpochStart();
         
@@ -271,46 +271,46 @@ abstract contract StateE1_Deploy is TestingHarness {
         uint128 expectedBias = expectedSlope * expiry;
 
         // 1. Tokens
-        assertEq(user.balance, beforeState.userMoca - mocaAmt, "User MOCA");
-        assertEq(esMoca.balanceOf(user), beforeState.userEsMoca - esMocaAmt, "User esMOCA");
-        assertEq(address(veMoca).balance, beforeState.contractMoca + mocaAmt, "Contract MOCA");
-        assertEq(esMoca.balanceOf(address(veMoca)), beforeState.contractEsMoca + esMocaAmt, "Contract esMOCA");
+        assertEq(user.balance, beforeState.userMoca - mocaAmt, "User MOCA must be decremented");
+        assertEq(esMoca.balanceOf(user), beforeState.userEsMoca - esMocaAmt, "User esMOCA must be decremented");
+        assertEq(address(veMoca).balance, beforeState.contractMoca + mocaAmt, "Contract MOCA must be incremented");
+        assertEq(esMoca.balanceOf(address(veMoca)), beforeState.contractEsMoca + esMocaAmt, "Contract esMOCA must be incremented");
 
         // 2. Global State
         (uint128 bias, uint128 slope) = veMoca.veGlobal();
-        assertEq(bias, beforeState.veGlobal.bias + expectedBias, "veGlobal bias");
-        assertEq(slope, beforeState.veGlobal.slope + expectedSlope, "veGlobal slope");
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.totalLockedMoca + mocaAmt, "Total Locked MOCA");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.totalLockedEsMoca + esMocaAmt, "Total Locked esMOCA");
-        assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global LastUpdated");
+        assertEq(bias, beforeState.veGlobal.bias + expectedBias, "veGlobal bias must be incremented");
+        assertEq(slope, beforeState.veGlobal.slope + expectedSlope, "veGlobal slope must be incremented");
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.totalLockedMoca + mocaAmt, "Total Locked MOCA must be incremented");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.totalLockedEsMoca + esMocaAmt, "Total Locked esMOCA must be incremented");
+        assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global LastUpdated must be incremented");
 
         // 3. Mappings
-        assertEq(veMoca.slopeChanges(expiry), beforeState.slopeChange + expectedSlope, "Slope Changes");
+        assertEq(veMoca.slopeChanges(expiry), beforeState.slopeChange + expectedSlope, "Slope Changes must be incremented");
         
         // 4. User State [userHistory, userSlopeChanges, userLastUpdatedTimestamp]
         (bias, slope) = veMoca.userHistory(user, currentEpochStart);
-        assertEq(bias, beforeState.userHistory.bias + expectedBias, "User History Bias");
-        assertEq(slope, beforeState.userHistory.slope + expectedSlope, "User History Slope");
-        assertEq(veMoca.userSlopeChanges(user, expiry), beforeState.userSlopeChange + expectedSlope, "User Slope Change");
-        assertEq(veMoca.userLastUpdatedTimestamp(user), currentEpochStart, "User LastUpdated");
+        assertEq(bias, beforeState.userHistory.bias + expectedBias, "userHistory Bias must be incremented");
+        assertEq(slope, beforeState.userHistory.slope + expectedSlope, "userHistory Slope must be incremented");
+        assertEq(veMoca.userSlopeChanges(user, expiry), beforeState.userSlopeChange + expectedSlope, "userSlopeChanges must be incremented");
+        assertEq(veMoca.userLastUpdatedTimestamp(user), currentEpochStart, "userLastUpdatedTimestamp must be incremented");
 
         // 5. Lock
         DataTypes.Lock memory lock = getLock(lockId);
         assertEq(lock.lockId, lockId, "Lock ID");
         assertEq(lock.owner, user, "Lock Owner");
-        assertEq(lock.delegate, delegate, "Lock Delegate");
+        assertEq(lock.delegate, address(0), "Lock Delegate"); // Always address(0) since createLock doesn't allow delegation
         assertEq(lock.moca, mocaAmt, "Lock Moca");
         assertEq(lock.esMoca, esMocaAmt, "Lock esMoca");
         assertEq(lock.expiry, expiry, "Lock Expiry");
         assertFalse(lock.isUnlocked, "Lock Unlocked");
 
-        // 6. Checkpoint
+        // 6. Lock History
         uint256 len = veMoca.getLockHistoryLength(lockId);
         assertGt(len, 0, "Lock History Length");
         DataTypes.Checkpoint memory cp = getLockHistory(lockId, len - 1);
-        assertEq(cp.veBalance.bias, expectedBias, "Checkpoint Bias");
-        assertEq(cp.veBalance.slope, expectedSlope, "Checkpoint Slope");
-        assertEq(cp.lastUpdatedAt, currentEpochStart, "Checkpoint Timestamp");
+        assertEq(cp.veBalance.bias, expectedBias, "Lock History: Checkpoint Bias must be incremented");
+        assertEq(cp.veBalance.slope, expectedSlope, "Lock History: Checkpoint Slope must be incremented");
+        assertEq(cp.lastUpdatedAt, currentEpochStart, "Lock History: Checkpoint Timestamp must be incremented");
     }
 
     function verifyIncreaseAmount(
@@ -634,12 +634,12 @@ contract StateE1_Deploy_Test is StateE1_Deploy {
         assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), 0);
         
         // Check role assignments
-        //assertTrue(veMoca.hasRole(veMoca.DEFAULT_ADMIN_ROLE(), globalAdmin), "globalAdmin should have DEFAULT_ADMIN_ROLE");
-        //assertTrue(veMoca.hasRole(Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE(), votingEscrowMocaAdmin), "votingEscrowMocaAdmin should have VOTING_ESCROW_MOCA_ADMIN_ROLE");
-        //assertTrue(veMoca.hasRole(Constants.MONITOR_ADMIN_ROLE(), monitorAdmin), "monitorAdmin should have MONITOR_ADMIN_ROLE");
-        //assertTrue(veMoca.hasRole(Constants.CRON_JOB_ADMIN_ROLE(), cronJobAdmin), "cronJobAdmin should have CRON_JOB_ADMIN_ROLE");
-        //assertTrue(veMoca.hasRole(Constants.MONITOR_ROLE(), monitor), "monitor should have MONITOR_ROLE");
-        //assertTrue(veMoca.hasRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE(), emergencyExitHandler), "emergencyExitHandler should have EMERGENCY_EXIT_HANDLER_ROLE");
+        assertTrue(veMoca.hasRole(veMoca.DEFAULT_ADMIN_ROLE(), globalAdmin), "globalAdmin should have DEFAULT_ADMIN_ROLE");
+        assertTrue(veMoca.hasRole(Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE, votingEscrowMocaAdmin), "votingEscrowMocaAdmin should have VOTING_ESCROW_MOCA_ADMIN_ROLE");
+        assertTrue(veMoca.hasRole(Constants.MONITOR_ADMIN_ROLE, monitorAdmin), "monitorAdmin should have MONITOR_ADMIN_ROLE");
+        assertTrue(veMoca.hasRole(Constants.CRON_JOB_ADMIN_ROLE, cronJobAdmin), "cronJobAdmin should have CRON_JOB_ADMIN_ROLE");
+        assertTrue(veMoca.hasRole(Constants.MONITOR_ROLE, monitor), "monitor should have MONITOR_ROLE");
+        assertTrue(veMoca.hasRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler), "emergencyExitHandler should have EMERGENCY_EXIT_HANDLER_ROLE");
     }
 
     // --------------------------negative tests: createLock -----------------------------------------
@@ -651,7 +651,7 @@ contract StateE1_Deploy_Test is StateE1_Deploy {
             uint128 expiry = uint128(getEpochEndTimestamp(3));
 
             vm.prank(user1);
-            veMoca.createLock(expiry, esMocaAmt, address(0));
+            veMoca.createLock(expiry, esMocaAmt);
         }
 
         function testRevert_CreateLock_InvalidEpochTime() public {
@@ -660,7 +660,7 @@ contract StateE1_Deploy_Test is StateE1_Deploy {
             uint128 esMocaAmt = Constants.MIN_LOCK_AMOUNT;
 
             vm.prank(user1);
-            veMoca.createLock(1, esMocaAmt, address(0));
+            veMoca.createLock(1, esMocaAmt);
         }
 
         //note: expiry is at the end of epoch 2 | this is insufficient and reverts on _minimumDurationCheck()
@@ -678,7 +678,7 @@ contract StateE1_Deploy_Test is StateE1_Deploy {
             uint128 expiry = uint128(getEpochEndTimestamp(2));
 
             vm.prank(user1);
-            veMoca.createLock(expiry, esMocaAmt, address(0));
+            veMoca.createLock(expiry, esMocaAmt);
         }
 
         function testRevert_CreateLock_InvalidLockDuration_ExceedMaxLockDuration() public {
@@ -688,26 +688,7 @@ contract StateE1_Deploy_Test is StateE1_Deploy {
             vm.expectRevert(Errors.InvalidLockDuration.selector);
 
             vm.prank(user1);
-            veMoca.createLock(expiry, esMocaAmt, address(0));
-        }
-    
-        function testRevert_CreateLock_CannotDelegateToSelf_InvalidDelegate() public {
-            uint128 expiry = uint128(getEpochEndTimestamp(3));
-
-            vm.expectRevert(Errors.InvalidDelegate.selector);
-        
-            vm.prank(user1);
-            veMoca.createLock(expiry, uint128(1 ether), user1);
-        }
-
-        function testRevert_CreateLock_InvalidDelegate_DelegateNotRegistered() public {
-            uint128 expiry = uint128(getEpochEndTimestamp(3));
-
-            // if user2 is provided, it will revert with DelegateNotRegistered
-            vm.expectRevert(Errors.DelegateNotRegistered.selector);
-        
-            vm.prank(user1);
-            veMoca.createLock(expiry, uint128(1 ether), user2);
+            veMoca.createLock(expiry, esMocaAmt);
         }
 
 
@@ -726,7 +707,6 @@ contract StateE1_Deploy_Test is StateE1_Deploy {
             uint128 expiry = uint128(getEpochEndTimestamp(3)); 
             uint128 mocaAmount = 100 ether;
             uint128 esMocaAmount = 100 ether;
-            address delegate = address(0);
             bytes32 expectedLockId = generateLockId(block.number, user1);
             
             uint128 expectedSlope = (mocaAmount + esMocaAmount) / MAX_LOCK_DURATION;
@@ -737,25 +717,25 @@ contract StateE1_Deploy_Test is StateE1_Deploy {
 
             // 4) Execute
             vm.expectEmit(true, true, true, true, address(veMoca));
-            emit Events.LockCreated(expectedLockId, user1, delegate, mocaAmount, esMocaAmount, expiry);
+            emit Events.LockCreated(expectedLockId, user1, mocaAmount, esMocaAmount, expiry);
             vm.expectEmit(true, true, true, true, address(veMoca));
             emit Events.GlobalUpdated(beforeState.veGlobal.bias + expectedBias, beforeState.veGlobal.slope + expectedSlope);
             vm.expectEmit(true, true, true, true, address(veMoca));
             emit Events.UserUpdated(user1, beforeState.userHistory.bias + expectedBias, beforeState.userHistory.slope + expectedSlope);
 
             vm.prank(user1);
-            bytes32 actualLockId = veMoca.createLock{value: mocaAmount}(expiry, esMocaAmount, delegate);
+            bytes32 actualLockId = veMoca.createLock{value: mocaAmount}(expiry, esMocaAmount);
 
             // 5) Verify
             assertEq(actualLockId, expectedLockId, "Lock ID Match");
-            verifyCreateLock(beforeState, user1, actualLockId, mocaAmount, esMocaAmount, expiry, delegate);
+            verifyCreateLock(beforeState, user1, actualLockId, mocaAmount, esMocaAmount, expiry);
             
             // Extra check: voting power
             uint128 userVotingPower = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
             uint128 expectedPower = expectedSlope * (expiry - uint128(block.timestamp));
             assertEq(userVotingPower, expectedPower, "Voting Power");
         }   
-    }
+}
 
 // note: block.timestamp is at the start of epoch 1
 abstract contract StateE1_User1_CreateLock1 is StateE1_Deploy {
@@ -764,7 +744,6 @@ abstract contract StateE1_User1_CreateLock1 is StateE1_Deploy {
     uint128 public lock1_Expiry;
     uint128 public lock1_MocaAmount;
     uint128 public lock1_EsMocaAmount;
-    address public lock1_Delegate;
     uint128 public lock1_CurrentEpochStart;
     DataTypes.VeBalance public lock1_VeBalance;
 
@@ -780,7 +759,6 @@ abstract contract StateE1_User1_CreateLock1 is StateE1_Deploy {
         lock1_Expiry = uint128(getEpochEndTimestamp(3)); // expiry at end of epoch 3
         lock1_MocaAmount = 100 ether;
         lock1_EsMocaAmount = 100 ether;
-        lock1_Delegate = address(0);
         lock1_Id = generateLockId(block.number, user1);
         lock1_CurrentEpochStart = getCurrentEpochStart();
 
@@ -790,13 +768,13 @@ abstract contract StateE1_User1_CreateLock1 is StateE1_Deploy {
             esMoca.escrowMoca{value: lock1_MocaAmount}();
             esMoca.approve(address(veMoca), lock1_MocaAmount);
 
-            lock1_Id = veMoca.createLock{value: lock1_MocaAmount}(lock1_Expiry, lock1_EsMocaAmount, lock1_Delegate);
+            lock1_Id = veMoca.createLock{value: lock1_MocaAmount}(lock1_Expiry, lock1_EsMocaAmount);
         vm.stopPrank();
 
         // 4) Capture lock1_VeBalance
         lock1_VeBalance = veMoca.getLockVeBalance(lock1_Id);
 
-        // cronJob
+        // Set cronJob: to allow ad-hoc updates to state
         vm.startPrank(cronJobAdmin);
             veMoca.grantRole(Constants.CRON_JOB_ROLE, cronJob);
         vm.stopPrank();
@@ -807,7 +785,8 @@ abstract contract StateE1_User1_CreateLock1 is StateE1_Deploy {
 contract StateE1_User1_CreateLock1_Test is StateE1_User1_CreateLock1 {
 
     // ---- state_transition: cross an epoch boundary [to check totalSupplyAt]  ----
-
+    
+    // note: totalSupplyAt is only updated after crossing epoch boundary
     function test_totalSupplyAt_CrossEpochBoundary_Epoch2() public {
         assertEq(getCurrentEpochNumber(), 1, "Current epoch number is 1");
 
@@ -822,7 +801,7 @@ contract StateE1_User1_CreateLock1_Test is StateE1_User1_CreateLock1 {
         vm.warp(epoch2StartTimestamp + 1);
         assertEq(getCurrentEpochNumber(), 2, "Current epoch number is 2");
 
-        // 3) perform cronjob update State
+        // 3) cronjob: Update State [updates global and user states]
         vm.startPrank(cronJob);
             address[] memory accounts = new address[](1);
             accounts[0] = user1;
@@ -835,7 +814,7 @@ contract StateE1_User1_CreateLock1_Test is StateE1_User1_CreateLock1 {
         // calc. expected totalSupplyAt [decays bias to epoch2StartTimestamp]
         uint128 expectedTotalSupplyAt = getValueAt(beforeState.veGlobal, epoch2StartTimestamp);
 
-        // 3) Verify: 
+        // 3) Verify: bias & slope would not change [since no new locks created]
         assertEq(afterState.veGlobal.bias, beforeState.veGlobal.bias, "veGlobal bias");
         assertEq(afterState.veGlobal.slope, beforeState.veGlobal.slope, "veGlobal slope");
         // totalSupplyAt: calculated & veMoca.totalSupplyAtTimestamp()
@@ -915,32 +894,29 @@ contract StateE2_CronJobUpdatesState_Test is StateE2_CronJobUpdatesState {
         uint128 expiry = uint128(getEpochEndTimestamp(6));  // currentEpoch: 2; + 4 epochs [lock2 expires at end of epoch 6]
         uint128 mocaAmount = 100 ether;
         uint128 esMocaAmount = 100 ether;
-        address delegate = address(0);
         bytes32 expectedLockId = generateLockId(block.number, user1); // Salt incremented
         
         uint128 expectedSlope = (mocaAmount + esMocaAmount) / MAX_LOCK_DURATION;
         uint128 expectedBias = expectedSlope * expiry;
 
-        // 3) Capture State
+        // 3) Capture State + userVotingPower before lock2 creation
         StateSnapshot memory beforeState = captureState(user1, expiry, 0);
-        
-        // Capture existing power
         uint128 userVotingPower_Before = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
 
         // 4) Execute
         vm.expectEmit(true, true, true, true, address(veMoca));
-        emit Events.LockCreated(expectedLockId, user1, delegate, mocaAmount, esMocaAmount, expiry);
+        emit Events.LockCreated(expectedLockId, user1, mocaAmount, esMocaAmount, expiry);
         vm.expectEmit(true, true, true, true, address(veMoca));
         emit Events.GlobalUpdated(beforeState.veGlobal.bias + expectedBias, beforeState.veGlobal.slope + expectedSlope);
         vm.expectEmit(true, true, true, true, address(veMoca));
         emit Events.UserUpdated(user1, beforeState.userHistory.bias + expectedBias, beforeState.userHistory.slope + expectedSlope);
 
         vm.prank(user1);
-        bytes32 actualLockId2 = veMoca.createLock{value: mocaAmount}(expiry, esMocaAmount, delegate);
+        bytes32 actualLockId2 = veMoca.createLock{value: mocaAmount}(expiry, esMocaAmount);
 
         // 5) Verify
         assertEq(actualLockId2, expectedLockId, "Lock ID Match");
-        verifyCreateLock(beforeState, user1, actualLockId2, mocaAmount, esMocaAmount, expiry, delegate);
+        verifyCreateLock(beforeState, user1, actualLockId2, mocaAmount, esMocaAmount, expiry);
 
         // Extra Check: Voting Power Accumulation
         uint128 userVotingPower_After = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
@@ -957,10 +933,11 @@ abstract contract StateE2_User1_CreateLock2 is StateE2_CronJobUpdatesState {
     uint128 public lock2_Expiry;
     uint128 public lock2_MocaAmount;
     uint128 public lock2_EsMocaAmount;
-    address public lock2_Delegate;
 
     StateSnapshot public epoch2_BeforeLock2Creation;
-    uint128 public userVotingPower_Before;
+    StateSnapshot public epoch2_AfterLock2Creation;
+    uint128 public userVotingPower_BeforeLock2Creation;
+    uint128 public userVotingPower_AfterLock2Creation;
 
     function setUp() public virtual override {
         super.setUp();
@@ -978,15 +955,18 @@ abstract contract StateE2_User1_CreateLock2 is StateE2_CronJobUpdatesState {
         lock2_Expiry = uint128(getEpochEndTimestamp(6));
         lock2_MocaAmount = 100 ether;
         lock2_EsMocaAmount = 100 ether;
-        lock2_Delegate = address(0);
         
         // 3) Capture state
         epoch2_BeforeLock2Creation = captureState(user1, lock2_Expiry, 0);
-        userVotingPower_Before = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
+        userVotingPower_BeforeLock2Creation = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
         
         // 4) Execute
         vm.prank(user1);
-        lock2_Id = veMoca.createLock{value: lock2_MocaAmount}(lock2_Expiry, lock2_EsMocaAmount, lock2_Delegate);
+        lock2_Id = veMoca.createLock{value: lock2_MocaAmount}(lock2_Expiry, lock2_EsMocaAmount);
+
+        // 5) Capture State
+        epoch2_AfterLock2Creation = captureState(user1, lock2_Expiry, 0);
+        userVotingPower_AfterLock2Creation = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
     }
 }
 
@@ -996,14 +976,113 @@ contract StateE2_User1_CreateLock2_Test is StateE2_User1_CreateLock2 {
         assertEq(getCurrentEpochNumber(), 2, "Current epoch number is 2");
         
         // 1) Verify
-        verifyCreateLock(epoch2_BeforeLock2Creation, user1, lock2_Id, lock2_MocaAmount, lock2_EsMocaAmount, lock2_Expiry, lock2_Delegate);
+        verifyCreateLock(epoch2_BeforeLock2Creation, user1, lock2_Id, lock2_MocaAmount, lock2_EsMocaAmount, lock2_Expiry);
 
         // 2) Extra Check: Voting Power of new lock
         uint128 votingPowerOfLock2 = veMoca.getLockVotingPowerAt(lock2_Id, uint128(block.timestamp));
         uint128 userVotingPower_After = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
-        assertEq(userVotingPower_After, userVotingPower_Before + votingPowerOfLock2, "Voting Power of new lock");
+        assertEq(userVotingPower_After, userVotingPower_BeforeLock2Creation + votingPowerOfLock2, "Voting Power of new lock");
     }
 
     // --- state transition:  ---
+
+    function test_User1_IncreaseAmount_Epoch3() public {
+        // 1) Warp to Epoch 3
+        uint128 epoch3StartTimestamp = uint128(getEpochStartTimestamp(3));
+        vm.warp(epoch3StartTimestamp + 1);
+        assertEq(getCurrentEpochNumber(), 3, "Current epoch number is 3");
+
+        // 2) Setup: fund user1 with MOCA and convert to esMOCA [BEFORE capturing state]
+        vm.startPrank(user1);
+            vm.deal(user1, 200 ether);
+            esMoca.escrowMoca{value: 100 ether}();
+            esMoca.approve(address(veMoca), 100 ether);
+        vm.stopPrank();
+
+        // 3) Capture State [AFTER funding]
+        StateSnapshot memory beforeState = captureState(user1, lock2_Expiry, 0);
+        uint128 userVotingPower_BeforeAmountIncrease = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
+
+        // 4) Test parameters
+        uint128 esMocaToAdd = 100 ether;
+        uint128 mocaToAdd = 100 ether;
+        uint128 expectedSlope = (mocaToAdd + esMocaToAdd) / MAX_LOCK_DURATION;
+        uint128 expectedBias = expectedSlope * lock2_Expiry;
+
+        // 5) Expect events (order must match contract emission order)
+        vm.expectEmit(true, true, true, true, address(veMoca));
+        emit Events.GlobalUpdated(epoch2_AfterLock2Creation.veGlobal.bias, epoch2_AfterLock2Creation.veGlobal.slope);
+        vm.expectEmit(true, true, true, true, address(veMoca));
+        emit Events.UserUpdated(user1, epoch2_AfterLock2Creation.userHistory.bias, epoch2_AfterLock2Creation.userHistory.slope);
+        vm.expectEmit(true, true, true, true, address(veMoca));
+        emit Events.LockAmountIncreased(lock2_Id, user1, address(0), mocaToAdd, esMocaToAdd);
+
+        // 6) Execute
+        vm.prank(user1);
+        veMoca.increaseAmount{value: mocaToAdd}(lock2_Id, esMocaToAdd);
+
+        // 7) Verify
+        verifyIncreaseAmount(beforeState, lock2_Id, mocaToAdd, esMocaToAdd, lock2_Expiry);
+
+        // 8) Extra Check: Voting Power Accumulation of lock2
+        uint128 userVotingPower_After = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
+        uint128 expectedPowerNewLock = veMoca.getLockVotingPowerAt(lock2_Id, uint128(block.timestamp));
+        assertEq(userVotingPower_After, userVotingPower_BeforeAmountIncrease + expectedPowerNewLock, "Accumulated Voting Power");
+    }
+
+    function test_User1_IncreaseAmountLock2_Epoch3() public {
+        // 1) Warp to Epoch 3
+        uint128 epoch3StartTimestamp = uint128(getEpochStartTimestamp(3));
+        vm.warp(epoch3StartTimestamp + 1);
+        assertEq(getCurrentEpochNumber(), 3, "Current epoch number is 3");
+
+        // 2) Setup: fund user1 with MOCA and convert to esMOCA [BEFORE capturing state]
+        vm.startPrank(user1);
+            vm.deal(user1, 200 ether);
+            esMoca.escrowMoca{value: 100 ether}();
+            esMoca.approve(address(veMoca), 100 ether);
+        vm.stopPrank();
+
+        // [NEW] Update state to current epoch (3) to account for decay
+        vm.startPrank(cronJob);
+            address[] memory accounts = new address[](1);
+            accounts[0] = user1;
+            veMoca.updateAccountsAndPendingDeltas(accounts, false);
+        vm.stopPrank();
+
+        // 3) Capture State [AFTER funding and update]
+        StateSnapshot memory beforeState = captureState(user1, lock2_Expiry, 0);
+        uint128 userVotingPower_BeforeAmountIncrease = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
+
+        // 4) Test parameters
+        uint128 esMocaToAdd = 100 ether;
+        uint128 mocaToAdd = 100 ether;
+        uint128 expectedSlope = (mocaToAdd + esMocaToAdd) / MAX_LOCK_DURATION;
+        uint128 expectedBias = expectedSlope * lock2_Expiry;
+
+        // 5) Expect events (order must match contract emission order)
+        //vm.expectEmit(false, false, false, true, address(veMoca));
+        // Global Updated: base is beforeState (decayed) + new amount
+        //emit Events.GlobalUpdated(beforeState.veGlobal.bias + expectedBias, beforeState.veGlobal.slope + expectedSlope);
+        
+        //vm.expectEmit(true, false, false, true, address(veMoca));
+        // User Updated: base is beforeState (decayed) + new amount
+        //emit Events.UserUpdated(user1, beforeState.userHistory.bias + expectedBias, beforeState.userHistory.slope + expectedSlope);
+        
+        //vm.expectEmit(true, true, true, true, address(veMoca));
+        //emit Events.LockAmountIncreased(lock2_Id, user1, address(0), mocaToAdd, esMocaToAdd);
+
+        // 6) Execute
+        vm.prank(user1);
+        veMoca.increaseAmount{value: mocaToAdd}(lock2_Id, esMocaToAdd);
+
+        // 7) Verify
+        verifyIncreaseAmount(beforeState, lock2_Id, mocaToAdd, esMocaToAdd, lock2_Expiry);
+
+        // 8) Extra Check: Voting Power Accumulation of lock2
+        uint128 userVotingPower_After = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
+        uint128 expectedPowerNewLock = veMoca.getLockVotingPowerAt(lock2_Id, uint128(block.timestamp));
+        assertEq(userVotingPower_After, userVotingPower_BeforeAmountIncrease + expectedPowerNewLock, "Accumulated Voting Power");
+    }
 }
     

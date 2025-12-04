@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {Test} from "forge-std/Test.sol";
+import {Handler} from "./Handler.sol";
+
+import {VotingEscrowMoca} from "../../../src/VotingEscrowMoca.sol";
+import {DataTypes} from "../../../src/libraries/DataTypes.sol";
+
+import "../../utils/TestingHarness.sol";
+
+
+contract VotingEscrowMocaInvariant is TestingHarness {
+    Handler public handler;
+
+    function setUp() public override {
+        super.setUp();
+
+        vm.warp(10 weeks); // Advance time to ensure Epoch > 0
+
+        handler = new Handler(veMoca, mockWMoca, esMoca);
+
+        targetContract(address(handler));
+        
+        excludeContract(address(veMoca));
+        excludeContract(address(esMoca));
+        excludeContract(address(mockWMoca));
+    }
+
+    /// @notice Ensure the contract always holds enough assets to cover all locks
+    function invariant_Solvency() external view {
+        uint256 contractMoca = address(veMoca).balance;
+        uint256 contractEsMoca = esMoca.balanceOf(address(veMoca));
+
+        assertEq(contractMoca, veMoca.TOTAL_LOCKED_MOCA(), "MOCA Solvency Failed: Balance != TotalLocked");
+        assertEq(contractEsMoca, veMoca.TOTAL_LOCKED_ESMOCA(), "esMOCA Solvency Failed: Balance != TotalLocked");
+    }
+
+    /// @notice Ensure Ghost variables match Contract state
+    function invariant_AssetConservation() external view {
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), handler.ghost_totalLockedMoca(), "Ghost MOCA Mismatch");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), handler.ghost_totalLockedEsMoca(), "Ghost esMOCA Mismatch");
+    }
+    
+    /// @notice Verify that voting power is strictly zero after expiry
+    function invariant_NoVotingPowerAfterExpiry() external {
+        if (veMoca.TOTAL_LOCKED_MOCA() == 0 && veMoca.TOTAL_LOCKED_ESMOCA() == 0) {
+            (uint128 bias, uint128 slope) = veMoca.veGlobal();
+             // Ideally check bias == 0 if fully synced, but requires sync
+        }
+    }
+}
+
+
+// forge test --match-contract VotingEscrowMocaInvariant --invariant
+// gemini

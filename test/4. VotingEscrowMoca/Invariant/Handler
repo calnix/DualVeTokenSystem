@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+
+import {Test} from "forge-std/Test.sol";
+
+import {VotingEscrowMoca} from "../../../src/VotingEscrowMoca.sol";
+import {EscrowedMoca} from "../../../src/EscrowedMoca.sol";
+
+import {MockWMoca} from "../../utils/MockWMoca.sol";
+
+import {Constants} from "../../../src/libraries/Constants.sol";
+import {EpochMath} from "../../../src/libraries/EpochMath.sol";
+
+contract Handler is Test {
+    VotingEscrowMoca public ve;
+    MockWMoca public wMoca;
+    EscrowedMoca public esMoca;
+
+    // Ghost Variables for Invariants
+    uint256 public ghost_totalLockedMoca;
+    uint256 public ghost_totalLockedEsMoca;
+    
+    // Track active locks
+    bytes32[] public activeLockIds;
+    
+    // Actors
+    address[] public actors;
+    address public currentActor;
+
+    modifier useActor(uint256 actorIndexSeed) {
+        currentActor = actors[bound(actorIndexSeed, 0, actors.length - 1)];
+        vm.startPrank(currentActor);
+        _;
+        vm.stopPrank();
+    }
+
+    constructor(VotingEscrowMoca _ve, MockWMoca _wMoca, EscrowedMoca _esMoca) {
+        ve = _ve;
+        wMoca = _wMoca;
+        esMoca = _esMoca;
+
+        // Setup 3 actors
+        for (uint256 i = 0; i < 3; i++) {
+            address actor = makeAddr(string(abi.encodePacked("Actor", i)));
+            actors.push(actor);
+            
+            // Fund actors
+            vm.deal(actor, 1_000_000 ether);
+            vm.prank(address(esMoca)); 
+            esMoca.mint(actor, 1_000_000 ether);
+            
+            // Approve
+            vm.startPrank(actor);
+            esMoca.approve(address(ve), type(uint256).max);
+            vm.stopPrank();
+        }
+    }
+
+    // ------------------- ACTIONS -------------------
+
+    function createLock(uint128 mocaAmount, uint128 esMocaAmount, uint256 durationSeed, uint256 actorSeed) external useActor(actorSeed) {
+        // 1. Bound Amounts (Ensure min amount and reasonable max)
+        uint128 minAmount = Constants.MIN_LOCK_AMOUNT;
+        if (mocaAmount + esMocaAmount < minAmount) mocaAmount = minAmount;
+        
+        mocaAmount = uint128(bound(mocaAmount, 0, 10_000 ether));
+        esMocaAmount = uint128(bound(esMocaAmount, 0, 10_000 ether));
+
+        // 2. Bound Duration (Current + 3 epochs to Max)
+        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
+        uint128 minExpiry = currentEpochStart + (3 * EpochMath.EPOCH_DURATION);
+        uint128 maxExpiry = block.timestamp + EpochMath.MAX_LOCK_DURATION;
+        
+        // Align to epoch
+        maxExpiry = (maxExpiry / EpochMath.EPOCH_DURATION) * EpochMath.EPOCH_DURATION;
+        if (minExpiry > maxExpiry) return; 
+
+        uint128 expiry = uint128(bound(durationSeed, minExpiry, maxExpiry));
+        expiry = (expiry / EpochMath.EPOCH_DURATION) * EpochMath.EPOCH_DURATION;
+
+        // 3. Create Lock
+        bytes32 lockId = ve.createLock{value: mocaAmount}(expiry, esMocaAmount, address(0));
+
+        // 4. Update Ghost State
+        ghost_totalLockedMoca += mocaAmount;
+        ghost_totalLockedEsMoca += esMocaAmount;
+        activeLockIds.push(lockId);
+    }
+
+    function increaseAmount(uint256 lockIndexSeed, uint128 mocaAdd, uint128 esMocaAdd) external {
+        if (activeLockIds.length == 0) return;
+        
+        bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
+        (,, address owner,,,,) = ve.locks(lockId);
+        
+        vm.startPrank(owner);
+
+        // Check if lock allows modification
+        (,,,,, uint128 expiry, bool isUnlocked) = ve.locks(lockId);
+        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
+        
+        // Only allow if lock has liveliness (current + 2 epochs check inside contract)
+        if (expiry < currentEpochStart + (3 * EpochMath.EPOCH_DURATION) || isUnlocked) {
+            vm.stopPrank();
+            return;
+        }
+
+        // Bound amounts
+        uint128 minAmount = Constants.MIN_LOCK_AMOUNT;
+        if (mocaAdd + esMocaAdd < minAmount) mocaAdd = minAmount;
+        mocaAdd = uint128(bound(mocaAdd, 0, 1000 ether));
+        esMocaAdd = uint128(bound(esMocaAdd, 0, 1000 ether));
+
+        try ve.increaseAmount{value: mocaAdd}(lockId, esMocaAdd) {
+            ghost_totalLockedMoca += mocaAdd;
+            ghost_totalLockedEsMoca += esMocaAdd;
+        } catch {}
+        
+        vm.stopPrank();
+    }
+
+    function unlock(uint256 lockIndexSeed) external {
+        if (activeLockIds.length == 0) return;
+        
+        uint256 index = bound(lockIndexSeed, 0, activeLockIds.length - 1);
+        bytes32 lockId = activeLockIds[index];
+
+        (,, address owner, uint128 moca, uint128 esMoca, uint128 expiry, bool isUnlocked) = ve.locks(lockId);
+
+        // Only unlock if expired and not already unlocked
+        if (isUnlocked || block.timestamp < expiry) return;
+
+        vm.startPrank(owner);
+        ve.unlock(lockId);
+        vm.stopPrank();
+
+        ghost_totalLockedMoca -= moca;
+        ghost_totalLockedEsMoca -= esMoca;
+
+        // Remove from active locks
+        activeLockIds[index] = activeLockIds[activeLockIds.length - 1];
+        activeLockIds.pop();
+    }
+
+    function warp(uint256 jump) external {
+        // Limit warp to prevent overflow or excessive decay in one step
+        jump = bound(jump, 1, 52 weeks); 
+        vm.warp(block.timestamp + jump);
+    }
+}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity 0.8.27;
 
 import {DataTypes} from "../libraries/DataTypes.sol";
 
@@ -76,6 +76,20 @@ interface IVotingEscrowMoca {
     function createLockFor(address user, uint128 expiry, uint128 esMoca) external payable returns (bytes32);
 
     /**
+     * @notice Sets the gas limit for moca transfer.
+     * @dev Only callable by the VotingEscrowMocaAdmin.
+     * @param newMocaTransferGasLimit The new gas limit for moca transfer.
+     */
+    function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external;
+
+    /**
+     * @notice Sets the voting controller address.
+     * @dev Only callable by the VotingEscrowMocaAdmin.
+     * @param newVotingController The new voting controller address.
+     */
+    function setVotingController(address newVotingController) external;
+
+    /**
      * @notice Admin helper to batch update stale accounts to the current epoch.
      * @dev Fixes OOG risks by applying pending deltas and decay in a separate transaction.
      * @param accounts Array of addresses to update.
@@ -94,16 +108,12 @@ interface IVotingEscrowMoca {
     // =============================== VotingController Functions ===============================
 
     /**
-     * @notice Register an address as a delegate, enabling it to receive delegated voting power.
-     * @param delegate The address to register as a delegate.
+     * @notice Updates delegate registration status.
+     * @dev Only callable by the VotingController contract.
+     * @param delegate The address to update registration status for.
+     * @param toRegister True to register, false to unregister.
      */
-    function registerAsDelegate(address delegate) external;
-
-    /**
-     * @notice Unregister an address as a delegate, revoking its ability to receive delegated voting power.
-     * @param delegate The address to unregister as a delegate.
-     */
-    function unregisterAsDelegate(address delegate) external;
+    function delegateRegistrationStatus(address delegate, bool toRegister) external;
 
     // =============================== Risk Management ===============================
 

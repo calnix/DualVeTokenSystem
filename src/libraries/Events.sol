@@ -50,7 +50,7 @@ library Events {
     event AccountUpdated(address indexed account, uint128 bias, uint128 slope);
 
     // create lock
-    event LockCreated(bytes32 indexed lockId, address indexed owner, address delegate, uint256 moca, uint256 esMoca, uint256 expiry);
+    event LockCreated(bytes32 indexed lockId, address indexed owner, uint256 moca, uint256 esMoca, uint256 expiry);
     // increaseAmount
     event LockAmountIncreased(bytes32 indexed lockId, address indexed owner, address delegate, uint128 mocaToAdd, uint128 esMocaToAdd);
     // increaseDuration
