@@ -4,6 +4,7 @@ pragma solidity 0.8.27;
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 import "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
+import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 import "../utils/TestingHarness.sol";
 import {Constants} from "../../src/libraries/Constants.sol";
@@ -2446,6 +2447,15 @@ contract StateE4_User1_UnlocksLock1_Test is StateE4_User1_UnlocksLock1 {
 
     // ----- state transition: pause contract -----
 
+    function testRevert_EmergencyExitHandlerCannot_EmergencyExit_NotFrozen() public {
+        bytes32[] memory lockIds = new bytes32[](1);
+        lockIds[0] = lock1_Id;
+        
+        vm.expectRevert(Errors.NotFrozen.selector);
+        vm.prank(emergencyExitHandler);
+        veMoca.emergencyExit(lockIds);
+    }
+
     function test_PauseContract() public {
         vm.startPrank(monitor);
             veMoca.pause();
@@ -2454,3 +2464,427 @@ contract StateE4_User1_UnlocksLock1_Test is StateE4_User1_UnlocksLock1 {
     }
 }
 
+abstract contract StateE4_PauseContract is StateE4_User1_UnlocksLock1 {
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        vm.startPrank(monitor);
+            veMoca.pause();
+        vm.stopPrank();
+    }
+}
+
+contract StateE4_PauseContract_Test is StateE4_PauseContract {
+
+    // --- negative tests: pause contract -----
+
+        function testRevert_UserCannotPause() public {
+            // First unpause to test pausing
+            vm.prank(globalAdmin);
+            veMoca.unpause();
+            
+            vm.expectRevert();
+            vm.prank(user1);
+            veMoca.pause();
+        }
+
+        function testRevert_MonitorCannotPauseWhenAlreadyPaused() public {
+            // Contract is already paused in setUp
+            assertTrue(veMoca.paused(), "Contract should be paused");
+            
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(monitor);
+            veMoca.pause();
+        }
+
+    // --- testRevert: whenNotPaused functions should revert when paused ---
+
+        function testRevert_CreateLock_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(user1);
+            veMoca.createLock{value: 100 ether}(uint128(getEpochEndTimestamp(10)), 0);
+        }
+
+        function testRevert_IncreaseAmount_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(user1);
+            veMoca.increaseAmount{value: 100 ether}(lock2_Id, 0);
+        }
+
+        function testRevert_IncreaseDuration_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(user1);
+            veMoca.increaseDuration(lock2_Id, EPOCH_DURATION);
+        }
+
+        function testRevert_Unlock_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(user2);
+            veMoca.unlock(lock3_Id);
+        }
+
+        function testRevert_DelegateLock_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(user1);
+            veMoca.delegateLock(lock2_Id, user2);
+        }
+
+        function testRevert_SwitchDelegate_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(user1);
+            veMoca.switchDelegate(lock2_Id, user2);
+        }
+
+        function testRevert_UndelegateLock_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(user1);
+            veMoca.undelegateLock(lock2_Id);
+        }
+
+        function testRevert_UpdateAccountsAndPendingDeltas_WhenPaused() public {
+            address[] memory accounts = new address[](1);
+            accounts[0] = user1;
+            
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(cronJob);
+            veMoca.updateAccountsAndPendingDeltas(accounts, false);
+        }
+
+        function testRevert_UpdateDelegatePairs_WhenPaused() public {
+            address[] memory users = new address[](1);
+            address[] memory delegates = new address[](1);
+            users[0] = user1;
+            delegates[0] = user2;
+            
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(cronJob);
+            veMoca.updateDelegatePairs(users, delegates);
+        }
+
+        function testRevert_CreateLockFor_WhenPaused() public {
+            address[] memory users = new address[](1);
+            uint128[] memory esMocaAmounts = new uint128[](1);
+            uint128[] memory mocaAmounts = new uint128[](1);
+            users[0] = user1;
+            esMocaAmounts[0] = 100 ether;
+            
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(cronJob);
+            veMoca.createLockFor(users, esMocaAmounts, mocaAmounts, uint128(getEpochEndTimestamp(10)));
+        }
+
+        function testRevert_SetMocaTransferGasLimit_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(votingEscrowMocaAdmin);
+            veMoca.setMocaTransferGasLimit(100000);
+        }
+
+    /*TODO
+        function testRevert_DelegateRegistrationStatus_WhenPaused() public {
+            vm.expectRevert(Pausable.EnforcedPause.selector);
+            vm.prank(address(votingController));
+            veMoca.delegateRegistrationStatus(user1, true);
+        }*/
+
+        function testRevert_EmergencyExitHandlerCannot_EmergencyExit_WhenPaused() public {
+            bytes32[] memory lockIds = new bytes32[](1);
+            lockIds[0] = lock1_Id;
+            
+            vm.expectRevert(Errors.NotFrozen.selector);
+            vm.prank(emergencyExitHandler);
+            veMoca.emergencyExit(lockIds);
+        }
+
+    // --- negative tests: unpause ---
+
+        function testRevert_MonitorCannotUnpause() public {
+            vm.expectRevert();
+            vm.prank(monitor);
+            veMoca.unpause();
+        }
+
+        function testRevert_UserCannotUnpause() public {
+            vm.expectRevert();
+            vm.prank(user1);
+            veMoca.unpause();
+        }
+
+        function testRevert_AdminCannotUnpause() public {
+            // votingEscrowMocaAdmin is not globalAdmin (DEFAULT_ADMIN_ROLE)
+            vm.expectRevert();
+            vm.prank(votingEscrowMocaAdmin);
+            veMoca.unpause();
+        }
+
+    // --- state transition: only globalAdmin can unpause ---
+
+    function test_GlobalAdminCanUnpause() public {
+        assertTrue(veMoca.paused(), "Contract should be paused");
+        
+        vm.prank(globalAdmin);
+        veMoca.unpause();
+        
+        assertFalse(veMoca.paused(), "Contract should be unpaused");
+    }
+
+    // --- state transition: globalAdmin can freeze contract -----
+
+    function test_GlobalAdminCanFreeze() public {
+        assertTrue(veMoca.paused(), "Contract should be paused");
+        
+        vm.expectEmit(true, true, true, true);
+        emit Events.ContractFrozen();
+        
+        vm.prank(globalAdmin);
+        veMoca.freeze();
+        
+        assertTrue(veMoca.isFrozen() == 1, "Contract should be frozen");
+    }
+}
+
+abstract contract StateE4_FreezeContract is StateE4_PauseContract {
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        vm.startPrank(globalAdmin);
+            veMoca.freeze();
+        vm.stopPrank();
+    }
+}
+
+contract StateE4_FreezeContract_Test is StateE4_FreezeContract {
+
+    // --- sanity checks ---
+
+        function test_ContractIsFrozen() public {
+            assertEq(veMoca.isFrozen(), 1, "Contract should be frozen");
+            assertTrue(veMoca.paused(), "Contract should be paused");
+        }
+
+    // --- negative tests: emergencyExit -----
+
+        function testRevert_UserCannotCallEmergencyExit() public {
+            bytes32[] memory lockIds = new bytes32[](1);
+            lockIds[0] = lock2_Id;
+            
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IAccessControl.AccessControlUnauthorizedAccount.selector, 
+                    user1, 
+                    Constants.EMERGENCY_EXIT_HANDLER_ROLE
+                )
+            );
+            vm.prank(user1);
+            veMoca.emergencyExit(lockIds);
+        }
+
+        function testRevert_MonitorCannotCallEmergencyExit() public {
+            bytes32[] memory lockIds = new bytes32[](1);
+            lockIds[0] = lock2_Id;
+            
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IAccessControl.AccessControlUnauthorizedAccount.selector, 
+                    monitor, 
+                    Constants.EMERGENCY_EXIT_HANDLER_ROLE
+                )
+            );
+            vm.prank(monitor);
+            veMoca.emergencyExit(lockIds);
+        }
+
+        function testRevert_GlobalAdminCannotCallEmergencyExit() public {
+            bytes32[] memory lockIds = new bytes32[](1);
+            lockIds[0] = lock2_Id;
+            
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IAccessControl.AccessControlUnauthorizedAccount.selector, 
+                    globalAdmin, 
+                    Constants.EMERGENCY_EXIT_HANDLER_ROLE
+                )
+            );
+            vm.prank(globalAdmin);
+            veMoca.emergencyExit(lockIds);
+        }
+
+        function testRevert_EmergencyExit_InvalidArray_EmptyLockIds() public {
+            bytes32[] memory emptyLockIds = new bytes32[](0);
+            
+            vm.expectRevert(Errors.InvalidArray.selector);
+            vm.prank(emergencyExitHandler);
+            veMoca.emergencyExit(emptyLockIds);
+        }
+
+    // --- positive tests: only EMERGENCY_EXIT_HANDLER_ROLE can call emergencyExit ---
+
+    function test_EmergencyExitHandler_CanCallEmergencyExit() public {
+        // ============ 1) Capture State Before ============
+        DataTypes.Lock memory lock2Before = getLock(lock2_Id);
+        assertFalse(lock2Before.isUnlocked, "Lock2 should not be unlocked yet");
+        assertGt(lock2Before.moca, 0, "Lock2 should have moca");
+        assertGt(lock2Before.esMoca, 0, "Lock2 should have esMoca");
+        
+        uint256 user1MocaBefore = user1.balance;
+        uint256 user1EsMocaBefore = esMoca.balanceOf(user1);
+        
+        uint128 totalLockedMocaBefore = veMoca.TOTAL_LOCKED_MOCA();
+        uint128 totalLockedEsMocaBefore = veMoca.TOTAL_LOCKED_ESMOCA();
+        
+        uint256 contractMocaBefore = address(veMoca).balance;
+        uint256 contractEsMocaBefore = esMoca.balanceOf(address(veMoca));
+        
+        // ============ 2) Prepare lockIds ============
+        bytes32[] memory lockIds = new bytes32[](1);
+        lockIds[0] = lock2_Id;
+        
+        // ============ 3) Expect Event ============
+        vm.expectEmit(true, true, true, true, address(veMoca));
+        emit Events.EmergencyExit(lockIds, 1, lock2Before.moca, lock2Before.esMoca);
+        
+        // ============ 4) Execute ============
+        vm.prank(emergencyExitHandler);
+        (uint256 totalLocks, uint256 totalMoca, uint256 totalEsMoca) = veMoca.emergencyExit(lockIds);
+        
+        // ============ 5) Verify Return Values ============
+        assertEq(totalLocks, 1, "Should process 1 lock");
+        assertEq(totalMoca, lock2Before.moca, "Total MOCA returned must match lock2 moca");
+        assertEq(totalEsMoca, lock2Before.esMoca, "Total esMOCA returned must match lock2 esMoca");
+        
+        // ============ 6) Verify Lock State Updated ============
+        DataTypes.Lock memory lock2After = getLock(lock2_Id);
+        assertTrue(lock2After.isUnlocked, "Lock2 must be marked as unlocked");
+        assertEq(lock2After.moca, 0, "Lock2 moca must be 0 after emergency exit");
+        assertEq(lock2After.esMoca, 0, "Lock2 esMoca must be 0 after emergency exit");
+        assertEq(lock2After.owner, lock2Before.owner, "Lock2 owner must be unchanged");
+        assertEq(lock2After.expiry, lock2Before.expiry, "Lock2 expiry must be unchanged");
+        assertEq(lock2After.delegate, lock2Before.delegate, "Lock2 delegate must be unchanged");
+        
+        // ============ 7) Verify Global State Variables Updated ============
+        assertEq(
+            veMoca.TOTAL_LOCKED_MOCA(), 
+            totalLockedMocaBefore - lock2Before.moca, 
+            "TOTAL_LOCKED_MOCA must decrease by lock2 moca"
+        );
+        assertEq(
+            veMoca.TOTAL_LOCKED_ESMOCA(), 
+            totalLockedEsMocaBefore - lock2Before.esMoca, 
+            "TOTAL_LOCKED_ESMOCA must decrease by lock2 esMoca"
+        );
+        
+        // ============ 8) Verify User Received Tokens Back ============
+        assertEq(user1.balance, user1MocaBefore + lock2Before.moca, "User1 must receive MOCA back");
+        assertEq(esMoca.balanceOf(user1), user1EsMocaBefore + lock2Before.esMoca, "User1 must receive esMOCA back");
+        
+        // ============ 9) Verify Contract Balances Decreased ============
+        assertEq(address(veMoca).balance, contractMocaBefore - lock2Before.moca, "Contract MOCA must decrease");
+        assertEq(esMoca.balanceOf(address(veMoca)), contractEsMocaBefore - lock2Before.esMoca, "Contract esMOCA must decrease");
+    }
+
+    function test_EmergencyExitHandler_CanExitMultipleLocks() public {
+        // ============ 1) Capture State Before ============
+        DataTypes.Lock memory lock2Before = getLock(lock2_Id);
+        DataTypes.Lock memory lock3Before = getLock(lock3_Id);
+        
+        assertFalse(lock2Before.isUnlocked, "Lock2 should not be unlocked yet");
+        assertFalse(lock3Before.isUnlocked, "Lock3 should not be unlocked yet");
+        
+        uint256 user1MocaBefore = user1.balance;
+        uint256 user1EsMocaBefore = esMoca.balanceOf(user1);
+        uint256 user2MocaBefore = user2.balance;
+        uint256 user2EsMocaBefore = esMoca.balanceOf(user2);
+        
+        uint128 totalLockedMocaBefore = veMoca.TOTAL_LOCKED_MOCA();
+        uint128 totalLockedEsMocaBefore = veMoca.TOTAL_LOCKED_ESMOCA();
+        
+        uint256 contractMocaBefore = address(veMoca).balance;
+        uint256 contractEsMocaBefore = esMoca.balanceOf(address(veMoca));
+        
+        // Expected totals
+        uint128 expectedTotalMoca = lock2Before.moca + lock3Before.moca;
+        uint128 expectedTotalEsMoca = lock2Before.esMoca + lock3Before.esMoca;
+        
+        // ============ 2) Prepare lockIds ============
+        bytes32[] memory lockIds = new bytes32[](2);
+        lockIds[0] = lock2_Id;
+        lockIds[1] = lock3_Id;
+        
+        // ============ 3) Expect Event ============
+        vm.expectEmit(true, true, true, true, address(veMoca));
+        emit Events.EmergencyExit(lockIds, 2, expectedTotalMoca, expectedTotalEsMoca);
+        
+        // ============ 4) Execute ============
+        vm.prank(emergencyExitHandler);
+        (uint256 totalLocks, uint256 totalMoca, uint256 totalEsMoca) = veMoca.emergencyExit(lockIds);
+        
+        // ============ 5) Verify Return Values ============
+        assertEq(totalLocks, 2, "Should process 2 locks");
+        assertEq(totalMoca, expectedTotalMoca, "Total MOCA must match sum of locks");
+        assertEq(totalEsMoca, expectedTotalEsMoca, "Total esMOCA must match sum of locks");
+        
+        // ============ 6) Verify Lock2 State Updated ============
+        DataTypes.Lock memory lock2After = getLock(lock2_Id);
+        assertTrue(lock2After.isUnlocked, "Lock2 must be marked as unlocked");
+        assertEq(lock2After.moca, 0, "Lock2 moca must be 0");
+        assertEq(lock2After.esMoca, 0, "Lock2 esMoca must be 0");
+        assertEq(lock2After.owner, lock2Before.owner, "Lock2 owner unchanged");
+        
+        // ============ 7) Verify Lock3 State Updated ============
+        DataTypes.Lock memory lock3After = getLock(lock3_Id);
+        assertTrue(lock3After.isUnlocked, "Lock3 must be marked as unlocked");
+        assertEq(lock3After.moca, 0, "Lock3 moca must be 0");
+        assertEq(lock3After.esMoca, 0, "Lock3 esMoca must be 0");
+        assertEq(lock3After.owner, lock3Before.owner, "Lock3 owner unchanged");
+        
+        // ============ 8) Verify Global State Variables Updated ============
+        assertEq(
+            veMoca.TOTAL_LOCKED_MOCA(), 
+            totalLockedMocaBefore - expectedTotalMoca, 
+            "TOTAL_LOCKED_MOCA must decrease by sum of locks' moca"
+        );
+        assertEq(
+            veMoca.TOTAL_LOCKED_ESMOCA(), 
+            totalLockedEsMocaBefore - expectedTotalEsMoca, 
+            "TOTAL_LOCKED_ESMOCA must decrease by sum of locks' esMoca"
+        );
+        
+        // ============ 9) Verify User1 Received Tokens Back (lock2) ============
+        assertEq(user1.balance, user1MocaBefore + lock2Before.moca, "User1 must receive lock2 MOCA");
+        assertEq(esMoca.balanceOf(user1), user1EsMocaBefore + lock2Before.esMoca, "User1 must receive lock2 esMOCA");
+        
+        // ============ 10) Verify User2 Received Tokens Back (lock3) ============
+        assertEq(user2.balance, user2MocaBefore + lock3Before.moca, "User2 must receive lock3 MOCA");
+        assertEq(esMoca.balanceOf(user2), user2EsMocaBefore + lock3Before.esMoca, "User2 must receive lock3 esMOCA");
+        
+        // ============ 11) Verify Contract Balances Decreased ============
+        assertEq(
+            address(veMoca).balance, 
+            contractMocaBefore - expectedTotalMoca, 
+            "Contract MOCA must decrease by total"
+        );
+        assertEq(
+            esMoca.balanceOf(address(veMoca)), 
+            contractEsMocaBefore - expectedTotalEsMoca, 
+            "Contract esMOCA must decrease by total"
+        );
+    }
+
+    function test_EmergencyExit_SkipsAlreadyUnlockedLocks() public {
+        // lock1 was already unlocked in StateE4_User1_UnlocksLock1
+        DataTypes.Lock memory lock1 = getLock(lock1_Id);
+        assertTrue(lock1.isUnlocked, "Lock1 should already be unlocked");
+        
+        bytes32[] memory lockIds = new bytes32[](1);
+        lockIds[0] = lock1_Id;
+        
+        vm.prank(emergencyExitHandler);
+        (uint256 totalLocks, uint256 totalMoca, uint256 totalEsMoca) = veMoca.emergencyExit(lockIds);
+        
+        // Should skip the already unlocked lock
+        assertEq(totalLocks, 0, "Should skip already unlocked lock");
+        assertEq(totalMoca, 0, "No MOCA should be returned");
+        assertEq(totalEsMoca, 0, "No esMOCA should be returned");
+    }
+}
