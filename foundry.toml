@@ -8,6 +8,9 @@ via_ir = true
 dynamic_test_linking = true
 extra_output = ["storageLayout"]
 
+#ignored_error_codes = [2018]  # Suppress "Function state mutability can be restricted to view"
+ignored_warnings_from = ["test/**"]  # Suppress Solidity warnings from test files
+
 #[invariant]
 #runs = 256
 #depth = 15

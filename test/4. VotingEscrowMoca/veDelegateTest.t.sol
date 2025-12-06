@@ -8,22 +8,10 @@ import "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerab
 import "../utils/TestingHarness.sol";
 import {Constants} from "../../src/libraries/Constants.sol";
 
-//note: vm.warp(EPOCH_DURATION);
-abstract contract StateE1_Deploy is TestingHarness {    
+import "./delegateHelper.sol";
 
-    // PERIODICITY:  does not account for leap year or leap seconds
-    uint128 public constant EPOCH_DURATION = 14 days;                    
-    uint128 public constant MIN_LOCK_DURATION = 28 days;            
-    uint128 public constant MAX_LOCK_DURATION = 728 days;               
-    
-    /** note: why use dummy variable? 
-        When you call EpochMath.getCurrentEpochNumber() directly in a test, these internal functions get inlined into the test contract at compile time. 
-        This can cause issues with Foundry's runtime state modifications like vm.warp().
-        The issue is that the Solidity optimizer might be evaluating block.timestamp at a different point than expected, 
-        or caching values in unexpected ways when dealing with inlined library code.
-        So we need to use a dummy variable to prevent the compiler from inlining the functions.
-    */
-    uint256 private dummy; // so that solidity compiler does not optimize out the functions
+//note: vm.warp(EPOCH_DURATION);
+abstract contract StateE1_Deploy is TestingHarness, DelegateHelper {    
 
     function setUp() public virtual override {
         super.setUp();
@@ -31,1293 +19,8 @@ abstract contract StateE1_Deploy is TestingHarness {
         vm.warp(EPOCH_DURATION);
         assertTrue(getCurrentEpochStart() > 0, "Current epoch start time is greater than 0");
     }
-        
-// ================= EPOCH MATH =================
-
-        ///@dev returns epoch number for a given timestamp
-        function getEpochNumber(uint128 timestamp) public returns (uint128) {
-            dummy = 1;
-            return timestamp / EPOCH_DURATION;
-        }
-
-        ///@dev returns current epoch number
-        function getCurrentEpochNumber() public returns (uint128) {
-            dummy = 1;
-            return getEpochNumber(uint128(block.timestamp));
-        }
-
-        ///@dev returns epoch start time for a given timestamp
-        function getEpochStartForTimestamp(uint128 timestamp) public returns (uint128) {
-            dummy = 1;
-            // intentionally divide first to "discard" remainder
-            return (timestamp / EPOCH_DURATION) * EPOCH_DURATION;   // forge-lint: disable-line(divide-before-multiply)
-        }
-
-        ///@dev returns epoch end time for a given timestamp
-        function getEpochEndForTimestamp(uint128 timestamp) public returns (uint128) {
-            dummy = 1;
-            return getEpochStartForTimestamp(timestamp) + EPOCH_DURATION;
-        }
-        
-
-        ///@dev returns current epoch start time | uint128: Checkpoint{veBla, uint128 lastUpdatedAt}
-        function getCurrentEpochStart() public returns (uint128) {
-            dummy = 1;
-            return uint128(getEpochStartForTimestamp(uint128(block.timestamp)));
-        }
-
-        ///@dev returns current epoch end time
-        function getCurrentEpochEnd() public returns (uint128) {
-            dummy = 1;
-            return getEpochEndTimestamp(getCurrentEpochNumber());
-        }
-
-        function getEpochStartTimestamp(uint128 epoch) public returns (uint128) {
-            dummy = 1;
-            return epoch * EPOCH_DURATION;
-        }
-
-        ///@dev returns epoch end time for a given epoch number
-        function getEpochEndTimestamp(uint128 epoch) public returns (uint128) {
-            dummy = 1;
-            // end of epoch:N is the start of epoch:N+1
-            return (epoch + 1) * EPOCH_DURATION;
-        }
-
-        // used in _createLockFor()
-        function isValidEpochTime(uint256 timestamp) public returns (bool) {
-            dummy = 1;
-            return timestamp % EPOCH_DURATION == 0;
-        }
-
-// ================= STATE VERIFICATION HELPERS =================
-
-    
-    function getLock(bytes32 lockId) public view returns (DataTypes.Lock memory) {
-        DataTypes.Lock memory lock;
-        (bytes32 id, address owner, address delegate, uint128 moca, uint128 esMoca_, uint128 expiry, bool isUnlocked) = veMoca.locks(lockId);
-        lock.lockId = id;
-        lock.owner = owner;
-        lock.delegate = delegate;
-        lock.moca = moca;
-        lock.esMoca = esMoca_;
-        lock.expiry = expiry;
-        lock.isUnlocked = isUnlocked;
-        return lock;
-    }
-
-    function getLockHistory(bytes32 lockId, uint256 index) public view returns (DataTypes.Checkpoint memory) {
-        DataTypes.Checkpoint memory checkpoint;
-        (checkpoint.veBalance, checkpoint.lastUpdatedAt) = veMoca.lockHistory(lockId, index);
-        return checkpoint;
-    }
-
-    function getValueAt(DataTypes.VeBalance memory a, uint128 timestamp) public pure returns (uint128) {
-        uint128 decay = a.slope * timestamp;
-        if(a.bias <= decay) return 0;
-        return a.bias - decay;
-    }
-
-    function convertToVeBalance(DataTypes.Lock memory lock) public pure returns (DataTypes.VeBalance memory) {
-        DataTypes.VeBalance memory veBalance;
-        veBalance.slope = (lock.moca + lock.esMoca) / MAX_LOCK_DURATION;
-        veBalance.bias = veBalance.slope * lock.expiry;
-        return veBalance;
-    }
-
-    function getLockVotingPowerAt(bytes32 lockId, uint128 timestamp) public view returns (uint128) {
-        DataTypes.Lock memory lock = getLock(lockId);
-        if(lock.expiry <= timestamp) return 0;
-
-        return getValueAt(convertToVeBalance(lock), timestamp);
-    }
-
-// ================= DELEGATION STATE SNAPSHOTS =================
-
-    struct TokensSnapshot {
-        uint128 userMoca;
-        uint128 userEsMoca;
-        uint128 contractMoca; 
-        uint128 contractEsMoca;
-    }
-
-    struct GlobalStateSnapshot {
-        // global vars
-        uint128 TOTAL_LOCKED_MOCA;
-        uint128 TOTAL_LOCKED_ESMOCA;
-        DataTypes.VeBalance veGlobal;
-        uint128 lastUpdatedTimestamp;
-
-        // Mappings
-        uint128 slopeChange; // at expiry
-        uint128 slopeChangeNewExpiry; // at newExpiry (for increaseDuration)
-        uint128 totalSupplyAt; // at currentEpochStart
-
-        // View functions
-        uint128 totalSupplyAtTimestamp;              // totalSupplyAt(timestamp)
-    }
-
-    struct UserStateSnapshot {
-        DataTypes.VeBalance userHistory; // at currentEpochStart
-        uint128 userSlopeChange; // at expiry
-        uint128 userLastUpdatedTimestamp;
-
-        uint128 userSlopeChangeNewExpiry; // at newExpiry (for increaseDuration)
-
-        // Pending deltas (for next epoch)
-        DataTypes.VeDeltas userPendingDelta;
-
-        // View functions
-        uint128 userCurrentVotingPower;                // balanceOfAt(user, timestamp, false)
-        uint128 userVotingPowerAtEpochEnd;            // balanceAtEpochEnd(user, epoch, false)
-    }
-
-    struct LockStateSnapshot {
-        DataTypes.Lock lock;
-        DataTypes.Checkpoint[] lockHistory;
-        uint128 lockVotingPower;
-        uint128 numOfDelegateActionsThisEpoch;
-    }
-
-    struct DelegateStateSnapshot {
-        // Core delegate state
-        DataTypes.VeBalance delegateHistory;          // at currentEpochStart
-        uint128 delegateSlopeChange;                  // at lock expiry
-        uint128 delegateLastUpdatedTimestamp;
-        
-        uint128 delegateSlopeChangeNewExpiry;        // at newExpiry (for increaseDuration)
-
-        // Pending deltas (for next epoch)
-        DataTypes.VeDeltas delegatePendingDelta;
-        
-        // View functions
-        uint128 delegateCurrentVotingPower;                  // balanceOfAt(delegate, timestamp, true)
-        uint128 delegateVotingPowerAtEpochEnd;            // balanceAtEpochEnd(delegate, epoch, true)
-    }
-
-    struct UserDelegatePairStateSnapshot {
-        // Core pair state
-        DataTypes.VeBalance delegatedAggregationHistory;   // at currentEpochStart
-        uint128 userDelegatedSlopeChange;                  // at lock expiry
-        uint128 userDelegatedPairLastUpdatedTimestamp;
-        
-        uint128 userDelegatedSlopeChangeNewExpiry;        // at newExpiry (for increaseDuration)
-
-        // Pending deltas (for next epoch)
-        DataTypes.VeDeltas pairPendingDelta;
-        
-        // View functions
-        uint128 userDelegatedCurrentVotingPower;          // calculated from delegatedAggregationHistory
-        uint128 userDelegatedVotingPowerAtEpochEnd;       // getSpecificDelegatedBalanceAtEpochEnd
-    }
-
-    // Unified State Snapshot
-    struct UnifiedStateSnapshot {
-        // Common states
-        TokensSnapshot tokensState;
-        GlobalStateSnapshot globalState;
-        UserStateSnapshot userState;
-        LockStateSnapshot lockState;
-
-        // Target delegate state (for delegateLock/switchDelegate target)
-        DelegateStateSnapshot targetDelegateState;
-
-        // Old delegate state (for switchDelegate/undelegate)
-        DelegateStateSnapshot oldDelegateState;
-
-        // User-TargetDelegate pair state
-        UserDelegatePairStateSnapshot targetPairState;
-        
-        // User-OldDelegate pair state (for switchDelegate/undelegate)
-        UserDelegatePairStateSnapshot oldPairState;
-    }
-
-// ================= CAPTURE FUNCTIONS =================
-
-    function captureTokensState(address user) internal returns (TokensSnapshot memory) {
-        TokensSnapshot memory state;
-        // user
-        state.userMoca = uint128(user.balance);
-        state.userEsMoca = uint128(esMoca.balanceOf(user));
-        // contract
-        state.contractMoca = uint128(address(veMoca).balance);
-        state.contractEsMoca = uint128(esMoca.balanceOf(address(veMoca)));
-
-        return state;
-    }
-
-    function captureGlobalState(uint128 expiry, uint128 newExpiry) internal returns (GlobalStateSnapshot memory) {
-        GlobalStateSnapshot memory state;
-
-        // global vars
-        (state.veGlobal.bias, state.veGlobal.slope) = veMoca.veGlobal();
-        state.TOTAL_LOCKED_MOCA = veMoca.TOTAL_LOCKED_MOCA();
-        state.TOTAL_LOCKED_ESMOCA = veMoca.TOTAL_LOCKED_ESMOCA();
-        state.lastUpdatedTimestamp = veMoca.lastUpdatedTimestamp();
-        
-        // slopeChange
-        state.slopeChange = veMoca.slopeChanges(expiry);
-        if (newExpiry != 0) state.slopeChangeNewExpiry = veMoca.slopeChanges(newExpiry);
-        
-        // totalSupplyAt
-        state.totalSupplyAt = veMoca.totalSupplyAt(getCurrentEpochStart());
-        // View functions
-        state.totalSupplyAtTimestamp = veMoca.totalSupplyAtTimestamp(uint128(block.timestamp));
-
-        return state;
-    }
-
-    function captureUserState(address user, uint128 expiry, uint128 newExpiry) internal returns (UserStateSnapshot memory) {
-        UserStateSnapshot memory state;
-
-        // epoch vars
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 nextEpochStart = currentEpochStart + EPOCH_DURATION;
-        uint128 epoch = getCurrentEpochNumber();
-
-        // user vars
-        (state.userHistory.bias, state.userHistory.slope) = veMoca.userHistory(user, currentEpochStart);
-        state.userSlopeChange = veMoca.userSlopeChanges(user, expiry);
-        state.userLastUpdatedTimestamp = veMoca.userLastUpdatedTimestamp(user);
-
-        // Slope change at newExpiry (for increaseDuration)
-        if (newExpiry != 0) state.userSlopeChangeNewExpiry = veMoca.userSlopeChanges(user, newExpiry);
-
-        // Pending deltas
-        (
-            bool hasAdd, 
-            bool hasSub,
-            DataTypes.VeBalance memory additions,
-            DataTypes.VeBalance memory subtractions
-        ) = veMoca.userPendingDeltas(user, nextEpochStart);
-        
-        state.userPendingDelta.hasAddition = hasAdd;
-        state.userPendingDelta.hasSubtraction = hasSub;
-        state.userPendingDelta.additions = additions;
-        state.userPendingDelta.subtractions = subtractions;
-
-        // View functions
-        state.userCurrentVotingPower = veMoca.balanceOfAt(user, uint128(block.timestamp), false);
-        state.userVotingPowerAtEpochEnd = veMoca.balanceAtEpochEnd(user, epoch, false);
-
-        return state;
-    }
-
-    function captureLockState(bytes32 lockId) internal returns (LockStateSnapshot memory) {
-        LockStateSnapshot memory state;
-
-        // epoch vars
-        uint128 currentEpochStart = getCurrentEpochStart();
-        
-        // store lock state
-        state.lock = getLock(lockId);
-        
-        // lock history
-        uint256 len = veMoca.getLockHistoryLength(lockId);
-        state.lockHistory = new DataTypes.Checkpoint[](len);
-        
-        for(uint256 i; i < len; ++i) {
-            state.lockHistory[i] = getLockHistory(lockId, i);
-        }
-        
-        // lockVotingPower
-        state.lockVotingPower = veMoca.getLockVotingPowerAt(lockId, uint128(block.timestamp));
-
-        // numOfDelegateActionsThisEpoch
-        state.numOfDelegateActionsThisEpoch = veMoca.numOfDelegateActionsPerEpoch(lockId, currentEpochStart);
-        
-        return state;
-    }
-
-    function captureDelegateState(address delegate, uint128 expiry, uint128 newExpiry) internal returns (DelegateStateSnapshot memory) {
-        DelegateStateSnapshot memory state;
-
-        // epoch vars
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 nextEpochStart = currentEpochStart + EPOCH_DURATION;
-        uint128 epoch = getCurrentEpochNumber();
-
-        // Core state
-        (state.delegateHistory.bias, state.delegateHistory.slope) = veMoca.delegateHistory(delegate, currentEpochStart);
-        state.delegateSlopeChange = veMoca.delegateSlopeChanges(delegate, expiry);
-        state.delegateLastUpdatedTimestamp = veMoca.delegateLastUpdatedTimestamp(delegate);
-
-        // Slope change at newExpiry (for increaseDuration)
-        if (newExpiry != 0) state.delegateSlopeChangeNewExpiry = veMoca.delegateSlopeChanges(delegate, newExpiry);
-        
-        // Pending deltas: will be applied in the next epoch
-        (
-            bool hasAdd, 
-            bool hasSub,
-            DataTypes.VeBalance memory additions,
-            DataTypes.VeBalance memory subtractions
-        ) = veMoca.delegatePendingDeltas(delegate, nextEpochStart);
-        
-        state.delegatePendingDelta.hasAddition = hasAdd;
-        state.delegatePendingDelta.hasSubtraction = hasSub;
-        state.delegatePendingDelta.additions = additions;
-        state.delegatePendingDelta.subtractions = subtractions;
-        
-        // View functions
-        state.delegateCurrentVotingPower = veMoca.balanceOfAt(delegate, uint128(block.timestamp), true);
-        state.delegateVotingPowerAtEpochEnd = veMoca.balanceAtEpochEnd(delegate, epoch, true);
-        
-        return state;
-    }
-
-    function captureUserDelegatePairState(address user, address delegate, uint128 expiry, uint128 newExpiry) internal returns (UserDelegatePairStateSnapshot memory) {
-        UserDelegatePairStateSnapshot memory state;
-
-        // epoch vars
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 nextEpochStart = currentEpochStart + EPOCH_DURATION;
-        uint128 epoch = getCurrentEpochNumber();
-
-        // Core state
-        (state.delegatedAggregationHistory.bias, state.delegatedAggregationHistory.slope) = veMoca.delegatedAggregationHistory(user, delegate, currentEpochStart);
-        state.userDelegatedSlopeChange = veMoca.userDelegatedSlopeChanges(user, delegate, expiry);
-        state.userDelegatedPairLastUpdatedTimestamp = veMoca.userDelegatedPairLastUpdatedTimestamp(user, delegate);
-
-        // Slope change at newExpiry (for increaseDuration)
-        if (newExpiry != 0) state.userDelegatedSlopeChangeNewExpiry = veMoca.userDelegatedSlopeChanges(user, delegate, newExpiry);
-        
-        // Pending deltas: will be applied in the next epoch
-        (
-            bool hasAdd, 
-            bool hasSub,
-            DataTypes.VeBalance memory additions,
-            DataTypes.VeBalance memory subtractions
-        ) = veMoca.userPendingDeltasForDelegate(user, delegate, nextEpochStart);
-        
-        state.pairPendingDelta.hasAddition = hasAdd;
-        state.pairPendingDelta.hasSubtraction = hasSub;
-        state.pairPendingDelta.additions = additions;
-        state.pairPendingDelta.subtractions = subtractions;
-        
-        // View functions
-        state.userDelegatedCurrentVotingPower = getValueAt(state.delegatedAggregationHistory, uint128(block.timestamp));
-        state.userDelegatedVotingPowerAtEpochEnd = veMoca.getSpecificDelegatedBalanceAtEpochEnd(user, delegate, epoch);
-
-        return state;
-    }
-
-
-    /**
-     * @notice Captures all states for delegation-related tests
-     * @param user The user address
-     * @param lockId The lock ID
-     * @param expiry The current lock expiry
-     * @param newExpiry The new expiry (for increaseDuration, 0 otherwise)
-     * @param targetDelegate The target delegate address (for delegateLock/switchDelegate, address(0) if none)
-     * @param oldDelegate The old delegate address (for switchDelegate/undelegate, address(0) if none)
-     */
-    function captureAllStates(
-        address user, 
-        bytes32 lockId, 
-        uint128 expiry, 
-        uint128 newExpiry,
-        address targetDelegate,
-        address oldDelegate
-    ) internal returns (UnifiedStateSnapshot memory) {
-        UnifiedStateSnapshot memory state;
-        
-        // Common states
-        state.tokensState = captureTokensState(user);
-        state.globalState = captureGlobalState(expiry, newExpiry);
-        state.userState = captureUserState(user, expiry, newExpiry);
-        state.lockState = captureLockState(lockId);
-        
-        // Target delegate state (for delegateLock/switchDelegate)
-        if (targetDelegate != address(0)) {
-            state.targetDelegateState = captureDelegateState(targetDelegate, expiry, newExpiry);
-            state.targetPairState = captureUserDelegatePairState(user, targetDelegate, expiry, newExpiry);
-        }
-        
-        // Old delegate state (for switchDelegate/undelegate)
-        if (oldDelegate != address(0)) {
-            state.oldDelegateState = captureDelegateState(oldDelegate, expiry, newExpiry);
-            state.oldPairState = captureUserDelegatePairState(user, oldDelegate, expiry, newExpiry);
-        }
-        
-        return state;
-    }
-
-    //Overload for non-delegation scenarios (backward compatibility)
-    function captureAllStates(
-        address user, 
-        bytes32 lockId, 
-        uint128 expiry, 
-        uint128 newExpiry
-    ) internal returns (UnifiedStateSnapshot memory) {
-        return captureAllStates(user, lockId, expiry, newExpiry, address(0), address(0));
-    }
-
-
-// ================= VERIFY FUNCTIONS =================
-
-    // Verifies State: delegateLock(targetDelegate) -> user + targetDelegate + user-delegate pair
-    function verifyDelegateLock(UnifiedStateSnapshot memory beforeState, address targetDelegate) internal {
-        // Get lock info from beforeState
-        DataTypes.Lock memory lockBefore = beforeState.lockState.lock;
-        bytes32 lockId = lockBefore.lockId;
-        address owner = lockBefore.owner;
-        uint128 expiry = lockBefore.expiry;
-        
-        // Calculate lock veBalance using helper
-        DataTypes.VeBalance memory lockVeBalance = convertToVeBalance(lockBefore);
-        uint128 lockSlope = lockVeBalance.slope;
-        uint128 lockBias = lockVeBalance.bias;
-
-        // Epoch timing
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 nextEpochStart = currentEpochStart + EPOCH_DURATION;
-        uint128 epoch = getCurrentEpochNumber();
-
-        // ============ 1. Lock State ============
-            DataTypes.Lock memory lockAfter = getLock(lockId);
-            assertEq(lockAfter.delegate, targetDelegate, "Lock delegate must be set");
-            assertEq(lockAfter.owner, owner, "Lock owner unchanged");
-            assertEq(lockAfter.moca, lockBefore.moca, "Lock moca unchanged");
-            assertEq(lockAfter.esMoca, lockBefore.esMoca, "Lock esMoca unchanged");
-            assertEq(lockAfter.expiry, expiry, "Lock expiry unchanged");
-            assertFalse(lockAfter.isUnlocked, "Lock not unlocked");
-
-        // ============ 2. Delegate Registration ============
-            assertTrue(veMoca.isRegisteredDelegate(targetDelegate), "Target delegate must be registered");
-
-        // ============ 2.1 Delegation Action Counter ============
-            uint128 actionCountAfter = veMoca.numOfDelegateActionsPerEpoch(lockId, currentEpochStart);
-            assertEq(actionCountAfter, beforeState.lockState.numOfDelegateActionsThisEpoch + 1, "Action counter incremented");
-        
-        // ============ 2.2 Timestamp Updates ============
-            assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global lastUpdated");
-            assertEq(veMoca.userLastUpdatedTimestamp(owner), currentEpochStart, "User lastUpdated");
-            assertEq(veMoca.delegateLastUpdatedTimestamp(targetDelegate), currentEpochStart, "Delegate lastUpdated");
-            assertEq(veMoca.userDelegatedPairLastUpdatedTimestamp(owner, targetDelegate), currentEpochStart, "Pair lastUpdated");
-
-        // ============ 3. User State ============
-            // userSlopeChanges[expiry]: decreases by lockSlope
-            assertEq(veMoca.userSlopeChanges(owner, expiry), beforeState.userState.userSlopeChange - lockSlope, "User slopeChange decreased");
-        
-            // userPendingDeltas[nextEpoch]: subtraction booked
-            (bool hasAdd, bool hasSub, DataTypes.VeBalance memory additions, DataTypes.VeBalance memory subtractions) = veMoca.userPendingDeltas(owner, nextEpochStart);
-        
-            assertTrue(hasSub, "User pending subtraction");
-            assertEq(subtractions.bias, beforeState.userState.userPendingDelta.subtractions.bias + lockBias, "User pending sub bias");
-            assertEq(subtractions.slope, beforeState.userState.userPendingDelta.subtractions.slope + lockSlope, "User pending sub slope");
-            
-            // User VP unchanged in current epoch
-            assertEq(veMoca.balanceOfAt(owner, uint128(block.timestamp), false), beforeState.userState.userCurrentVotingPower, "User VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(owner, epoch, false), beforeState.userState.userVotingPowerAtEpochEnd, "User VP at epoch end unchanged");
-
-        // ============ 4. Target Delegate State ============
-            // delegateSlopeChanges[expiry]: increases by lockSlope
-            assertEq(veMoca.delegateSlopeChanges(targetDelegate, expiry), beforeState.targetDelegateState.delegateSlopeChange + lockSlope, "Delegate slopeChange increased");
-            
-            // delegatePendingDeltas[nextEpoch]: addition booked
-            (hasAdd, hasSub, additions, subtractions) = veMoca.delegatePendingDeltas(targetDelegate, nextEpochStart);
-            
-            assertTrue(hasAdd, "Delegate pending addition");
-            assertEq(additions.bias, beforeState.targetDelegateState.delegatePendingDelta.additions.bias + lockBias, "Delegate pending add bias");
-            assertEq(additions.slope, beforeState.targetDelegateState.delegatePendingDelta.additions.slope + lockSlope, "Delegate pending add slope");
-            
-            // Delegate VP unchanged in current epoch
-            assertEq(veMoca.balanceOfAt(targetDelegate, uint128(block.timestamp), true), beforeState.targetDelegateState.delegateCurrentVotingPower, "Delegate VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(targetDelegate, epoch, true), beforeState.targetDelegateState.delegateVotingPowerAtEpochEnd, "Delegate VP at epoch end unchanged");
-
-        // ============ 5. User-Delegate Pair State ============
-            // userDelegatedSlopeChanges[expiry]: increases by lockSlope
-            assertEq(veMoca.userDelegatedSlopeChanges(owner, targetDelegate, expiry), beforeState.targetPairState.userDelegatedSlopeChange + lockSlope, "Pair slopeChange increased");
-            
-            // userPendingDeltasForDelegate[nextEpoch]: addition booked
-            (hasAdd, hasSub, additions, subtractions) = veMoca.userPendingDeltasForDelegate(owner, targetDelegate, nextEpochStart);
-            
-            assertTrue(hasAdd, "Pair pending addition");
-            assertEq(additions.bias, beforeState.targetPairState.pairPendingDelta.additions.bias + lockBias, "Pair pending add bias");
-            assertEq(additions.slope, beforeState.targetPairState.pairPendingDelta.additions.slope + lockSlope, "Pair pending add slope");
-           
-            // Verify Pair Current VP (calculated) - Should be UNCHANGED
-            {
-                (uint128 b, uint128 s) = veMoca.delegatedAggregationHistory(owner, targetDelegate, currentEpochStart);
-                DataTypes.VeBalance memory currentHistory; currentHistory.bias = b; currentHistory.slope = s;
-                assertEq(getValueAt(currentHistory, uint128(block.timestamp)), beforeState.targetPairState.userDelegatedCurrentVotingPower, "Pair VP current unchanged");
-            }
-
-            // Pair VP at epoch end unchanged
-            assertEq(veMoca.getSpecificDelegatedBalanceAtEpochEnd(owner, targetDelegate, epoch), beforeState.targetPairState.userDelegatedVotingPowerAtEpochEnd, "Pair VP at epoch end unchanged");
-
-        // ============ 5.1) Storage: Pair History (No immediate changes) ============
-            // Verify storage directly: History at current epoch start should match snapshot (no immediate changes)
-            (uint128 b, uint128 s) = veMoca.delegatedAggregationHistory(owner, targetDelegate, currentEpochStart);
-            assertEq(b, beforeState.targetPairState.delegatedAggregationHistory.bias, "Storage: Pair history bias unchanged");
-            assertEq(s, beforeState.targetPairState.delegatedAggregationHistory.slope, "Storage: Pair history slope unchanged");
-        // ============ 6. Global State (Invariants) ============
-            (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
-            assertEq(globalBias, beforeState.globalState.veGlobal.bias, "Global bias unchanged");
-            assertEq(globalSlope, beforeState.globalState.veGlobal.slope, "Global slope unchanged");
-            assertEq(veMoca.slopeChanges(expiry), beforeState.globalState.slopeChange, "Global slopeChange unchanged");
-            assertEq(veMoca.totalSupplyAtTimestamp(uint128(block.timestamp)), beforeState.globalState.totalSupplyAtTimestamp, "Total supply unchanged");
-
-        // ============ 7. Tokens State (No transfers) ============
-            assertEq(uint128(owner.balance), beforeState.tokensState.userMoca, "User MOCA unchanged");
-            assertEq(uint128(esMoca.balanceOf(owner)), beforeState.tokensState.userEsMoca, "User esMOCA unchanged");
-            assertEq(uint128(address(veMoca).balance), beforeState.tokensState.contractMoca, "Contract MOCA unchanged");
-            assertEq(uint128(esMoca.balanceOf(address(veMoca))), beforeState.tokensState.contractEsMoca, "Contract esMOCA unchanged");
-            
-            // totalSupplyAt(currentEpochStart) unchanged (delegation is internal reallocation)
-            assertEq(veMoca.totalSupplyAt(currentEpochStart), beforeState.globalState.totalSupplyAt, "TotalSupplyAt epoch unchanged");
-    }
-
-    // Verifies State: switchDelegate(newDelegate) -> user + oldDelegate + user-oldDelegate pair + newDelegate + user-newDelegate pair
-    function verifySwitchDelegate(UnifiedStateSnapshot memory beforeState, address newDelegate) internal {
-        // Get lock info from beforeState
-        DataTypes.Lock memory lockBefore = beforeState.lockState.lock;
-        bytes32 lockId = lockBefore.lockId;
-        address owner = lockBefore.owner;
-        address oldDelegate = lockBefore.delegate;
-        uint128 expiry = lockBefore.expiry;
-        
-        // Calculate lock veBalance using helper
-        DataTypes.VeBalance memory lockVeBalance = convertToVeBalance(lockBefore);
-        uint128 lockSlope = lockVeBalance.slope;
-        uint128 lockBias = lockVeBalance.bias;
-
-        // Epoch timing
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 nextEpochStart = currentEpochStart + EPOCH_DURATION;
-        uint128 epoch = getCurrentEpochNumber();
-
-        // ============ 1. Lock State ============
-            DataTypes.Lock memory lockAfter = getLock(lockId);
-            assertEq(lockAfter.delegate, newDelegate, "Lock delegate switched");
-            assertEq(lockAfter.owner, owner, "Lock owner unchanged");
-            assertEq(lockAfter.moca, lockBefore.moca, "Lock moca unchanged");
-            assertEq(lockAfter.esMoca, lockBefore.esMoca, "Lock esMoca unchanged");
-            assertEq(lockAfter.expiry, expiry, "Lock expiry unchanged");
-            assertFalse(lockAfter.isUnlocked, "Lock not unlocked");
-
-    
-        // ============ 2.Delegate Registration ============
-            assertTrue(veMoca.isRegisteredDelegate(newDelegate), "New delegate must be registered");
-
-        // ============ 2.1 Delegation Action Counter ============
-            uint128 actionCountAfter = veMoca.numOfDelegateActionsPerEpoch(lockId, currentEpochStart);
-            assertEq(actionCountAfter, beforeState.lockState.numOfDelegateActionsThisEpoch + 1, "Action counter incremented");
-            
-        // ============ 2.2 Timestamp Updates ============
-            assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global lastUpdated");
-            assertEq(veMoca.userLastUpdatedTimestamp(owner), currentEpochStart, "User lastUpdated");
-            assertEq(veMoca.delegateLastUpdatedTimestamp(oldDelegate), currentEpochStart, "Old delegate lastUpdated");
-            assertEq(veMoca.delegateLastUpdatedTimestamp(newDelegate), currentEpochStart, "New delegate lastUpdated");
-            assertEq(veMoca.userDelegatedPairLastUpdatedTimestamp(owner, oldDelegate), currentEpochStart, "Old pair lastUpdated");
-            assertEq(veMoca.userDelegatedPairLastUpdatedTimestamp(owner, newDelegate), currentEpochStart, "New pair lastUpdated");
-
-        // ============ 3. Old Delegate State (Subtraction) ============
-            // delegateSlopeChanges[expiry]: decreases by lockSlope
-            assertEq(veMoca.delegateSlopeChanges(oldDelegate, expiry), beforeState.oldDelegateState.delegateSlopeChange - lockSlope, "Old delegate slopeChange decreased");
-        
-            // delegatePendingDeltas[nextEpoch]: subtraction booked
-            (bool hasAdd, bool hasSub, DataTypes.VeBalance memory additions, DataTypes.VeBalance memory subtractions) = veMoca.delegatePendingDeltas(oldDelegate, nextEpochStart);
-            
-            assertTrue(hasSub, "Old delegate pending subtraction");
-            assertEq(subtractions.bias, beforeState.oldDelegateState.delegatePendingDelta.subtractions.bias + lockBias, "Old delegate pending sub bias");
-            assertEq(subtractions.slope, beforeState.oldDelegateState.delegatePendingDelta.subtractions.slope + lockSlope, "Old delegate pending sub slope");
-            
-            // Old delegate VP unchanged in current epoch (pending deltas apply next epoch)
-            assertEq(veMoca.balanceOfAt(oldDelegate, uint128(block.timestamp), true), beforeState.oldDelegateState.delegateCurrentVotingPower, "Old delegate VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(oldDelegate, epoch, true), beforeState.oldDelegateState.delegateVotingPowerAtEpochEnd, "Old delegate VP at epoch end unchanged");
-
-        // ============ 4. New Delegate State (Addition) ============
-            // delegateSlopeChanges[expiry]: increases by lockSlope
-            assertEq(veMoca.delegateSlopeChanges(newDelegate, expiry), beforeState.targetDelegateState.delegateSlopeChange + lockSlope, "New delegate slopeChange increased");
-            
-            // delegatePendingDeltas[nextEpoch]: addition booked
-            (hasAdd, hasSub, additions, subtractions) = veMoca.delegatePendingDeltas(newDelegate, nextEpochStart);
-            
-            assertTrue(hasAdd, "New delegate pending addition");
-            assertEq(additions.bias, beforeState.targetDelegateState.delegatePendingDelta.additions.bias + lockBias, "New delegate pending add bias");
-            assertEq(additions.slope, beforeState.targetDelegateState.delegatePendingDelta.additions.slope + lockSlope, "New delegate pending add slope");
-            
-            // New delegate VP unchanged in current epoch (pending deltas apply next epoch)
-            assertEq(veMoca.balanceOfAt(newDelegate, uint128(block.timestamp), true), beforeState.targetDelegateState.delegateCurrentVotingPower, "New delegate VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(newDelegate, epoch, true), beforeState.targetDelegateState.delegateVotingPowerAtEpochEnd, "New delegate VP at epoch end unchanged");
-
-        // ============ 5. Old Pair State (Subtraction) ============
-            // userDelegatedSlopeChanges[expiry]: decreases by lockSlope
-            assertEq(veMoca.userDelegatedSlopeChanges(owner, oldDelegate, expiry), beforeState.oldPairState.userDelegatedSlopeChange - lockSlope, "Old pair slopeChange decreased");
-            
-            // userPendingDeltasForDelegate[nextEpoch]: subtraction booked
-            (hasAdd, hasSub, additions, subtractions) = veMoca.userPendingDeltasForDelegate(owner, oldDelegate, nextEpochStart);
-            
-            assertTrue(hasSub, "Old pair pending subtraction");
-            assertEq(subtractions.bias, beforeState.oldPairState.pairPendingDelta.subtractions.bias + lockBias, "Old pair pending sub bias");
-            assertEq(subtractions.slope, beforeState.oldPairState.pairPendingDelta.subtractions.slope + lockSlope, "Old pair pending sub slope");
-            
-            // Verify Old Pair History (No immediate changes) [therefore no changes to current VP]
-            {
-                (uint128 b, uint128 s) = veMoca.delegatedAggregationHistory(owner, oldDelegate, currentEpochStart);
-                assertEq(b, beforeState.oldPairState.delegatedAggregationHistory.bias, "Storage: Old Pair history bias unchanged");
-                assertEq(s, beforeState.oldPairState.delegatedAggregationHistory.slope, "Storage: Old Pair history slope unchanged");
-            }
-
-            // Old pair VP at epoch end unchanged
-            assertEq(veMoca.getSpecificDelegatedBalanceAtEpochEnd(owner, oldDelegate, epoch), beforeState.oldPairState.userDelegatedVotingPowerAtEpochEnd, "Old pair VP at epoch end unchanged");
-
-        // ============ 6. New Pair State (Addition) ============
-            // userDelegatedSlopeChanges[expiry]: increases by lockSlope
-            assertEq(veMoca.userDelegatedSlopeChanges(owner, newDelegate, expiry), beforeState.targetPairState.userDelegatedSlopeChange + lockSlope, "New pair slopeChange increased");
-        
-            // userPendingDeltasForDelegate[nextEpoch]: addition booked
-            (hasAdd, hasSub, additions, subtractions) = veMoca.userPendingDeltasForDelegate(owner, newDelegate, nextEpochStart);
-            
-            assertTrue(hasAdd, "New pair pending addition");
-            assertEq(additions.bias, beforeState.targetPairState.pairPendingDelta.additions.bias + lockBias, "New pair pending add bias");
-            assertEq(additions.slope, beforeState.targetPairState.pairPendingDelta.additions.slope + lockSlope, "New pair pending add slope");
-            
-            // Verify New Pair History (No immediate changes) [therefore no changes to current VP]
-            {
-                (uint128 b, uint128 s) = veMoca.delegatedAggregationHistory(owner, newDelegate, currentEpochStart);
-                assertEq(b, beforeState.targetPairState.delegatedAggregationHistory.bias, "Storage: New Pair history bias unchanged");
-                assertEq(s, beforeState.targetPairState.delegatedAggregationHistory.slope, "Storage: New Pair history slope unchanged");
-            }
-
-            // New pair VP at epoch end unchanged
-            assertEq(veMoca.getSpecificDelegatedBalanceAtEpochEnd(owner, newDelegate, epoch), beforeState.targetPairState.userDelegatedVotingPowerAtEpochEnd, "New pair VP at epoch end unchanged");
-
-        // ============ 7. User State (Unchanged - switch doesn't affect user's own VP) ============
-            assertEq(veMoca.userSlopeChanges(owner, expiry), beforeState.userState.userSlopeChange, "User slopeChange unchanged");
-            assertEq(veMoca.balanceOfAt(owner, uint128(block.timestamp), false), beforeState.userState.userCurrentVotingPower, "User VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(owner, epoch, false), beforeState.userState.userVotingPowerAtEpochEnd, "User VP at epoch end unchanged");
-
-        // ============ 8. Global State (Invariants) ============
-            (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
-            assertEq(globalBias, beforeState.globalState.veGlobal.bias, "Global bias unchanged");
-            assertEq(globalSlope, beforeState.globalState.veGlobal.slope, "Global slope unchanged");
-            assertEq(veMoca.slopeChanges(expiry), beforeState.globalState.slopeChange, "Global slopeChange unchanged");
-            assertEq(veMoca.totalSupplyAtTimestamp(uint128(block.timestamp)), beforeState.globalState.totalSupplyAtTimestamp, "Total supply unchanged");
-
-        // ============ 8.1) totalSupplyAt(currentEpochStart) unchanged (delegation is internal reallocation) ====
-            assertEq(veMoca.totalSupplyAt(currentEpochStart), beforeState.globalState.totalSupplyAt, "TotalSupplyAt epoch unchanged");
-
-        // ============ 9. Tokens State (No transfers) ============
-            assertEq(uint128(owner.balance), beforeState.tokensState.userMoca, "User MOCA unchanged");
-            assertEq(uint128(esMoca.balanceOf(owner)), beforeState.tokensState.userEsMoca, "User esMOCA unchanged");
-            assertEq(uint128(address(veMoca).balance), beforeState.tokensState.contractMoca, "Contract MOCA unchanged");
-            assertEq(uint128(esMoca.balanceOf(address(veMoca))), beforeState.tokensState.contractEsMoca, "Contract esMOCA unchanged");
-        
-    }
-
-    // Verifies State: undelegateLock() -> user + oldDelegate + user-oldDelegate pair
-    function verifyUndelegateLock(UnifiedStateSnapshot memory beforeState) internal {
-        // Get lock info from beforeState
-        DataTypes.Lock memory lockBefore = beforeState.lockState.lock;
-        bytes32 lockId = lockBefore.lockId;
-        address owner = lockBefore.owner;
-        address oldDelegate = lockBefore.delegate;
-        uint128 expiry = lockBefore.expiry;
-        
-        // Calculate lock veBalance using helper
-        DataTypes.VeBalance memory lockVeBalance = convertToVeBalance(lockBefore);
-        uint128 lockSlope = lockVeBalance.slope;
-        uint128 lockBias = lockVeBalance.bias;
-
-        // Epoch timing
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 nextEpochStart = currentEpochStart + EPOCH_DURATION;
-        uint128 epoch = getCurrentEpochNumber();
-
-        // ============ 1. Lock State ============
-            DataTypes.Lock memory lockAfter = getLock(lockId);
-            assertEq(lockAfter.delegate, address(0), "Lock delegate cleared");
-            assertEq(lockAfter.owner, owner, "Lock owner unchanged");
-            assertEq(lockAfter.moca, lockBefore.moca, "Lock moca unchanged");
-            assertEq(lockAfter.esMoca, lockBefore.esMoca, "Lock esMoca unchanged");
-            assertEq(lockAfter.expiry, expiry, "Lock expiry unchanged");
-            assertFalse(lockAfter.isUnlocked, "Lock not unlocked");
-
-        // ============ 2. Delegation Action Counter ============
-            uint128 actionCountAfter = veMoca.numOfDelegateActionsPerEpoch(lockId, currentEpochStart);
-            assertEq(actionCountAfter, beforeState.lockState.numOfDelegateActionsThisEpoch + 1, "Action counter incremented");
-
-        // ============ 2.1) Timestamp Updates ============
-            assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global lastUpdated");
-            assertEq(veMoca.userLastUpdatedTimestamp(owner), currentEpochStart, "User lastUpdated");
-            assertEq(veMoca.delegateLastUpdatedTimestamp(oldDelegate), currentEpochStart, "Old delegate lastUpdated");
-            assertEq(veMoca.userDelegatedPairLastUpdatedTimestamp(owner, oldDelegate), currentEpochStart, "Old pair lastUpdated");
-
-        // ============ 3. Old Delegate State (Subtraction) ============
-            // delegateSlopeChanges[expiry]: decreases by lockSlope
-            assertEq(veMoca.delegateSlopeChanges(oldDelegate, expiry), beforeState.oldDelegateState.delegateSlopeChange - lockSlope, "Delegate slopeChange decreased");
-        
-            // delegatePendingDeltas[nextEpoch]: subtraction booked
-            (bool hasAdd, bool hasSub, DataTypes.VeBalance memory additions, DataTypes.VeBalance memory subtractions) = veMoca.delegatePendingDeltas(oldDelegate, nextEpochStart);
-            
-            assertTrue(hasSub, "Delegate pending subtraction");
-            assertEq(subtractions.bias, beforeState.oldDelegateState.delegatePendingDelta.subtractions.bias + lockBias, "Delegate pending sub bias");
-            assertEq(subtractions.slope, beforeState.oldDelegateState.delegatePendingDelta.subtractions.slope + lockSlope, "Delegate pending sub slope");
-            
-            // Delegate VP unchanged in current epoch (pending deltas apply next epoch)
-            assertEq(veMoca.balanceOfAt(oldDelegate, uint128(block.timestamp), true), beforeState.oldDelegateState.delegateCurrentVotingPower, "Delegate VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(oldDelegate, epoch, true), beforeState.oldDelegateState.delegateVotingPowerAtEpochEnd, "Delegate VP at epoch end unchanged");
-
-        // ============ 4. User State (Addition) ============
-            // userSlopeChanges[expiry]: increases by lockSlope
-            assertEq(veMoca.userSlopeChanges(owner, expiry), beforeState.userState.userSlopeChange + lockSlope, "User slopeChange increased");
-            
-            // userPendingDeltas[nextEpoch]: addition booked
-            (hasAdd, hasSub, additions, subtractions) = veMoca.userPendingDeltas(owner, nextEpochStart);
-            
-            assertTrue(hasAdd, "User pending addition");
-            assertEq(additions.bias, beforeState.userState.userPendingDelta.additions.bias + lockBias, "User pending add bias");
-            assertEq(additions.slope, beforeState.userState.userPendingDelta.additions.slope + lockSlope, "User pending add slope");
-            
-            // User VP unchanged in current epoch (pending deltas apply next epoch)
-            assertEq(veMoca.balanceOfAt(owner, uint128(block.timestamp), false), beforeState.userState.userCurrentVotingPower, "User VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(owner, epoch, false), beforeState.userState.userVotingPowerAtEpochEnd, "User VP at epoch end unchanged");
-
-        // ============ 5. Old Pair State (Subtraction) ============
-            // userDelegatedSlopeChanges[expiry]: decreases by lockSlope
-            assertEq(veMoca.userDelegatedSlopeChanges(owner, oldDelegate, expiry), beforeState.oldPairState.userDelegatedSlopeChange - lockSlope, "Pair slopeChange decreased");
-            
-            // userPendingDeltasForDelegate[nextEpoch]: subtraction booked
-            (hasAdd, hasSub, additions, subtractions) = veMoca.userPendingDeltasForDelegate(owner, oldDelegate, nextEpochStart);
-            
-            assertTrue(hasSub, "Pair pending subtraction");
-            assertEq(subtractions.bias, beforeState.oldPairState.pairPendingDelta.subtractions.bias + lockBias, "Pair pending sub bias");
-            assertEq(subtractions.slope, beforeState.oldPairState.pairPendingDelta.subtractions.slope + lockSlope, "Pair pending sub slope");
-            
-            // Verify Old Pair History (No immediate changes) [therefore no changes to current VP]
-            {
-                (uint128 b, uint128 s) = veMoca.delegatedAggregationHistory(owner, oldDelegate, currentEpochStart);
-                assertEq(b, beforeState.oldPairState.delegatedAggregationHistory.bias, "Storage: Old Pair history bias unchanged");
-                assertEq(s, beforeState.oldPairState.delegatedAggregationHistory.slope, "Storage: Old Pair history slope unchanged");
-            }
-
-            // Pair VP at epoch end unchanged
-            assertEq(veMoca.getSpecificDelegatedBalanceAtEpochEnd(owner, oldDelegate, epoch), beforeState.oldPairState.userDelegatedVotingPowerAtEpochEnd, "Pair VP at epoch end unchanged");
-
-        // ============ 6. Global State (Invariants) ============
-            (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
-            assertEq(globalBias, beforeState.globalState.veGlobal.bias, "Global bias unchanged");
-            assertEq(globalSlope, beforeState.globalState.veGlobal.slope, "Global slope unchanged");
-            assertEq(veMoca.slopeChanges(expiry), beforeState.globalState.slopeChange, "Global slopeChange unchanged");
-            assertEq(veMoca.totalSupplyAtTimestamp(uint128(block.timestamp)), beforeState.globalState.totalSupplyAtTimestamp, "Total supply unchanged");
-
-        // ============ 6.1) totalSupplyAt(currentEpochStart) unchanged (delegation is internal reallocation) ============
-            assertEq(veMoca.totalSupplyAt(currentEpochStart), beforeState.globalState.totalSupplyAt, "TotalSupplyAt epoch unchanged");
-
-        // ============ 7. Tokens State (No transfers) ============
-            assertEq(uint128(owner.balance), beforeState.tokensState.userMoca, "User MOCA unchanged");
-            assertEq(uint128(esMoca.balanceOf(owner)), beforeState.tokensState.userEsMoca, "User esMOCA unchanged");
-            assertEq(uint128(address(veMoca).balance), beforeState.tokensState.contractMoca, "Contract MOCA unchanged");
-            assertEq(uint128(esMoca.balanceOf(address(veMoca))), beforeState.tokensState.contractEsMoca, "Contract esMOCA unchanged");
-            
-    }
-    
-
-    // Verifies State: createLock() -> user + global + lock
-    function verifyCreateLock(
-        UnifiedStateSnapshot memory beforeState, 
-        address user, 
-        bytes32 lockId, 
-        uint128 mocaAmt, 
-        uint128 esMocaAmt, 
-        uint128 expiry
-    ) internal {
-        // Extract sub-snapshots for clarity
-        TokensSnapshot memory beforeTokens = beforeState.tokensState;
-        GlobalStateSnapshot memory beforeGlobal = beforeState.globalState;
-        UserStateSnapshot memory beforeUser = beforeState.userState;
-        LockStateSnapshot memory beforeLock = beforeState.lockState;
-        
-        uint128 currentEpochStart = getCurrentEpochStart();
-        
-        // Expected Deltas
-        uint128 expectedSlope = (mocaAmt + esMocaAmt) / MAX_LOCK_DURATION;
-        uint128 expectedBias = expectedSlope * expiry;
-
-        // ============ 1. Tokens ============
-            assertEq(user.balance, beforeTokens.userMoca - mocaAmt, "User MOCA must be decremented");
-            assertEq(esMoca.balanceOf(user), beforeTokens.userEsMoca - esMocaAmt, "User esMOCA must be decremented");
-            assertEq(address(veMoca).balance, beforeTokens.contractMoca + mocaAmt, "Contract MOCA must be incremented");
-            assertEq(esMoca.balanceOf(address(veMoca)), beforeTokens.contractEsMoca + esMocaAmt, "Contract esMOCA must be incremented");
-
-        // ============ 2. Global State ============
-            (uint128 bias, uint128 slope) = veMoca.veGlobal();
-            assertEq(bias, beforeGlobal.veGlobal.bias + expectedBias, "veGlobal bias must be incremented");
-            assertEq(slope, beforeGlobal.veGlobal.slope + expectedSlope, "veGlobal slope must be incremented");
-            assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeGlobal.TOTAL_LOCKED_MOCA + mocaAmt, "Total Locked MOCA must be incremented");
-            assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeGlobal.TOTAL_LOCKED_ESMOCA + esMocaAmt, "Total Locked esMOCA must be incremented");
-            assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global LastUpdated must be updated");
-
-        // ============ 3. Global Mappings ============
-            assertEq(veMoca.slopeChanges(expiry), beforeGlobal.slopeChange + expectedSlope, "Slope Changes must be incremented");
-        
-        // ============ 4. User State ============
-            (bias, slope) = veMoca.userHistory(user, currentEpochStart);
-            assertEq(bias, beforeUser.userHistory.bias + expectedBias, "userHistory Bias must be incremented");
-            assertEq(slope, beforeUser.userHistory.slope + expectedSlope, "userHistory Slope must be incremented");
-            assertEq(veMoca.userSlopeChanges(user, expiry), beforeUser.userSlopeChange + expectedSlope, "userSlopeChanges must be incremented");
-            assertEq(veMoca.userLastUpdatedTimestamp(user), currentEpochStart, "userLastUpdatedTimestamp must be updated");
-        
-        // ============ 5. Lock State ============
-            DataTypes.Lock memory lock = getLock(lockId);
-            assertEq(lock.lockId, lockId, "Lock ID");
-            assertEq(lock.owner, user, "Lock Owner");
-            assertEq(lock.delegate, address(0), "Lock Delegate must be address(0)");
-            assertEq(lock.moca, mocaAmt, "Lock Moca");
-            assertEq(lock.esMoca, esMocaAmt, "Lock esMoca");
-            assertEq(lock.expiry, expiry, "Lock Expiry");
-            assertFalse(lock.isUnlocked, "Lock must not be unlocked");
-
-        // ============ 6. Lock History ============
-            uint256 len = veMoca.getLockHistoryLength(lockId);
-            assertEq(len, 1, "Lock History Length must be 1 for new lock");
-            DataTypes.Checkpoint memory cp = getLockHistory(lockId, 0);
-            assertEq(cp.veBalance.bias, expectedBias, "Lock History: Checkpoint Bias");
-            assertEq(cp.veBalance.slope, expectedSlope, "Lock History: Checkpoint Slope");
-            assertEq(cp.lastUpdatedAt, currentEpochStart, "Lock History: Checkpoint Timestamp");
-
-        // ============ 7. View Functions ============
-        _verifyUserVotingPower(user, lock, beforeUser, beforeLock, true);
-    }
-
-    // used in verifyCreateLock() for non-delegated locks
-    function _verifyUserVotingPower(
-        address user, 
-        DataTypes.Lock memory newLock,
-        UserStateSnapshot memory beforeUser,
-        LockStateSnapshot memory beforeLock,
-        bool isNewLock
-    ) internal {
-        uint128 currentTimestamp = uint128(block.timestamp);
-        uint128 userVotingPower = veMoca.balanceOfAt(user, currentTimestamp, false);
-        uint128 newLockVotingPower = getValueAt(convertToVeBalance(newLock), currentTimestamp);
-
-        // Calculate expected VP at epoch end
-        uint128 epoch = getCurrentEpochNumber();
-        uint128 epochEnd = getEpochEndTimestamp(epoch);
-        uint128 userVPAtEpochEnd = veMoca.balanceAtEpochEnd(user, epoch, false);
-        uint128 newLockVPAtEpochEnd = newLock.expiry <= epochEnd ? 0 : getValueAt(convertToVeBalance(newLock), epochEnd);
-
-        if (isNewLock) {
-            // createLock: user VP increases by full lock VP
-            assertEq(userVotingPower, beforeUser.userCurrentVotingPower + newLockVotingPower, "Voting Power must be incremented (new lock)");
-            // check VP at epoch end
-            assertEq(userVPAtEpochEnd, beforeUser.userVotingPowerAtEpochEnd + newLockVPAtEpochEnd, "VP at EpochEnd must be incremented (new lock)");
-
-        } else {
-            // increaseAmount/increaseDuration: user VP increases by lock VP delta
-            uint128 oldLockVotingPower = getValueAt(convertToVeBalance(beforeLock.lock), currentTimestamp);
-            uint128 lockVPDelta = newLockVotingPower - oldLockVotingPower;
-            assertEq(userVotingPower, beforeUser.userCurrentVotingPower + lockVPDelta, "Voting Power must be incremented (modify lock)");
-
-            // Calculate OLD lock VP at epoch end
-            uint128 oldLockVPAtEpochEnd = beforeLock.lock.expiry <= epochEnd ? 0 : getValueAt(convertToVeBalance(beforeLock.lock), epochEnd);
-            uint128 lockVPAtEpochEndDelta = newLockVPAtEpochEnd - oldLockVPAtEpochEnd;
-            assertEq(userVPAtEpochEnd, beforeUser.userVotingPowerAtEpochEnd + lockVPAtEpochEndDelta, "VP at EpochEnd must be incremented (modify lock)");
-        }
-    }
-
-    function _verifyLockVotingPower(
-        DataTypes.Lock memory lock, 
-        LockStateSnapshot memory beforeLock, 
-        bool isIncreaseAmount
-    ) internal {
-        uint128 currentTimestamp = uint128(block.timestamp);
-        
-        // Skip if lock is expired
-        if (lock.expiry <= currentTimestamp) {
-            assertEq(getLockVotingPowerAt(lock.lockId, currentTimestamp), 0, "Expired lock should have 0 VP");
-            return;
-        }
-        
-        // 1. Calculate before voting power from saved state (only if still alive)
-        uint128 beforeVotingPower;
-        if (beforeLock.lock.expiry > currentTimestamp) {
-            beforeVotingPower = getValueAt(convertToVeBalance(beforeLock.lock), currentTimestamp);
-        }
-        
-        // 2. Calculate expected voting power from NEW lock state
-        uint128 expectedVotingPower = getValueAt(convertToVeBalance(lock), currentTimestamp);
-        
-        // 3. Validate based on operation type
-        uint128 beforeTotalAmount = beforeLock.lock.moca + beforeLock.lock.esMoca;
-        uint128 newTotalAmount = lock.moca + lock.esMoca;
-        
-        if (isIncreaseAmount) {
-            assertEq(lock.expiry, beforeLock.lock.expiry, "Expiry should be unchanged for increaseAmount");
-            assertGt(newTotalAmount, beforeTotalAmount, "Total amount must increase");
-        } else {
-            assertEq(newTotalAmount, beforeTotalAmount, "Amounts should be unchanged for increaseDuration");
-            assertGt(lock.expiry, beforeLock.lock.expiry, "Expiry must increase");
-        }
-        
-        // 4. Get actual voting power from contract
-        uint128 actualVotingPower = getLockVotingPowerAt(lock.lockId, currentTimestamp);
-        
-        // 5. Verify actual matches expected
-        assertEq(actualVotingPower, expectedVotingPower, "Actual VP must match expected");
-        
-        // 6. Verify voting power increased
-        uint128 deltaExpected = expectedVotingPower - beforeVotingPower;
-        uint128 deltaActual   = actualVotingPower  - beforeVotingPower;
-        assertEq(deltaActual, deltaExpected, "Voting-power delta mismatch");
-    }
-
-    /** State Changes Summary: verifyIncreaseAmountDelegated()
-
-        ┌──────────────┬────────────────────────────────────────────┬──────────────────────────────────────────────────────────┐
-        │ Category     │ State                                      │ Change                                                   │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Tokens       │ user.balance                               │ Decreases by mocaAmt                                     │
-        │              │ esMoca.balanceOf(user)                     │ Decreases by esMocaAmt                                   │
-        │              │ address(veMoca).balance                    │ Increases by mocaAmt                                     │
-        │              │ esMoca.balanceOf(veMoca)                   │ Increases by esMocaAmt                                   │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Global       │ veGlobal.bias                              │ +biasDelta                                               │
-        │              │ veGlobal.slope                             │ +slopeDelta                                              │
-        │              │ TOTAL_LOCKED_MOCA                          │ +mocaAmt                                                 │
-        │              │ TOTAL_LOCKED_ESMOCA                        │ +esMocaAmt                                               │
-        │              │ slopeChanges[expiry]                       │ +slopeDelta                                              │
-        │              │ lastUpdatedTimestamp                       │ = currentEpochStart                                      │
-        │              │ totalSupplyAtTimestamp                     │ +vpDeltaNow (= slopeDelta × (expiry - timestamp))        │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ User         │ userHistory[currentEpochStart]             │ Unchanged                                                │
-        │              │ userSlopeChanges[expiry]                   │ Unchanged                                                │
-        │              │ balanceOfAt(user, false)                   │ Unchanged                                                │
-        │              │ balanceAtEpochEnd(user, false)             │ Unchanged                                                │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Delegate     │ delegateHistory[currentEpochStart].bias    │ +biasDelta                                               │
-        │              │ delegateHistory[currentEpochStart].slope   │ +slopeDelta                                              │
-        │              │ delegateSlopeChanges[expiry]               │ +slopeDelta                                              │
-        │              │ delegateLastUpdatedTimestamp               │ = currentEpochStart                                      │
-        │              │ balanceOfAt(delegate, true)                │ +vpDeltaNow (= slopeDelta × (expiry - timestamp))        │
-        │              │ balanceAtEpochEnd(delegate, true)          │ +vpDeltaEpochEnd (= slopeDelta × (expiry - epochEnd))    │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Pair         │ delegatedAggregationHistory.bias           │ +biasDelta                                               │
-        │              │ delegatedAggregationHistory.slope          │ +slopeDelta                                              │
-        │              │ userDelegatedSlopeChanges[expiry]          │ +slopeDelta                                              │
-        │              │ userDelegatedCurrentVotingPower            │ +vpDeltaNow (= slopeDelta × (expiry - timestamp))        │
-        │              │ getSpecificDelegatedBalanceAtEpochEnd      │ +vpDeltaEpochEnd (= slopeDelta × (expiry - epochEnd))    │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Lock         │ lock.moca                                  │ +mocaAmt                                                 │
-        │              │ lock.esMoca                                │ +esMocaAmt                                               │
-        │              │ lock.delegate                              │ Unchanged                                                │
-        │              │ lock.expiry                                │ Unchanged                                                │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Lock History │ lockHistory.length                         │ Same epoch: unchanged / New epoch: +1                    │
-        │              │ checkpoint.bias                            │ = newLockBias                                            │
-        │              │ checkpoint.slope                           │ = newLockSlope                                           │
-        │              │ getLockVotingPowerAt                       │ Increases                                                │
-        └──────────────┴────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘
-    */
-
-    // Verifies State: increaseAmount on DELEGATED lock -> tokens + global + delegate (immediate) + pair (immediate) + lock
-    function verifyIncreaseAmountDelegated(UnifiedStateSnapshot memory beforeState, uint128 mocaAmt, uint128 esMocaAmt) internal {
-        // Extract sub-snapshots
-        TokensSnapshot memory beforeTokens = beforeState.tokensState;
-        GlobalStateSnapshot memory beforeGlobal = beforeState.globalState;
-        UserStateSnapshot memory beforeUser = beforeState.userState;
-        LockStateSnapshot memory beforeLock = beforeState.lockState;
-        DelegateStateSnapshot memory beforeDelegate = beforeState.targetDelegateState;
-        UserDelegatePairStateSnapshot memory beforePair = beforeState.targetPairState;
-        
-        // Derive from lock
-        bytes32 lockId = beforeLock.lock.lockId;
-        uint128 expiry = beforeLock.lock.expiry;
-        address user = beforeLock.lock.owner;
-        address delegate = beforeLock.lock.delegate;
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 epoch = getCurrentEpochNumber();
-        uint128 currentTimestamp = uint128(block.timestamp);
-
-        // Calculate delta (new lock veBalance - old lock veBalance)
-        // For increaseAmount: slope increases, bias increases
-        uint128 oldLockSlope = (beforeLock.lock.moca + beforeLock.lock.esMoca) / MAX_LOCK_DURATION;
-        uint128 newLockSlope = (beforeLock.lock.moca + mocaAmt + beforeLock.lock.esMoca + esMocaAmt) / MAX_LOCK_DURATION;
-        uint128 slopeDelta = newLockSlope - oldLockSlope;
-        uint128 newLockBias = newLockSlope * expiry;
-        uint128 biasDelta = slopeDelta * expiry;
-
-        // Calculate VP Deltas: now & epoch end
-        // VP Delta = slopeDelta * (expiry - timestamp)
-        uint128 vpDeltaNow = slopeDelta * (expiry - currentTimestamp);
-        
-        uint128 epochEndTimestamp = getEpochEndTimestamp(epoch);
-        // If expiry is before epoch end, delta is just whatever value it had (likely 0 if handled correctly elsewhere, but for valid locks expiry > currentEpochEnd)
-        uint128 vpDeltaEpochEnd = expiry <= epochEndTimestamp ? 0 : slopeDelta * (expiry - epochEndTimestamp);
-
-
-        // ============ 1. Tokens ============
-            assertEq(user.balance, beforeTokens.userMoca - mocaAmt, "User MOCA decremented");
-            assertEq(esMoca.balanceOf(user), beforeTokens.userEsMoca - esMocaAmt, "User esMOCA decremented");
-            assertEq(address(veMoca).balance, beforeTokens.contractMoca + mocaAmt, "Contract MOCA incremented");
-            assertEq(esMoca.balanceOf(address(veMoca)), beforeTokens.contractEsMoca + esMocaAmt, "Contract esMOCA incremented");
-
-        // ============ 2. Global State (IMMEDIATE) ============
-            (uint128 bias, uint128 slope) = veMoca.veGlobal();
-            assertEq(bias, beforeGlobal.veGlobal.bias + biasDelta, "veGlobal bias incremented");
-            assertEq(slope, beforeGlobal.veGlobal.slope + slopeDelta, "veGlobal slope incremented");
-            assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeGlobal.TOTAL_LOCKED_MOCA + mocaAmt, "Total Locked MOCA incremented");
-            assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeGlobal.TOTAL_LOCKED_ESMOCA + esMocaAmt, "Total Locked esMOCA incremented");
-            assertEq(veMoca.slopeChanges(expiry), beforeGlobal.slopeChange + slopeDelta, "Global slopeChange incremented");
-            assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global lastUpdated");
-            assertEq(veMoca.totalSupplyAtTimestamp(currentTimestamp), beforeGlobal.totalSupplyAtTimestamp + vpDeltaNow, "Total supply VP increased");
-
-            // Verify totalSupplyAt(currentEpochStart) unchanged: it is only updated in the new epoch for the current epoch
-            assertEq(veMoca.totalSupplyAt(currentEpochStart), beforeGlobal.totalSupplyAt, "TotalSupplyAt epoch unchanged");
-
-        // ============ 3. User State (UNCHANGED) ==============
-            (bias, slope) = veMoca.userHistory(user, currentEpochStart);
-            assertEq(bias, beforeUser.userHistory.bias, "userHistory bias unchanged");
-            assertEq(slope, beforeUser.userHistory.slope, "userHistory slope unchanged");
-            assertEq(veMoca.userSlopeChanges(user, expiry), beforeUser.userSlopeChange, "userSlopeChange unchanged");
-            assertEq(veMoca.userLastUpdatedTimestamp(user), currentEpochStart, "User lastUpdated");
-        // ============ 3.1 User VP ============
-            assertEq(veMoca.balanceOfAt(user, currentTimestamp, false), beforeUser.userCurrentVotingPower, "User VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(user, epoch, false), beforeUser.userVotingPowerAtEpochEnd, "User VP at epoch end unchanged");
-
-        // ============ 4. Delegate State (IMMEDIATE) ============
-
-            (bias, slope) = veMoca.delegateHistory(delegate, currentEpochStart);
-            assertEq(bias, beforeDelegate.delegateHistory.bias + biasDelta, "delegateHistory bias incremented");
-            assertEq(slope, beforeDelegate.delegateHistory.slope + slopeDelta, "delegateHistory slope incremented");
-            assertEq(veMoca.delegateSlopeChanges(delegate, expiry), beforeDelegate.delegateSlopeChange + slopeDelta, "delegateSlopeChange incremented");
-            assertEq(veMoca.delegateLastUpdatedTimestamp(delegate), currentEpochStart, "Delegate lastUpdated");
-        // ============ 4.1 Delegate VP ============
-            assertEq(veMoca.balanceOfAt(delegate, currentTimestamp, true), beforeDelegate.delegateCurrentVotingPower + vpDeltaNow, "Delegate VP increased");
-            assertEq(veMoca.balanceAtEpochEnd(delegate, epoch, true), beforeDelegate.delegateVotingPowerAtEpochEnd + vpDeltaEpochEnd, "Delegate VP at epoch end increased");
-
-        // ============ 5. User-Delegate Pair State (IMMEDIATE) ============
-
-            (bias, slope) = veMoca.delegatedAggregationHistory(user, delegate, currentEpochStart);
-            assertEq(bias, beforePair.delegatedAggregationHistory.bias + biasDelta, "pairHistory bias incremented");
-            assertEq(slope, beforePair.delegatedAggregationHistory.slope + slopeDelta, "pairHistory slope incremented");
-            assertEq(veMoca.userDelegatedSlopeChanges(user, delegate, expiry), beforePair.userDelegatedSlopeChange + slopeDelta, "pairSlopeChange incremented");
-
-            // Verify Pair Current VP - Should be INCREASED
-            {
-                DataTypes.VeBalance memory currentHistory; currentHistory.bias = bias; currentHistory.slope = slope;
-                assertEq(getValueAt(currentHistory, currentTimestamp), beforePair.userDelegatedCurrentVotingPower + vpDeltaNow, "Pair VP current increased");
-            }
-
-            assertEq(veMoca.getSpecificDelegatedBalanceAtEpochEnd(user, delegate, epoch), beforePair.userDelegatedVotingPowerAtEpochEnd + vpDeltaEpochEnd, "Pair VP at epoch end increased");
-            assertEq(veMoca.userDelegatedPairLastUpdatedTimestamp(user, delegate), currentEpochStart, "Pair lastUpdated");     
-
-        // ============ 6. Lock State ============
-
-            DataTypes.Lock memory lock = getLock(lockId);
-            assertEq(lock.moca, beforeLock.lock.moca + mocaAmt, "Lock moca incremented");
-            assertEq(lock.esMoca, beforeLock.lock.esMoca + esMocaAmt, "Lock esMoca incremented");
-            assertEq(lock.delegate, delegate, "Lock delegate unchanged");
-            assertEq(lock.expiry, expiry, "Lock expiry unchanged");
-
-        // ============ 7. Lock History ============
-            uint256 len = veMoca.getLockHistoryLength(lockId);
-            uint256 beforeLen = beforeLock.lockHistory.length;
-            
-            // Same epoch = overwrite existing checkpoint (length unchanged) | Different epoch = push new checkpoint (length +1)
-            if (beforeLock.lockHistory[beforeLen - 1].lastUpdatedAt == currentEpochStart) {
-                assertEq(len, beforeLen, "Lock History Length unchanged (same epoch)");
-            } else {
-                assertEq(len, beforeLen + 1, "Lock History Length incremented (new epoch)");
-            }
-
-            DataTypes.Checkpoint memory cp = getLockHistory(lockId, len - 1);
-            assertEq(cp.veBalance.bias, newLockBias, "Checkpoint bias");
-            assertEq(cp.veBalance.slope, newLockSlope, "Checkpoint slope");
-            assertEq(cp.lastUpdatedAt, currentEpochStart, "Checkpoint timestamp");
-        
-        // Lock VP
-        assertEq(veMoca.getLockVotingPowerAt(lockId, currentTimestamp), getValueAt(convertToVeBalance(lock), currentTimestamp), "Lock VP correct");
-    }
-
-    /**
-        verifyIncreaseDurationDelegated() - State Changes Summary
-        ┌──────────────┬────────────────────────────────────────────┬──────────────────────────────────────────┐
-        │ Category     │ State                                      │ Change                                   │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────┤
-        │ Tokens       │ user.balance                               │ Unchanged                                │
-        │              │ esMoca.balanceOf(user)                     │ Unchanged                                │
-        │              │ address(veMoca).balance                    │ Unchanged                                │
-        │              │ esMoca.balanceOf(veMoca)                   │ Unchanged                                │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────┤
-        │ Global       │ veGlobal.bias                              │ +biasDelta                               │
-        │              │ veGlobal.slope                             │ Unchanged                                │
-        │              │ TOTAL_LOCKED_MOCA                          │ Unchanged                                │
-        │              │ TOTAL_LOCKED_ESMOCA                        │ Unchanged                                │
-        │              │ slopeChanges[oldExpiry]                    │ −lockSlope                               │
-        │              │ slopeChanges[newExpiry]                    │ +lockSlope                               │
-        │              │ lastUpdatedTimestamp                       │ = currentEpochStart                      │
-        │              │ totalSupplyAtTimestamp                     │ +biasDelta                               │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────┤
-        │ User         │ userHistory[currentEpochStart]             │ Unchanged                                │
-        │              │ userSlopeChanges[oldExpiry]                │ Unchanged                                │
-        │              │ userSlopeChanges[newExpiry]                │ Unchanged                                │
-        │              │ balanceOfAt(user, false)                   │ Unchanged                                │
-        │              │ balanceAtEpochEnd(user, false)             │ Unchanged                                │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────┤
-        │ Delegate     │ delegateHistory[currentEpochStart].bias    │ +biasDelta                               │
-        │              │ delegateHistory[currentEpochStart].slope   │ Unchanged                                │
-        │              │ delegateSlopeChanges[oldExpiry]            │ −lockSlope                               │
-        │              │ delegateSlopeChanges[newExpiry]            │ +lockSlope                               │
-        │              │ delegateLastUpdatedTimestamp               │ = currentEpochStart                      │
-        │              │ balanceOfAt(delegate, true)                │ +biasDelta                               │
-        │              │ balanceAtEpochEnd(delegate, true)          │ +biasDelta                               │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────┤
-        │ Pair         │ delegatedAggregationHistory.bias           │ +biasDelta                               │
-        │              │ delegatedAggregationHistory.slope          │ Unchanged                                │
-        │              │ userDelegatedSlopeChanges[oldExpiry]       │ −lockSlope                               │
-        │              │ userDelegatedSlopeChanges[newExpiry]       │ +lockSlope                               │
-        │              │ getSpecificDelegatedBalanceAtEpochEnd      │ +biasDelta                               │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────┤
-        │ Lock         │ lock.moca                                  │ Unchanged                                │
-        │              │ lock.esMoca                                │ Unchanged                                │
-        │              │ lock.delegate                              │ Unchanged                                │
-        │              │ lock.expiry                                │ = newExpiry                              │
-        ├──────────────┼────────────────────────────────────────────┼──────────────────────────────────────────┤
-        │ Lock History │ lockHistory.length                         │ Same epoch: unchanged / New epoch: +1    │
-        │              │ checkpoint.bias                            │ = newBias (= lockSlope * newExpiry)      │
-        │              │ checkpoint.slope                           │ = lockSlope (Unchanged)                  │
-        │              │ getLockVotingPowerAt                       │ Increases                                │
-        └──────────────┴────────────────────────────────────────────┴──────────────────────────────────────────┘
-            
-     */
-
-    // Verifies State: increaseDuration on DELEGATED lock -> tokens (unchanged) + global + delegate (immediate) + pair (immediate) + lock
-    function verifyIncreaseDurationDelegated(UnifiedStateSnapshot memory beforeState, uint128 newExpiry) internal {
-        // Extract sub-snapshots
-        TokensSnapshot memory beforeTokens = beforeState.tokensState;
-        GlobalStateSnapshot memory beforeGlobal = beforeState.globalState;
-        UserStateSnapshot memory beforeUser = beforeState.userState;
-        LockStateSnapshot memory beforeLock = beforeState.lockState;
-        DelegateStateSnapshot memory beforeDelegate = beforeState.targetDelegateState;
-        UserDelegatePairStateSnapshot memory beforePair = beforeState.targetPairState;
-        
-        // Derive from lock
-        bytes32 lockId = beforeLock.lock.lockId;
-        uint128 oldExpiry = beforeLock.lock.expiry;
-        address user = beforeLock.lock.owner;
-        address delegate = beforeLock.lock.delegate;
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 epoch = getCurrentEpochNumber();
-        uint128 currentTimestamp = uint128(block.timestamp);
-
-        // Calculate: slope is unchanged, only bias increases due to longer duration
-        // VP delta = slope * (newExpiry - oldExpiry) = biasDelta (constant at any timestamp)
-        uint128 lockSlope = (beforeLock.lock.moca + beforeLock.lock.esMoca) / MAX_LOCK_DURATION;
-        uint128 newBias = lockSlope * newExpiry;
-        uint128 biasDelta = lockSlope * (newExpiry - oldExpiry);
-        
-        // ============ 1. Tokens (UNCHANGED) ============
-            assertEq(user.balance, beforeTokens.userMoca, "User MOCA unchanged");
-            assertEq(esMoca.balanceOf(user), beforeTokens.userEsMoca, "User esMOCA unchanged");
-            assertEq(address(veMoca).balance, beforeTokens.contractMoca, "Contract MOCA unchanged");
-            assertEq(esMoca.balanceOf(address(veMoca)), beforeTokens.contractEsMoca, "Contract esMOCA unchanged");
-
-        // ============ 2. Global State (IMMEDIATE) ============
-            (uint128 bias, uint128 slope) = veMoca.veGlobal();
-            assertEq(bias, beforeGlobal.veGlobal.bias + biasDelta, "veGlobal bias incremented");
-            assertEq(slope, beforeGlobal.veGlobal.slope, "veGlobal slope unchanged");
-            assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeGlobal.TOTAL_LOCKED_MOCA, "Total Locked MOCA unchanged");
-            assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeGlobal.TOTAL_LOCKED_ESMOCA, "Total Locked esMOCA unchanged");
-            assertEq(veMoca.slopeChanges(oldExpiry), beforeGlobal.slopeChange - lockSlope, "Global slopeChange at oldExpiry decreased");
-            assertEq(veMoca.slopeChanges(newExpiry), beforeGlobal.slopeChangeNewExpiry + lockSlope, "Global slopeChange at newExpiry increased");
-            assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global lastUpdated");
-            assertEq(veMoca.totalSupplyAtTimestamp(currentTimestamp), beforeGlobal.totalSupplyAtTimestamp + biasDelta, "Total supply VP increased");
-
-        // ============ 3. User State (UNCHANGED) ============
-            (bias, slope) = veMoca.userHistory(user, currentEpochStart);
-            assertEq(bias, beforeUser.userHistory.bias, "userHistory bias unchanged");
-            assertEq(slope, beforeUser.userHistory.slope, "userHistory slope unchanged");
-            assertEq(veMoca.userSlopeChanges(user, oldExpiry), beforeUser.userSlopeChange, "userSlopeChange at oldExpiry unchanged");
-            assertEq(veMoca.userSlopeChanges(user, newExpiry), beforeUser.userSlopeChangeNewExpiry, "userSlopeChange at newExpiry unchanged");
-            assertEq(veMoca.userLastUpdatedTimestamp(user), currentEpochStart, "User lastUpdated");
-        // ============ 3.1 User VP ============
-            assertEq(veMoca.balanceOfAt(user, currentTimestamp, false), beforeUser.userCurrentVotingPower, "User VP unchanged");
-            assertEq(veMoca.balanceAtEpochEnd(user, epoch, false), beforeUser.userVotingPowerAtEpochEnd, "User VP at epoch end unchanged");
-
-        // ============ 4. Delegate State (IMMEDIATE) ============
-            (bias, slope) = veMoca.delegateHistory(delegate, currentEpochStart);
-            assertEq(bias, beforeDelegate.delegateHistory.bias + biasDelta, "delegateHistory bias incremented");
-            assertEq(slope, beforeDelegate.delegateHistory.slope, "delegateHistory slope unchanged");
-            assertEq(veMoca.delegateSlopeChanges(delegate, oldExpiry), beforeDelegate.delegateSlopeChange - lockSlope, "delegateSlopeChange at oldExpiry decreased");
-            assertEq(veMoca.delegateSlopeChanges(delegate, newExpiry), beforeDelegate.delegateSlopeChangeNewExpiry + lockSlope, "delegateSlopeChange at newExpiry increased");
-            assertEq(veMoca.delegateLastUpdatedTimestamp(delegate), currentEpochStart, "Delegate lastUpdated");
-        // ============ 4.1 Delegate VP ============
-            assertEq(veMoca.balanceOfAt(delegate, currentTimestamp, true), beforeDelegate.delegateCurrentVotingPower + biasDelta, "Delegate VP increased");
-            assertEq(veMoca.balanceAtEpochEnd(delegate, epoch, true), beforeDelegate.delegateVotingPowerAtEpochEnd + biasDelta, "Delegate VP at epoch end increased");
-
-        // ============ 5. User-Delegate Pair State (IMMEDIATE) ============
-            (bias, slope) = veMoca.delegatedAggregationHistory(user, delegate, currentEpochStart);
-            assertEq(bias, beforePair.delegatedAggregationHistory.bias + biasDelta, "pairHistory bias incremented");
-            assertEq(slope, beforePair.delegatedAggregationHistory.slope, "pairHistory slope unchanged");
-            assertEq(veMoca.userDelegatedSlopeChanges(user, delegate, oldExpiry), beforePair.userDelegatedSlopeChange - lockSlope, "pairSlopeChange at oldExpiry decreased");
-            assertEq(veMoca.userDelegatedSlopeChanges(user, delegate, newExpiry), beforePair.userDelegatedSlopeChangeNewExpiry + lockSlope, "pairSlopeChange at newExpiry increased");
-            assertEq(veMoca.userDelegatedPairLastUpdatedTimestamp(user, delegate), currentEpochStart, "Pair lastUpdated");
-
-            // Verify Pair Current VP - Should be INCREASED
-            {
-                DataTypes.VeBalance memory currentHistory; currentHistory.bias = bias; currentHistory.slope = slope;
-                // For increaseDuration: slope is constant, so VP delta == biasDelta
-                assertEq(getValueAt(currentHistory, currentTimestamp), beforePair.userDelegatedCurrentVotingPower + biasDelta, "Pair VP current increased");
-            }
-
-        // ============ 5.1 Pair VP ============
-            assertEq(veMoca.getSpecificDelegatedBalanceAtEpochEnd(user, delegate, epoch), beforePair.userDelegatedVotingPowerAtEpochEnd + biasDelta, "Pair VP at epoch end increased");
-
-        // ============ 6. Lock State ============
-            DataTypes.Lock memory lock = getLock(lockId);
-            assertEq(lock.moca, beforeLock.lock.moca, "Lock moca unchanged");
-            assertEq(lock.esMoca, beforeLock.lock.esMoca, "Lock esMoca unchanged");
-            assertEq(lock.delegate, delegate, "Lock delegate unchanged");
-            assertEq(lock.expiry, newExpiry, "Lock expiry updated");
-
-        // ============ 7. Lock History ============
-            uint256 len = veMoca.getLockHistoryLength(lockId);
-            uint256 beforeLen = beforeLock.lockHistory.length;
-            
-            // Same epoch = overwrite existing checkpoint (length unchanged) | Different epoch = push new checkpoint (length +1)
-            if (beforeLock.lockHistory[beforeLen - 1].lastUpdatedAt == currentEpochStart) {
-                assertEq(len, beforeLen, "Lock History Length unchanged (same epoch)");
-            } else {
-                assertEq(len, beforeLen + 1, "Lock History Length incremented (new epoch)");
-            }
-
-            DataTypes.Checkpoint memory cp = getLockHistory(lockId, len - 1);
-            assertEq(cp.veBalance.bias, newBias, "Checkpoint bias");
-            assertEq(cp.veBalance.slope, lockSlope, "Checkpoint slope unchanged");
-            assertEq(cp.lastUpdatedAt, currentEpochStart, "Checkpoint timestamp");
-        
-        // Lock VP
-        assertEq(veMoca.getLockVotingPowerAt(lockId, currentTimestamp), getValueAt(convertToVeBalance(lock), currentTimestamp), "Lock VP correct");
-    }
-
-    /**
-        Key differences from verifyIncreaseDurationDelegated:
-        ┌─────────────────┬──────────────────────────────────────────────┬──────────────────────────────────────────────────────────┐
-        │ Aspect          │ increaseAmount                               │ increaseDuration                                         │
-        ├─────────────────┼──────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Tokens          │ User pays, contract receives                 │ Unchanged                                                │
-        ├─────────────────┼──────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Global slope    │ Increases by slopeDelta                      │ Unchanged                                                │
-        ├─────────────────┼──────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Delegate slope  │ Increases by slopeDelta                      │ Unchanged                                                │
-        ├─────────────────┼──────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Pair slope      │ Increases by slopeDelta                      │ Unchanged                                                │
-        ├─────────────────┼──────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ TOTAL_LOCKED    │ Increases                                    │ Unchanged                                                │
-        ├─────────────────┼──────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ slopeChanges    │ Only at expiry (increases)                   │ At oldExpiry (decreases) AND newExpiry (increases)       │
-        ├─────────────────┼──────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Lock amounts    │ Increases                                    │ Unchanged                                                │
-        ├─────────────────┼──────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-        │ Lock expiry     │ Unchanged                                    │ Increases                                                │
-        └─────────────────┴──────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘
-     */
-
 }
+
 
 contract StateE1_Deploy_Test is StateE1_Deploy {
     using stdStorage for StdStorage;
@@ -1466,7 +169,7 @@ abstract contract StateE1_RegisterDelegate_User3 is StateE1_User1_CreateLock1 {
         vm.prank(votingEscrowMocaAdmin);
         veMoca.setVotingController(MOCK_VC);
 
-        // 2. Register User2 and User3 as delegates
+        // 2. Register User3 as delegates
         vm.startPrank(MOCK_VC);
         veMoca.delegateRegistrationStatus(user3, true);
         vm.stopPrank();
@@ -1478,6 +181,7 @@ abstract contract StateE1_RegisterDelegate_User3 is StateE1_User1_CreateLock1 {
     }
 }
 
+//note: user 3 is registered as delegate [has no delegated locks]
 contract StateE1_RegisterDelegate_User3_Test is StateE1_RegisterDelegate_User3 {
 
     function test_User3_IsRegisteredDelegate() public {
@@ -1506,7 +210,7 @@ contract StateE1_RegisterDelegate_User3_Test is StateE1_RegisterDelegate_User3 {
     
         function test_User1_DelegateLock1_ToUser3() public {
             // 1. Capture before state
-            UnifiedStateSnapshot memory beforeState = captureAllStates(
+            UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(
                 user1,           // user
                 lock1_Id,        // lockId
                 lock1_Expiry,    // expiry
@@ -1548,227 +252,1550 @@ contract StateE1_RegisterDelegate_User3_Test is StateE1_RegisterDelegate_User3 {
         }
 }
 
+//note: user 1 delegates lock1 to user 3, in E1
 abstract contract StateE1_User1_DelegateLock1_ToUser3 is StateE1_RegisterDelegate_User3 {
 
+    UnifiedStateSnapshot public epoch1_BeforeDelegateLock1;
+    UnifiedStateSnapshot public epoch1_AfterDelegateLock1;
+    
     function setUp() public virtual override {
         super.setUp();
 
+        // 1) Capture State
+        epoch1_BeforeDelegateLock1 = captureAllStatesPlusDelegates(user1, lock1_Id, lock1_Expiry, 0, user3, address(0));
+
+        // 2) Execute Delegation
         vm.startPrank(user1);
             veMoca.delegateLock(lock1_Id, user3);
         vm.stopPrank();
+
+        // 3) Capture State
+        epoch1_AfterDelegateLock1 = captureAllStatesPlusDelegates(user1, lock1_Id, lock1_Expiry, 0, user3, address(0));
     }
 }
 
 contract StateE1_User1_DelegateLock1_ToUser3_Test is StateE1_User1_DelegateLock1_ToUser3 {
 
-    function test_User1_DelegateLock1_ToUser3() public {
-        assertEq(veMoca.balanceAtEpochEnd(user1, getCurrentEpochNumber(), false), 0, "User1 must have 0 balance at epoch end");
-        assertEq(veMoca.balanceAtEpochEnd(user3, getCurrentEpochNumber(), false), 0, "User3 must have 0 balance at epoch end");
+    function test_DelegateLock1_ToUser3() public {
+        // 1) Verify State Changes
+        verifyDelegateLock(epoch1_BeforeDelegateLock1, user3);
     }
 
+    /**
+     * Test verifies user1's voting power in E1 after delegating lock1 to user3:
+     * 
+     * 1. Delegation is pending - takes effect in E2
+     * 2. User1 retains full voting power from lock1 in E1
+     * 3. User1's personal balance equals lock1's VP at epoch end
+     * 4. User1's delegated balance is 0 (delegation not yet active)
+     * 5. Lock1's VP calculation is correct and unchanged by delegation
+     * 6. User1's total balance (personal + delegated) equals lock1 VP
+     */
+    function test_User1_VotingPower_AfterDelegation_E1() public {
+        uint128 currentEpoch = getCurrentEpochNumber();
+        assertEq(currentEpoch, 1, "Current epoch is E1");
+        
+        uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
+        
+        // ============ 1. Lock1 Voting Power ============
+        uint128 lock1VotingPowerAtEnd = veMoca.getLockVotingPowerAt(lock1_Id, epochEndTimestamp);
+        
+        // Calculate expected lock1 VP from veBalance
+        uint128 expectedLock1VP = getValueAt(lock1_VeBalance, epochEndTimestamp);
+        assertEq(lock1VotingPowerAtEnd, expectedLock1VP, "Lock1 VP at epoch end matches expected");
+        assertGt(lock1VotingPowerAtEnd, 0, "Lock1 has voting power at E1 end");
+        
+        // ============ 2. User1 Personal Balance (excludeDelegated = false) ============
+        uint128 user1PersonalBalance = veMoca.balanceAtEpochEnd(user1, currentEpoch, false);
+        
+        // User1 should still have full voting power from lock1 in E1 (delegation pending)
+        assertEq(user1PersonalBalance, lock1VotingPowerAtEnd, "User1 personal balance equals lock1 VP (delegation pending)");
+        assertGt(user1PersonalBalance, 0, "User1 has voting power in E1");
+        
+        // ============ 3. User1 Delegated Balance (excludeDelegated = true) ============
+        uint128 user1DelegatedBalance = veMoca.balanceAtEpochEnd(user1, currentEpoch, true);
+        
+        // User1 has no delegated balance in E1 (no one has delegated to user1)
+        assertEq(user1DelegatedBalance, 0, "User1 has no delegated balance in E1");
+        
+        // ============ 4. Verify Lock State ============
+        DataTypes.Lock memory lock1 = getLock(lock1_Id);
+        assertEq(lock1.delegate, user3, "Lock1 is delegated to user3");
+        assertEq(lock1.owner, user1, "Lock1 owner is still user1");
+        assertFalse(lock1.isUnlocked, "Lock1 is not unlocked");
+        
+        // ============ 5. Cross-check with current timestamp ============
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 user1BalanceNow = veMoca.balanceOfAt(user1, currentTimestamp, false);
+        uint128 lock1VotingPowerNow = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
+        
+        assertEq(user1BalanceNow, lock1VotingPowerNow, "User1 current balance equals lock1 current VP");
+        assertGt(user1BalanceNow, 0, "User1 has voting power at current timestamp");
+    }
 
-    // --- state transition: cronjob updates state ----
-    function test_CronJobUpdatesState_UpdateAccountsAndPendingDeltas_E2() public {
-        // warp to be within Epoch 2: to check delegation impact
+    
+    /**
+     * Test verifies user3's voting power state in E1 after lock1 delegation:
+     * 1. User3 has no delegated voting power in E1 (delegation pending, takes effect in E2)
+     * 2. User3 has no personal voting power (no locks owned)
+     * 3. User3's total balance is 0 at epoch end
+     * 4. User3's current balance is also 0
+     * 5. Pending delegation delta is correctly booked for E2
+     */
+    function test_User3_VotingPower_AfterDelegation_E1() public {
+        uint128 currentEpoch = getCurrentEpochNumber();
+        assertEq(currentEpoch, 1, "Current epoch is E1");
+        
+        uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
+        uint128 currentTimestamp = uint128(block.timestamp);
+        
+        // ============ 1. User3 Delegated Balance (excludeDelegated = true) ============
+        uint128 user3DelegatedBalance = veMoca.balanceAtEpochEnd(user3, currentEpoch, true);
+        assertEq(user3DelegatedBalance, 0, "User3 has no delegated balance in E1 (delegation pending)");
+        
+        // ============ 2. User3 Personal Balance (excludeDelegated = false) ============
+        uint128 user3PersonalBalance = veMoca.balanceAtEpochEnd(user3, currentEpoch, false);
+        assertEq(user3PersonalBalance, 0, "User3 has no personal balance in E1 (no locks owned)");
+        
+        // ============ 3. User3 Current Balance ============
+        uint128 user3BalanceNow = veMoca.balanceOfAt(user3, currentTimestamp, false);
+        assertEq(user3BalanceNow, 0, "User3 has no voting power at current timestamp");
+        
+        uint128 user3DelegatedNow = veMoca.balanceOfAt(user3, currentTimestamp, true);
+        assertEq(user3DelegatedNow, 0, "User3 has no delegated voting power at current timestamp");
+        
+        // ============ 4. Verify Pending Delegation Delta for E2 ============
+        uint128 nextEpochStart = getCurrentEpochStart() + EPOCH_DURATION;
+        (bool hasAdd, , DataTypes.VeBalance memory additions, ) = veMoca.delegatePendingDeltas(user3, nextEpochStart);
+        
+        assertTrue(hasAdd, "User3 has pending addition for E2");
+        assertEq(additions.bias, lock1_VeBalance.bias, "Pending addition bias matches lock1");
+        assertEq(additions.slope, lock1_VeBalance.slope, "Pending addition slope matches lock1");
+        
+        // ============ 5. Verify User3 is Registered Delegate ============
+        assertTrue(veMoca.isRegisteredDelegate(user3), "User3 is registered as delegate");
+    }
+
+    // ---- state_transition to E2: cross an epoch boundary; to check totalSupplyAt and pending deltas  ----
+    function test_CronJob_UpdateAccountsAndPendingDeltas_E2() public {
+        
+        // ============ 1. Capture State Before Update ============
+        UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(user1, lock1_Id, lock1_Expiry, 0, user3, address(0));
+
+        // ============ 2. Warp to E2 start ============
         uint128 epoch2StartTimestamp = uint128(getEpochStartTimestamp(2));
         vm.warp(epoch2StartTimestamp + 1);
         assertEq(getCurrentEpochNumber(), 2, "Current epoch number is 2");
-        
-        // cronjob update State: updateAccountsAndPendingDeltas
+
+        // ============ 3. Execute Cronjob Update ============
         vm.startPrank(cronJob);
-            address[] memory accounts = new address[](1);   
+            // update users' personal accounts
+            address[] memory accounts = new address[](2);
             accounts[0] = user1;
+            accounts[1] = user3;
             veMoca.updateAccountsAndPendingDeltas(accounts, false);
+
+            // update users' delegate accounts
+            address[] memory delegateAccounts = new address[](2);
+            delegateAccounts[0] = user1;
+            delegateAccounts[1] = user3;
+            veMoca.updateAccountsAndPendingDeltas(delegateAccounts, true);
+
+            // update user1->user3 delegate pair
+            address[] memory users = new address[](1);
+            address[] memory delegates = new address[](1);
+            users[0] = user1;
+            delegates[0] = user3;
+            veMoca.updateDelegatePairs(users, delegates);
         vm.stopPrank();
+        
+        // ============ 4. Capture State After Update ============
+        UnifiedStateSnapshot memory afterState = captureAllStatesPlusDelegates(user1, lock1_Id, lock1_Expiry, 0, user3, address(0));
+
+        // ============ 5. Verify Lock State Changes ============
+            uint128 epoch2EndTimestamp = uint128(getEpochEndTimestamp(2));
+            // Calculate expected lock1 VP at current timestamp
+            uint128 expectedLock1CurrentVp = getValueAt(lock1_VeBalance, uint128(block.timestamp));
+            uint128 expectedLock1VpAtEpochEnd = getValueAt(lock1_VeBalance, epoch2EndTimestamp);
+            assertEq(afterState.lockState.lockCurrentVotingPower, expectedLock1CurrentVp, "Lock1 VP = lock1 VP");          
+            assertEq(afterState.lockState.lockVotingPowerAtEpochEnd, expectedLock1VpAtEpochEnd, "Lock1 VP at epoch end = lock1 VP at epoch end");
+
+        // ============ 6. Verify User1 State Changes ============
+            // User1's personal VP should be 0 after delegation takes effect
+            assertEq(afterState.userState.userCurrentVotingPower, 0, "User1 personal VP after = 0 (delegated away)");
+            assertEq(afterState.userState.userDelegatedVotingPower, 0, "User1 delegated VP after = 0");
+        
+        // ============ 7. Verify User3 State Changes ============
+            
+            // User3's delegated VP should equal lock1's VP after delegation takes effect
+            assertEq(afterState.targetDelegateState.delegateCurrentVotingPower, expectedLock1CurrentVp, "User3 delegated VP = lock1 VP");
+            assertEq(afterState.targetDelegateState.delegateVotingPowerAtEpochEnd, expectedLock1VpAtEpochEnd, "User3 delegated VP at epoch end = lock1 VP at epoch end");
+            
+            // User3's personal VP should be 0 
+            assertEq(afterState.userState.userCurrentVotingPower, 0, "User3 personal VP = 0");
+        
+        // ============ 8. Verify Pending Deltas Cleared ============
+        
+            // User1: pending subtraction should be cleared
+            (bool user1HasSub, bool user1HasAdd, DataTypes.VeBalance memory user1Additions, DataTypes.VeBalance memory user1Subtractions) = veMoca.userPendingDeltas(user1, epoch2StartTimestamp);
+            assertFalse(user1HasSub, "User1 pending subtraction cleared");
+            assertFalse(user1HasAdd, "User1 has no pending addition");
+            assertEq(user1Additions.bias, 0, "User1 additions bias = 0");
+            assertEq(user1Additions.slope, 0, "User1 additions slope = 0");
+            assertEq(user1Subtractions.bias, 0, "User1 subtractions bias = 0");
+            assertEq(user1Subtractions.slope, 0, "User1 subtractions slope = 0");
+            
+            // User3: pending addition should be cleared
+            (bool user3HasSub, bool user3HasAdd, DataTypes.VeBalance memory user3Additions, DataTypes.VeBalance memory user3Subtractions) = veMoca.delegatePendingDeltas(user3, epoch2StartTimestamp);
+            assertFalse(user3HasSub, "User3 has no pending subtraction");
+            assertFalse(user3HasAdd, "User3 pending addition cleared");
+            assertEq(user3Additions.bias, 0, "User3 additions bias = 0");
+            assertEq(user3Additions.slope, 0, "User3 additions slope = 0");
+            assertEq(user3Subtractions.bias, 0, "User3 subtractions bias = 0");
+            assertEq(user3Subtractions.slope, 0, "User3 subtractions slope = 0");
+
+        // ============ 9. Verify: Bias & slope would not change [since no new locks created] ============
+            assertEq(afterState.globalState.veGlobal.bias, beforeState.globalState.veGlobal.bias, "veGlobal bias");
+            assertEq(afterState.globalState.veGlobal.slope, beforeState.globalState.veGlobal.slope, "veGlobal slope");
+        
+        // ============ 10. Verify: totalSupplyAt is > 0 after epoch boundary (calculated) & (veMoca.totalSupplyAtTimestamp()) ============
+            uint128 Lock1VpAtE2Start = getValueAt(lock1_VeBalance, epoch2StartTimestamp);
+
+            assertEq(afterState.globalState.totalSupplyAt, beforeState.globalState.totalSupplyAt + Lock1VpAtE2Start, "totalSupplyAt is > 0 after epoch boundary (calculated)");
+            assertEq(afterState.globalState.totalSupplyAt, veMoca.totalSupplyAtTimestamp(epoch2StartTimestamp), "totalSupplyAt is > 0 after epoch boundary (veMoca.totalSupplyAtTimestamp())");
     }
 }
 
 
+// =====================================================
+// ================= EPOCH 2 - DELEGATION TAKES EFFECT =================
+// =====================================================
 
-/*
-abstract contract StateE1_User1_DelegateLock1_ToUser3 is StateE1_RegisterDelegate_User3 {
+// note: warp to E2; check that delegation pending deltas take effect
+abstract contract StateE2_Lock1DelegationTakesEffect is StateE1_User1_DelegateLock1_ToUser3 {
     
-    GlobalStateSnapshot public epoch1_GlobalState_AfterLock1Creation;
-    GlobalStateSnapshot public epoch2_GlobalState_AfterCronJobUpdate;
+    // Saved state snapshots for verification
+    GlobalStateSnapshot public epoch1_GlobalState;
     
     function setUp() public virtual override {
         super.setUp();
         
-        // capture state before cronJob update
-        epoch1_GlobalState_AfterLock1Creation = captureGlobalState(lock1_Expiry, 0);
-
-
-        // 1. delegate lock
-        vm.startPrank(user1);
-            veMoca.delegateLock(lock1_Id, user3);
-        vm.stopPrank();
-
-        // 2. warp to be within Epoch 2: to check delegation impact
+        // Capture E1 state before warping
+        epoch1_GlobalState = captureGlobalState(lock1_Expiry, 0);
+        
+        // Warp to E2 start
         uint128 epoch2StartTimestamp = uint128(getEpochStartTimestamp(2));
         vm.warp(epoch2StartTimestamp + 1);
         assertEq(getCurrentEpochNumber(), 2, "Current epoch number is 2");
 
-        // 3. perform cronjob update State: updateAccountsAndPendingDeltas + updateDelegatePairs
+        // ============ Execute Cronjob Update ============
         vm.startPrank(cronJob);
-            // update user
-            address[] memory accounts = new address[](1);
+            // update users' personal accounts
+            address[] memory accounts = new address[](2);
             accounts[0] = user1;
+            accounts[1] = user3;
             veMoca.updateAccountsAndPendingDeltas(accounts, false);
 
-            // update user-delegate pair
+            // update users' delegate accounts
+            address[] memory delegateAccounts = new address[](2);
+            delegateAccounts[0] = user1;
+            delegateAccounts[1] = user3;
+            veMoca.updateAccountsAndPendingDeltas(delegateAccounts, true);
+
+            // update user1->user3 delegate pair
+            address[] memory users = new address[](1);
+            address[] memory delegates = new address[](1);
+            users[0] = user1;
+            delegates[0] = user3;
+            veMoca.updateDelegatePairs(users, delegates);
+        vm.stopPrank();
+        
+    }
+}
+
+contract StateE2_Lock1DelegationTakesEffect_Test is StateE2_Lock1DelegationTakesEffect {
+
+    // Verify state AFTER cronjob has run (delegation takes effect)
+    function test_CronJob_UpdateAccountsAndPendingDeltas() public {
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 epoch2StartTimestamp = uint128(getEpochStartTimestamp(2));
+
+        // ============ 1. Calculate Expected Lock1 VP at current time ============
+        uint128 expectedLock1Vp = getValueAt(lock1_VeBalance, currentTimestamp);
+
+        // ============ 2. Verify User1 State (Delegation subtracted from personal) ============
+        uint128 user1PersonalVp = veMoca.balanceOfAt(user1, currentTimestamp, false);
+        uint128 user1DelegatedVp = veMoca.balanceOfAt(user1, currentTimestamp, true);
+        
+        // User1 personal VP = 0 (lock1 was delegated away)
+        assertEq(user1PersonalVp, 0, "User1 personal VP = 0 (delegated away)");
+        // User1 delegated VP = 0 (user1 is not a delegate)
+        assertEq(user1DelegatedVp, 0, "User1 delegated VP = 0");
+
+        // ============ 3. Verify User3 State (Delegation added to delegated) ============
+        uint128 user3PersonalVp = veMoca.balanceOfAt(user3, currentTimestamp, false);
+        uint128 user3DelegatedVp = veMoca.balanceOfAt(user3, currentTimestamp, true);
+        
+        // User3 personal VP = 0 (no personal locks)
+        assertEq(user3PersonalVp, 0, "User3 personal VP = 0");
+        // User3 delegated VP = lock1 VP (received delegation)
+        assertEq(user3DelegatedVp, expectedLock1Vp, "User3 delegated VP = lock1 VP");
+
+        // ============ 4. Verify Pending Deltas are Cleared ============
+        
+        // User1: pending subtraction should be cleared (applied during cronjob)
+        (bool user1HasAdd, bool user1HasSub, DataTypes.VeBalance memory user1Additions, DataTypes.VeBalance memory user1Subtractions) = veMoca.userPendingDeltas(user1, epoch2StartTimestamp);
+        assertFalse(user1HasAdd, "User1 has no pending addition");
+        assertFalse(user1HasSub, "User1 pending subtraction cleared");
+        assertEq(user1Additions.bias, 0, "User1 additions bias = 0");
+        assertEq(user1Additions.slope, 0, "User1 additions slope = 0");
+        assertEq(user1Subtractions.bias, 0, "User1 subtractions bias = 0");
+        assertEq(user1Subtractions.slope, 0, "User1 subtractions slope = 0");
+        
+        // User3 (as delegate): pending addition should be cleared
+        (bool user3HasAdd, bool user3HasSub, DataTypes.VeBalance memory user3Additions, DataTypes.VeBalance memory user3Subtractions) = veMoca.delegatePendingDeltas(user3, epoch2StartTimestamp);
+        assertFalse(user3HasAdd, "User3 pending addition cleared");
+        assertFalse(user3HasSub, "User3 has no pending subtraction");
+        assertEq(user3Additions.bias, 0, "User3 additions bias = 0");
+        assertEq(user3Additions.slope, 0, "User3 additions slope = 0");
+        assertEq(user3Subtractions.bias, 0, "User3 subtractions bias = 0");
+        assertEq(user3Subtractions.slope, 0, "User3 subtractions slope = 0");
+
+        // ============ 5. Verify User-Delegate Pair Pending Deltas Cleared ============
+        (bool pairHasAdd, bool pairHasSub, DataTypes.VeBalance memory pairAdditions, DataTypes.VeBalance memory pairSubtractions) = veMoca.userPendingDeltasForDelegate(user1, user3, epoch2StartTimestamp);
+        assertFalse(pairHasAdd, "User1-User3 pair pending addition cleared");
+        assertFalse(pairHasSub, "User1-User3 pair has no pending subtraction");
+        assertEq(pairAdditions.bias, 0, "Pair additions bias = 0");
+        assertEq(pairAdditions.slope, 0, "Pair additions slope = 0");
+        assertEq(pairSubtractions.bias, 0, "Pair subtractions bias = 0");
+        assertEq(pairSubtractions.slope, 0, "Pair subtractions slope = 0");
+    }
+
+    function test_TotalSupplyAt_E1_Finalized() public {
+        // After crossing epoch boundary and updating (done in setUp), 
+        // totalSupplyAt[E1End] should be finalized (E1->E2 boundary crossed)
+        uint128 epoch2Start = uint128(getEpochStartTimestamp(2));
+        uint128 totalSupplyAtE2 = veMoca.totalSupplyAt(epoch2Start);
+        uint128 expectedTotalSupply = getValueAt(epoch1_GlobalState.veGlobal, epoch2Start);
+        assertEq(totalSupplyAtE2, expectedTotalSupply, "totalSupplyAt[E1End] should be finalized");
+    }
+
+    // ============ View Function Tests ============
+
+        function test_BalanceOfAt_AfterDelegationTakesEffect() public {
+            // user1 personal VP = 0 (delegated away)
+            uint128 user1PersonalVp = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
+            assertEq(user1PersonalVp, 0, "User1 personal VP should be 0");
+            
+            // user3 delegated VP = lock1 VP
+            uint128 user3DelegatedVp = veMoca.balanceOfAt(user3, uint128(block.timestamp), true);
+            uint128 expectedVp = getValueAt(lock1_VeBalance, uint128(block.timestamp));
+            assertEq(user3DelegatedVp, expectedVp, "User3 delegated VP should equal lock1 VP");
+            
+            // user3 personal VP = 0 (has no personal locks)
+            uint128 user3PersonalVp = veMoca.balanceOfAt(user3, uint128(block.timestamp), false);
+            assertEq(user3PersonalVp, 0, "User3 personal VP should be 0");
+        }
+
+        function test_BalanceAtEpochEnd_E2() public {
+            uint128 currentEpoch = getCurrentEpochNumber();
+            uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
+            
+            // user1 balanceAtEpochEnd (personal) = 0
+            uint128 user1BalanceAtEnd = veMoca.balanceAtEpochEnd(user1, currentEpoch, false);
+            assertEq(user1BalanceAtEnd, 0, "User1 balanceAtEpochEnd should be 0");
+            
+            // user3 balanceAtEpochEnd (delegated) = lock1 VP at epoch end
+            uint128 user3DelegatedAtEnd = veMoca.balanceAtEpochEnd(user3, currentEpoch, true);
+            uint128 expectedVpAtEnd = getValueAt(lock1_VeBalance, epochEndTimestamp);
+            assertEq(user3DelegatedAtEnd, expectedVpAtEnd, "User3 delegated balanceAtEpochEnd should equal lock1 VP at epoch end");
+        }
+
+        function test_GetSpecificDelegatedBalanceAtEpochEnd() public {
+            uint128 currentEpoch = getCurrentEpochNumber();
+            uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
+            
+            // user1->user3 specific delegated balance at epoch end
+            uint128 specificDelegatedBalance = veMoca.getSpecificDelegatedBalanceAtEpochEnd(user1, user3, currentEpoch);
+            uint128 expectedVp = getValueAt(lock1_VeBalance, epochEndTimestamp);
+            assertEq(specificDelegatedBalance, expectedVp, "Specific delegated balance should equal lock1 VP");
+        }
+
+        function test_GetLockVotingPowerAt() public {
+            uint128 currentTimestamp = uint128(block.timestamp);
+            uint128 lockVp = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
+            uint128 expectedVp = getValueAt(lock1_VeBalance, currentTimestamp);
+            assertEq(lockVp, expectedVp, "Lock VP should match calculated value");
+        }
+
+    // ============ Negative Tests ============
+
+        function testRevert_NonCronJobCannotUpdateAccounts() public {
+            address[] memory accounts = new address[](1);
+            accounts[0] = user1;
+            
+            vm.expectRevert();
+            vm.prank(user1);
+            veMoca.updateAccountsAndPendingDeltas(accounts, false);
+        }
+
+        function testRevert_NonCronJobCannotUpdateDelegatePairs() public {
+            address[] memory users = new address[](1);
+            users[0] = user1;
+            address[] memory delegates = new address[](1);
+            delegates[0] = user3;
+            
+            vm.expectRevert();
+            vm.prank(user1);
+            veMoca.updateDelegatePairs(users, delegates);
+        }
+
+        function testRevert_User1_CannotSwitchDelegate_Lock1() public {
+            // lock1 expires at E3, currently in E2
+            // After delegating in E1, user1 has used 1 delegate action
+            // Cannot switchDelegate as only 1 action allowed per epoch remaining
+            
+            // First register user2 as delegate
+            vm.prank(MOCK_VC);
+            veMoca.delegateRegistrationStatus(user2, true);
+            
+            vm.expectRevert(Errors.LockExpiresTooSoon.selector);
+            vm.prank(user1);
+            veMoca.switchDelegate(lock1_Id, user2);
+        }
+
+        function testRevert_User1_CannotUndelegate_Lock1() public {
+            // Same reason as above - action limit in final epoch before expiry
+            vm.expectRevert(Errors.LockExpiresTooSoon.selector);
+            vm.prank(user1);
+            veMoca.undelegateLock(lock1_Id);
+        }
+
+    // ============ State Transition Test ============
+
+        function test_StateTransition_User1_CreatesLock2() public {
+            
+            // Setup: fund user1 for lock2
+            vm.startPrank(user1);
+                vm.deal(user1, 400 ether);
+                esMoca.escrowMoca{value: 200 ether}();
+                esMoca.approve(address(veMoca), 200 ether);
+            vm.stopPrank();
+            
+            // Lock2 parameters: long duration (expires E10)
+            uint128 lock2Expiry = uint128(getEpochEndTimestamp(10));
+            uint128 lock2MocaAmount = 200 ether;
+            uint128 lock2EsMocaAmount = 200 ether;
+            bytes32 expectedLock2Id = generateLockId(block.number, user1);
+            
+            // Capture state before
+            UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(user1, expectedLock2Id, lock2Expiry, 0, user3, address(0));
+            
+            // Execute: create lock2 and delegate to user3
+            vm.startPrank(user1);
+                bytes32 lock2Id = veMoca.createLock{value: lock2MocaAmount}(lock2Expiry, lock2EsMocaAmount);
+                veMoca.delegateLock(lock2Id, user3);
+            vm.stopPrank();
+            
+            // Verify lock created
+            DataTypes.Lock memory lock2 = getLock(lock2Id);
+            assertEq(lock2.owner, user1, "Lock2 owner");
+            assertEq(lock2.delegate, user3, "Lock2 delegate");
+            assertEq(lock2.moca, lock2MocaAmount, "Lock2 moca");
+            assertEq(lock2.esMoca, lock2EsMocaAmount, "Lock2 esMoca");
+            assertEq(lock2.expiry, lock2Expiry, "Lock2 expiry");
+        }
+
+}
+
+/*
+// =====================================================
+// ================= EPOCH 2 - USER1 CREATES LOCK2 =================
+// =====================================================
+
+// note: user1 creates lock2 with long duration, delegates to user3
+// lock1: expires E3, delegated to user3
+// lock2: expires E10, delegated to user3
+abstract contract StateE2_User1_CreatesLock2 is StateE2_Lock1DelegationTakesEffect {
+    
+    bytes32 public lock2_Id;
+    uint128 public lock2_Expiry;
+    uint128 public lock2_MocaAmount;
+    uint128 public lock2_EsMocaAmount;
+    DataTypes.VeBalance public lock2_VeBalance;
+    
+    // Captured state before lock2 creation (for verification)
+    UnifiedStateSnapshot public stateBeforeLock2Creation;
+    
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // Apply E1 delegation (bring state up to date before new actions)
+        vm.startPrank(cronJob);
+            address[] memory accounts = new address[](2);
+            accounts[0] = user1;
+            accounts[1] = user3;
+            veMoca.updateAccountsAndPendingDeltas(accounts, false);
+            
             address[] memory users = new address[](1);
             users[0] = user1;
             address[] memory delegates = new address[](1);
             delegates[0] = user3;
             veMoca.updateDelegatePairs(users, delegates);
-
         vm.stopPrank();
-
-        // capture after state
-        epoch2_GlobalState_AfterCronJobUpdate = captureGlobalState(lock1_Expiry, 0);
-
-
+        
+        // Lock2 parameters: long duration (expires E10)
+        lock2_Expiry = uint128(getEpochEndTimestamp(10));
+        lock2_MocaAmount = 200 ether;
+        lock2_EsMocaAmount = 200 ether;
+        
+        // Fund user1 for lock2
+        vm.startPrank(user1);
+            vm.deal(user1, 400 ether);
+            esMoca.escrowMoca{value: lock2_EsMocaAmount}();
+            esMoca.approve(address(veMoca), lock2_EsMocaAmount);
+        vm.stopPrank();
+        
+        // Capture state before lock2 creation
+        bytes32 expectedLock2Id = generateLockId(block.number, user1);
+        stateBeforeLock2Creation = captureAllStatesPlusDelegates(user1, expectedLock2Id, lock2_Expiry, 0, user3, address(0));
+        
+        // Create lock2 and delegate to user3
+        vm.startPrank(user1);
+            lock2_Id = veMoca.createLock{value: lock2_MocaAmount}(lock2_Expiry, lock2_EsMocaAmount);
+            veMoca.delegateLock(lock2_Id, user3);
+        vm.stopPrank();
+        
+        // Capture lock2 veBalance
+        lock2_VeBalance = veMoca.getLockVeBalance(lock2_Id);
     }
 }
 
-contract StateE2_CronJobUpdatesState is StateE1_User1_DelegateLock1_ToUser3 {
+contract StateE2_User1_CreatesLock2_Test is StateE2_User1_CreatesLock2 {
 
-    function test_totalSupplyAt_CronJobUpdatesState_E2() public {
-        assertEq(getCurrentEpochNumber(), 2, "Current epoch number is 2");
+    // ============ Lock Creation State Tests ============
+
+    function test_Lock2_Created() public {
+        DataTypes.Lock memory lock = getLock(lock2_Id);
+        assertEq(lock.owner, user1, "Lock2 owner");
+        assertEq(lock.delegate, user3, "Lock2 delegate");
+        assertEq(lock.moca, lock2_MocaAmount, "Lock2 moca");
+        assertEq(lock.esMoca, lock2_EsMocaAmount, "Lock2 esMoca");
+        assertEq(lock.expiry, lock2_Expiry, "Lock2 expiry");
+        assertFalse(lock.isUnlocked, "Lock2 not unlocked");
+    }
+
+    function test_GlobalState_TwoLocks() public {
+        // Verify TOTAL_LOCKED reflects both locks
+        uint128 expectedTotalMoca = lock1_MocaAmount + lock2_MocaAmount;
+        uint128 expectedTotalEsMoca = lock1_EsMocaAmount + lock2_EsMocaAmount;
         
-        // get global states (already GlobalStateSnapshot, not UnifiedStateSnapshot)
-        GlobalStateSnapshot memory beforeGlobal = epoch1_GlobalState_AfterLock1Creation;
-        GlobalStateSnapshot memory afterGlobal = epoch2_GlobalState_AfterCronJobUpdate;
-
-        // before: totalSupplyAt is 0; first update cycle has no locks
-        assertEq(beforeGlobal.totalSupplyAt, 0, "before: totalSupplyAt is 0");
-
-        // get epoch 2 start timestamp
-        uint128 epoch2StartTimestamp = uint128(getEpochStartTimestamp(2));
-
-        // calc. expected totalSupplyAt [decays bias to epoch2StartTimestamp]
-        uint128 expectedTotalSupplyAt = getValueAt(afterGlobal.veGlobal, epoch2StartTimestamp);
-
-        // after: totalSupplyAt is > 0; 2nd update registers lock1's veBalance 
-        // totalSupplyAt: calculated & veMoca.totalSupplyAtTimestamp()
-        assertEq(afterGlobal.totalSupplyAt, expectedTotalSupplyAt, "totalSupplyAt is > 0 after epoch boundary (calculated)");
-        assertEq(afterGlobal.totalSupplyAt, veMoca.totalSupplyAtTimestamp(epoch2StartTimestamp), "totalSupplyAt is > 0 after epoch boundary (veMoca.totalSupplyAtTimestamp())");
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), expectedTotalMoca, "Total locked MOCA");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), expectedTotalEsMoca, "Total locked esMOCA");
         
-        // veGlobal: bias & slope are always up to date; does not have an epoch lag like totalSupplyAt[]
-        assertEq(afterGlobal.veGlobal.bias, beforeGlobal.veGlobal.bias, "veGlobal bias");
-        assertEq(afterGlobal.veGlobal.slope, beforeGlobal.veGlobal.slope, "veGlobal slope");
+        // Verify veGlobal reflects both locks
+        (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
+        
+        uint128 expectedSlope = lock1_VeBalance.slope + lock2_VeBalance.slope;
+        assertEq(globalSlope, expectedSlope, "Global slope should be sum of both locks");
+    }
+
+    function test_Lock2_DelegationPendingDeltas_Booked() public {
+        // Verify pending deltas are booked for next epoch (delegation takes effect next epoch)
+        uint128 nextEpochStart = getCurrentEpochStart() + EPOCH_DURATION;
+        
+        // User pending subtraction should be booked
+        (bool hasAdd, bool hasSub, DataTypes.VeBalance memory additions, DataTypes.VeBalance memory subtractions) 
+            = veMoca.userPendingDeltas(user1, nextEpochStart);
+        assertTrue(hasSub, "User pending subtraction booked");
+        assertEq(subtractions.slope, lock2_VeBalance.slope, "User pending sub slope = lock2 slope");
+        
+        // Delegate pending addition should be booked
+        (hasAdd, hasSub, additions, subtractions) = veMoca.delegatePendingDeltas(user3, nextEpochStart);
+        assertTrue(hasAdd, "Delegate pending addition booked");
+        assertEq(additions.slope, lock2_VeBalance.slope, "Delegate pending add slope = lock2 slope");
+    }
+
+    function test_BothLocks_VpAtEpochEnd() public {
+        uint128 currentEpoch = getCurrentEpochNumber();
+        uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
+        
+        // Lock1 VP at epoch end
+        uint128 lock1VpAtEnd = veMoca.getLockVotingPowerAt(lock1_Id, epochEndTimestamp);
+        uint128 expectedLock1Vp = getValueAt(lock1_VeBalance, epochEndTimestamp);
+        assertEq(lock1VpAtEnd, expectedLock1Vp, "Lock1 VP at epoch end");
+        
+        // Lock2 VP at epoch end  
+        uint128 lock2VpAtEnd = veMoca.getLockVotingPowerAt(lock2_Id, epochEndTimestamp);
+        uint128 expectedLock2Vp = getValueAt(lock2_VeBalance, epochEndTimestamp);
+        assertEq(lock2VpAtEnd, expectedLock2Vp, "Lock2 VP at epoch end");
+    }
+
+    function test_User1_PersonalVp_ReflectsLock2() public {
+        // In E2, user1 still has lock2's personal VP (delegation pending, takes effect next epoch)
+        // Lock1 delegation already took effect (applied in parent state)
+        uint128 user1PersonalVp = veMoca.balanceOfAt(user1, uint128(block.timestamp), false);
+        
+        // After lock2 creation and delegation in same epoch, user1's VP includes lock2
+        // (pending subtraction will apply next epoch)
+        uint128 expectedVp = getValueAt(lock2_VeBalance, uint128(block.timestamp));
+        assertEq(user1PersonalVp, expectedVp, "User1 personal VP = lock2 (pending delegation)");
+    }
+
+    // ============ State Transition Test ============
+
+    function test_StateTransition_IncreaseDuration_Lock2() public {
+        // lock2 can have duration increased (far from expiry)
+        uint128 targetExpiry = uint128(getEpochEndTimestamp(12)); // extend to E12
+        uint128 durationIncrease = targetExpiry - lock2_Expiry;
+        
+        // Capture state before
+        UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(user1, lock2_Id, lock2_Expiry, targetExpiry, user3, address(0));
+        
+        vm.prank(user1);
+        veMoca.increaseDuration(lock2_Id, durationIncrease);
+        
+        // Verify expiry updated
+        DataTypes.Lock memory lock = getLock(lock2_Id);
+        assertEq(lock.expiry, targetExpiry, "Lock2 expiry should be updated");
+        
+        // Verify via helper (IMMEDIATE effect on delegated lock)
+        verifyIncreaseDurationDelegated(beforeState, targetExpiry);
     }
 }
 
+// =====================================================
+// ================= EPOCH 2 - INCREASE DURATION LOCK2 =================
+// =====================================================
+
+// note: user1 increases duration on lock2 (delegated lock)
+abstract contract StateE2_User1_IncreaseDuration_Lock2 is StateE2_User1_CreatesLock2 {
+    
+    uint128 public lock2_NewExpiry;
+    uint128 public lock2_DurationIncrease;
+    DataTypes.VeBalance public lock2_VeBalance_AfterIncreaseDuration;
+    
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // Calculate duration to add: extend from E10 to E12
+        uint128 targetExpiry = uint128(getEpochEndTimestamp(12));
+        lock2_DurationIncrease = targetExpiry - lock2_Expiry;
+        lock2_NewExpiry = targetExpiry;
+        
+        vm.prank(user1);
+        veMoca.increaseDuration(lock2_Id, lock2_DurationIncrease);
+        
+        // Update stored veBalance
+        lock2_VeBalance_AfterIncreaseDuration = veMoca.getLockVeBalance(lock2_Id);
+    }
+}
+
+contract StateE2_User1_IncreaseDuration_Lock2_Test is StateE2_User1_IncreaseDuration_Lock2 {
+
+    // ============ State Verification ============
+
+    function test_Lock2_ExpiryUpdated() public {
+        DataTypes.Lock memory lock = getLock(lock2_Id);
+        assertEq(lock.expiry, lock2_NewExpiry, "Lock2 expiry updated to E12");
+        assertEq(lock.moca, lock2_MocaAmount, "Lock2 moca unchanged");
+        assertEq(lock.esMoca, lock2_EsMocaAmount, "Lock2 esMoca unchanged");
+    }
+
+    function test_Lock2_VeBalance_BiasIncreased() public {
+        // Slope unchanged (same amount), but bias increased (longer duration)
+        assertEq(lock2_VeBalance_AfterIncreaseDuration.slope, lock2_VeBalance.slope, "Slope unchanged");
+        assertGt(lock2_VeBalance_AfterIncreaseDuration.bias, lock2_VeBalance.bias, "Bias increased");
+    }
+
+    function test_SlopeChanges_Shifted() public {
+        // Old expiry slopeChange should be decreased
+        uint128 oldSlopeChange = veMoca.slopeChanges(lock2_Expiry);
+        // New expiry slopeChange should be increased
+        uint128 newSlopeChange = veMoca.slopeChanges(lock2_NewExpiry);
+        
+        // lock2's slope should be at new expiry
+        assertEq(newSlopeChange, lock2_VeBalance.slope, "New expiry slopeChange should have lock2's slope");
+    }
+
+    function test_Delegate_Vp_Increased_Immediately() public {
+        // increaseDuration on delegated lock has IMMEDIATE effect on delegate VP
+        // No cronJob needed - delegate history is updated directly
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 user3DelegatedVp = veMoca.balanceOfAt(user3, currentTimestamp, true);
+        
+        // Expected: lock1 VP + new lock2 VP (with extended duration)
+        uint128 lock1Vp = getValueAt(lock1_VeBalance, currentTimestamp);
+        uint128 lock2Vp = getValueAt(lock2_VeBalance_AfterIncreaseDuration, currentTimestamp);
+        
+        assertEq(user3DelegatedVp, lock1Vp + lock2Vp, "User3 delegated VP includes updated lock2");
+    }
+
+    // ============ Negative Tests ============
+
+    function testRevert_Lock1_CannotIncreaseDuration() public {
+        // lock1 expires at E3, current epoch is E2
+        // Lock must have at least 3 epochs remaining to modify
+        // lock1 only has ~1 epoch left, so any modification should fail
+        
+        uint128 durationIncrease = 2 * EPOCH_DURATION; // Try to add 2 epochs
+        
+        vm.expectRevert(Errors.LockExpiresTooSoon.selector);
+        vm.prank(user1);
+        veMoca.increaseDuration(lock1_Id, durationIncrease);
+    }
+
+    function testRevert_IncreaseDuration_PastMaxDuration() public {
+        // Try to extend beyond MAX_LOCK_DURATION from current timestamp
+        // Adding a duration that would make total duration exceed MAX_LOCK_DURATION
+        uint128 tooLongDuration = MAX_LOCK_DURATION + EPOCH_DURATION;
+        
+        // Contract uses InvalidExpiry for this check
+        vm.expectRevert(Errors.InvalidExpiry.selector);
+        vm.prank(user1);
+        veMoca.increaseDuration(lock2_Id, tooLongDuration);
+    }
+
+    function testRevert_IncreaseDuration_NonOwner() public {
+        uint128 durationIncrease = 2 * EPOCH_DURATION; // 2 epochs
+        
+        // increaseDuration uses InvalidLockId error for owner check
+        vm.expectRevert(Errors.InvalidLockId.selector);
+        vm.prank(user2);
+        veMoca.increaseDuration(lock2_Id, durationIncrease);
+    }
+
+    function testRevert_IncreaseDuration_ZeroDuration() public {
+        // Cannot pass 0 as durationToIncrease
+        vm.expectRevert(Errors.InvalidLockDuration.selector);
+        vm.prank(user1);
+        veMoca.increaseDuration(lock2_Id, 0);
+    }
+
+    // ============ State Transition Test ============
+
+    function test_StateTransition_IncreaseAmount_Lock2() public {
+        uint128 additionalMoca = 50 ether;
+        uint128 additionalEsMoca = 50 ether;
+        
+        // Fund user1 (need ETH for both escrow and increaseAmount)
+        vm.startPrank(user1);
+            vm.deal(user1, additionalMoca + additionalEsMoca);
+            esMoca.escrowMoca{value: additionalEsMoca}();
+            esMoca.approve(address(veMoca), additionalEsMoca);
+        vm.stopPrank();
+        
+        // Capture state before
+        UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(user1, lock2_Id, lock2_NewExpiry, 0, user3, address(0));
+        
+        vm.prank(user1);
+        veMoca.increaseAmount{value: additionalMoca}(lock2_Id, additionalEsMoca);
+        
+        // Verify amounts updated
+        DataTypes.Lock memory lock = getLock(lock2_Id);
+        assertEq(lock.moca, lock2_MocaAmount + additionalMoca, "Lock2 moca increased");
+        assertEq(lock.esMoca, lock2_EsMocaAmount + additionalEsMoca, "Lock2 esMoca increased");
+        
+        // Verify via helper
+        verifyIncreaseAmountDelegated(beforeState, additionalMoca, additionalEsMoca);
+    }
+}
+
+// =====================================================
+// ================= EPOCH 2 - INCREASE AMOUNT LOCK2 =================
+// =====================================================
+
+// note: user1 increases amount on lock2 (delegated lock)
+abstract contract StateE2_User1_IncreaseAmount_Lock2 is StateE2_User1_IncreaseDuration_Lock2 {
+    
+    uint128 public lock2_AdditionalMoca;
+    uint128 public lock2_AdditionalEsMoca;
+    DataTypes.VeBalance public lock2_VeBalance_AfterIncreaseAmount;
+    
+    function setUp() public virtual override {
+        super.setUp();
+        
+        lock2_AdditionalMoca = 50 ether;
+        lock2_AdditionalEsMoca = 50 ether;
+        
+        // Fund user1 (need ETH for both escrow and increaseAmount)
+        vm.startPrank(user1);
+            vm.deal(user1, lock2_AdditionalMoca + lock2_AdditionalEsMoca);
+            esMoca.escrowMoca{value: lock2_AdditionalEsMoca}();
+            esMoca.approve(address(veMoca), lock2_AdditionalEsMoca);
+            
+            // Increase amount
+            veMoca.increaseAmount{value: lock2_AdditionalMoca}(lock2_Id, lock2_AdditionalEsMoca);
+        vm.stopPrank();
+        
+        // Update stored veBalance
+        lock2_VeBalance_AfterIncreaseAmount = veMoca.getLockVeBalance(lock2_Id);
+    }
+}
+
+contract StateE2_User1_IncreaseAmount_Lock2_Test is StateE2_User1_IncreaseAmount_Lock2 {
+
+    // ============ State Verification ============
+
+    function test_Lock2_AmountsUpdated() public {
+        DataTypes.Lock memory lock = getLock(lock2_Id);
+        assertEq(lock.moca, lock2_MocaAmount + lock2_AdditionalMoca, "Lock2 moca updated");
+        assertEq(lock.esMoca, lock2_EsMocaAmount + lock2_AdditionalEsMoca, "Lock2 esMoca updated");
+        assertEq(lock.expiry, lock2_NewExpiry, "Lock2 expiry unchanged");
+    }
+
+    function test_Lock2_VeBalance_SlopeIncreased() public {
+        // Slope increased (more tokens), bias increased proportionally
+        assertGt(lock2_VeBalance_AfterIncreaseAmount.slope, lock2_VeBalance_AfterIncreaseDuration.slope, "Slope increased");
+        assertGt(lock2_VeBalance_AfterIncreaseAmount.bias, lock2_VeBalance_AfterIncreaseDuration.bias, "Bias increased");
+    }
+
+    function test_TotalLocked_Increased() public {
+        uint128 expectedTotalMoca = lock1_MocaAmount + lock2_MocaAmount + lock2_AdditionalMoca;
+        uint128 expectedTotalEsMoca = lock1_EsMocaAmount + lock2_EsMocaAmount + lock2_AdditionalEsMoca;
+        
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), expectedTotalMoca, "Total locked MOCA");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), expectedTotalEsMoca, "Total locked esMOCA");
+    }
+
+    function test_Delegate_Vp_Increased_Immediately() public {
+        // increaseAmount on delegated lock should immediately increase delegate VP
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 user3DelegatedVp = veMoca.balanceOfAt(user3, currentTimestamp, true);
+        
+        // Expected: lock1 VP + updated lock2 VP
+        uint128 lock1Vp = getValueAt(lock1_VeBalance, currentTimestamp);
+        uint128 lock2Vp = getValueAt(lock2_VeBalance_AfterIncreaseAmount, currentTimestamp);
+        
+        assertEq(user3DelegatedVp, lock1Vp + lock2Vp, "User3 delegated VP includes updated lock2");
+    }
+
+    // ============ Negative Tests ============
+
+    function testRevert_Lock1_CannotIncreaseAmount() public {
+        // lock1 is near expiry, cannot modify
+        vm.deal(user1, 10 ether);
+        
+        vm.expectRevert(Errors.LockExpiresTooSoon.selector);
+        vm.prank(user1);
+        veMoca.increaseAmount{value: 10 ether}(lock1_Id, 0);
+    }
+
+    function testRevert_IncreaseAmount_ZeroAmount() public {
+        vm.expectRevert(Errors.InvalidAmount.selector);
+        vm.prank(user1);
+        veMoca.increaseAmount{value: 0}(lock2_Id, 0);
+    }
+
+    function testRevert_IncreaseAmount_NonOwner() public {
+        vm.deal(user2, 10 ether);
+        
+        // increaseAmount uses InvalidLockId error for owner check
+        vm.expectRevert(Errors.InvalidLockId.selector);
+        vm.prank(user2);
+        veMoca.increaseAmount{value: 10 ether}(lock2_Id, 0);
+    }
+
+    // ============ State Transition Test ============
+
+    function test_StateTransition_SwitchDelegate_Lock2() public {
+        // Register user2 as delegate
+        vm.prank(MOCK_VC);
+        veMoca.delegateRegistrationStatus(user2, true);
+        
+        // Capture state before
+        UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(user1, lock2_Id, lock2_NewExpiry, 0, user2, user3);
+        
+        vm.prank(user1);
+        veMoca.switchDelegate(lock2_Id, user2);
+        
+        // Verify delegate switched
+        DataTypes.Lock memory lock = getLock(lock2_Id);
+        assertEq(lock.delegate, user2, "Lock2 delegate switched to user2");
+        
+        // Verify via helper
+        verifySwitchDelegate(beforeState, user2);
+    }
+}
+
+// =====================================================
+// ================= EPOCH 2 - SWITCH DELEGATE LOCK2 =================
+// =====================================================
+
+// note: user2 is registered as delegate
+// note: user1 switches lock2 delegation from user3 to user2
+abstract contract StateE2_User1_SwitchDelegate_Lock2 is StateE2_User1_IncreaseAmount_Lock2 {
+    
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // Register user2 as delegate
+        vm.prank(MOCK_VC);
+        veMoca.delegateRegistrationStatus(user2, true);
+        
+        // Switch lock2 delegation from user3 to user2
+        vm.prank(user1);
+        veMoca.switchDelegate(lock2_Id, user2);
+    }
+}
+
+contract StateE2_User1_SwitchDelegate_Lock2_Test is StateE2_User1_SwitchDelegate_Lock2 {
+
+    // ============ State Verification ============
+
+    function test_Lock2_DelegateSwitched() public {
+        DataTypes.Lock memory lock = getLock(lock2_Id);
+        assertEq(lock.delegate, user2, "Lock2 delegate is user2");
+    }
+
+    function test_SwitchDelegate_PendingDeltas_Booked() public {
+        // switchDelegate books pending deltas for next epoch
+        // Old delegate (user3) gets subtraction, new delegate (user2) gets addition
+        uint128 nextEpochStart = getCurrentEpochStart() + EPOCH_DURATION;
+        
+        // User3 (old delegate) should have pending subtraction
+        (bool hasAdd, bool hasSub, DataTypes.VeBalance memory additions, DataTypes.VeBalance memory subtractions) 
+            = veMoca.delegatePendingDeltas(user3, nextEpochStart);
+        assertTrue(hasSub, "Old delegate has pending subtraction");
+        assertEq(subtractions.slope, lock2_VeBalance_AfterIncreaseAmount.slope, "Old delegate sub slope = lock2 slope");
+        
+        // User2 (new delegate) should have pending addition
+        (hasAdd, hasSub, additions, subtractions) = veMoca.delegatePendingDeltas(user2, nextEpochStart);
+        assertTrue(hasAdd, "New delegate has pending addition");
+        assertEq(additions.slope, lock2_VeBalance_AfterIncreaseAmount.slope, "New delegate add slope = lock2 slope");
+    }
+
+    function test_User3_DelegatedVp_UnchangedThisEpoch() public {
+        // In current epoch, user3's VP is UNCHANGED by switchDelegate (pending takes effect next epoch)
+        // user3 still has lock1's VP + lock2's VP (from immediate increaseAmount effect)
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 user3DelegatedVp = veMoca.balanceOfAt(user3, currentTimestamp, true);
+        
+        // user3 has lock1 + lock2 VP (increaseAmount had immediate effect, switchDelegate is pending)
+        uint128 lock1Vp = getValueAt(lock1_VeBalance, currentTimestamp);
+        uint128 lock2Vp = getValueAt(lock2_VeBalance_AfterIncreaseAmount, currentTimestamp);
+        assertEq(user3DelegatedVp, lock1Vp + lock2Vp, "User3 delegated VP = lock1 + lock2 (pending switch)");
+    }
+
+    function test_User2_DelegatedVp_ZeroThisEpoch() public {
+        // In current epoch, user2's delegated VP is ZERO (pending takes effect next epoch)
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 user2DelegatedVp = veMoca.balanceOfAt(user2, currentTimestamp, true);
+        
+        // user2 doesn't have lock2's VP yet - pending addition applies next epoch
+        assertEq(user2DelegatedVp, 0, "User2 delegated VP = 0 (pending)");
+    }
+
+    function test_NumOfDelegateActionsPerEpoch_Incremented() public {
+        uint128 currentEpochStart = getCurrentEpochStart();
+        uint128 actionCount = veMoca.numOfDelegateActionsPerEpoch(lock2_Id, currentEpochStart);
+        
+        // lock2: delegateLock (1) + switchDelegate (1) = 2 actions
+        assertEq(actionCount, 2, "Delegate action count should be 2");
+    }
+
+    // ============ Negative Tests ============
+
+        function testRevert_SwitchDelegate_ToUnregisteredDelegate() public {
+            address unregistered = address(0x123);
+            
+            vm.expectRevert(Errors.DelegateNotRegistered.selector);
+            vm.prank(user1);
+            veMoca.switchDelegate(lock2_Id, unregistered);
+        }
+
+        function testRevert_SwitchDelegate_ToSelf() public {
+            vm.expectRevert(Errors.InvalidDelegate.selector);
+            vm.prank(user1);
+            veMoca.switchDelegate(lock2_Id, user1);
+        }
+
+        function testRevert_SwitchDelegate_NonOwner() public {
+            vm.expectRevert(Errors.InvalidOwner.selector);
+            vm.prank(user2);
+            veMoca.switchDelegate(lock2_Id, user3);
+        }
+
+        function testRevert_Lock1_CannotSwitchDelegate() public {
+            // lock1 has action limit (near expiry)
+            vm.expectRevert(Errors.LockExpiresTooSoon.selector);
+            vm.prank(user1);
+            veMoca.switchDelegate(lock1_Id, user2);
+        }
+
+    // ============ State Transition Test ============
+
+        function test_StateTransition_Undelegate_Lock2() public {
+            // Capture state before
+            UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(user1, lock2_Id, lock2_NewExpiry, 0, address(0), user2);
+            
+            vm.prank(user1);
+            veMoca.undelegateLock(lock2_Id);
+            
+            // Verify undelegated
+            DataTypes.Lock memory lock = getLock(lock2_Id);
+            assertEq(lock.delegate, address(0), "Lock2 undelegated");
+            
+            // Verify via helper
+            verifyUndelegateLock(beforeState);
+        }
+}
+
+// =====================================================
+// ================= EPOCH 2 - UNDELEGATE LOCK2 =================
+// =====================================================
+
+// note: user1 undelegates lock2
+// lock1: delegated to user3
+// lock2: undelegated (personal VP for user1)
+abstract contract StateE2_User1_Undelegates_Lock2 is StateE2_User1_SwitchDelegate_Lock2 {
+    
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // Undelegate lock2
+        vm.prank(user1);
+        veMoca.undelegateLock(lock2_Id);
+    }
+}
+
+contract StateE2_User1_Undelegates_Lock2_Test is StateE2_User1_Undelegates_Lock2 {
+
+    // ============ State Verification ============
+
+        function test_Lock2_Undelegated() public {
+            DataTypes.Lock memory lock = getLock(lock2_Id);
+            assertEq(lock.delegate, address(0), "Lock2 delegate is address(0)");
+        }
+
+        function test_Undelegate_PendingDeltas_Booked() public {
+            // undelegateLock books pending deltas for next epoch
+            // User gets addition, old delegate (user2) gets subtraction
+            uint128 nextEpochStart = getCurrentEpochStart() + EPOCH_DURATION;
+            
+            // User1 should have pending addition (gets VP back)
+            (bool hasAdd, bool hasSub, DataTypes.VeBalance memory additions, DataTypes.VeBalance memory subtractions) 
+                = veMoca.userPendingDeltas(user1, nextEpochStart);
+            assertTrue(hasAdd, "User has pending addition");
+            assertEq(additions.slope, lock2_VeBalance_AfterIncreaseAmount.slope, "User add slope = lock2 slope");
+            
+            // User2 (old delegate) should have pending subtraction
+            (hasAdd, hasSub, additions, subtractions) = veMoca.delegatePendingDeltas(user2, nextEpochStart);
+            assertTrue(hasSub, "Old delegate has pending subtraction");
+            assertEq(subtractions.slope, lock2_VeBalance_AfterIncreaseAmount.slope, "Old delegate sub slope = lock2 slope");
+        }
+
+        function test_User1_PersonalVp_HasLock2() public {
+            // User1 has lock2's personal VP (pending subtraction from delegation not yet applied)
+            // undelegateLock only books pending addition, doesn't change current VP
+            uint128 currentTimestamp = uint128(block.timestamp);
+            uint128 user1PersonalVp = veMoca.balanceOfAt(user1, currentTimestamp, false);
+            
+            // User1's personal VP = lock2 VP (still has it from creation)
+            uint128 expectedVp = getValueAt(lock2_VeBalance_AfterIncreaseAmount, currentTimestamp);
+            assertEq(user1PersonalVp, expectedVp, "User1 personal VP = lock2");
+        }
+
+        function test_User2_DelegatedVp_UnchangedThisEpoch() public {
+            // In current epoch, user2's VP is UNCHANGED (pending takes effect next epoch)
+            // Note: lock2 was switched to user2 then undelegated in same epoch
+            // Both operations book pending deltas for next epoch
+            uint128 user2DelegatedVp = veMoca.balanceOfAt(user2, uint128(block.timestamp), true);
+            assertEq(user2DelegatedVp, 0, "User2 delegated VP = 0");
+        }
+
+        function test_TotalSupply_Unchanged() public {
+            // Undelegation is internal reallocation, totalSupply unchanged
+            uint128 currentTimestamp = uint128(block.timestamp);
+            uint128 totalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+            
+            // Expected: lock1 VP + lock2 VP (both still exist)
+            uint128 lock1Vp = getValueAt(lock1_VeBalance, currentTimestamp);
+            uint128 lock2Vp = getValueAt(lock2_VeBalance_AfterIncreaseAmount, currentTimestamp);
+            
+            assertEq(totalSupply, lock1Vp + lock2Vp, "Total supply = sum of both locks");
+        }
+
+    // ============ Negative Tests ============
+
+        function testRevert_Undelegate_AlreadyUndelegated() public {
+            vm.expectRevert(Errors.LockNotDelegated.selector);
+            vm.prank(user1);
+            veMoca.undelegateLock(lock2_Id);
+        }
+
+        function testRevert_Undelegate_NonOwner() public {
+            // First re-delegate lock2 so we can test
+            vm.prank(user1);
+            veMoca.delegateLock(lock2_Id, user2);
+            
+            vm.expectRevert(Errors.InvalidOwner.selector);
+            vm.prank(user2);
+            veMoca.undelegateLock(lock2_Id);
+        }
+}
+
+// =====================================================
+// ================= EPOCH 4 - UNLOCK LOCK1 =================
+// =====================================================
+
+// note: warp to E4, lock1 has expired (expired at E3)
+// user1 unlocks lock1 to retrieve principals
+abstract contract StateE4_User1_Unlocks_Lock1 is StateE2_User1_Undelegates_Lock2 {
+    
+    // Capture state before unlock for verification
+    uint128 public user1_MocaBalanceBefore;
+    uint128 public user1_EsMocaBalanceBefore;
+    
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // Warp to E4 (past lock1 expiry at E3)
+        uint128 epoch4StartTimestamp = uint128(getEpochStartTimestamp(4));
+        vm.warp(epoch4StartTimestamp + 1);
+        assertEq(getCurrentEpochNumber(), 4, "Current epoch number is 4");
+        
+        // Verify lock1 is expired
+        DataTypes.Lock memory lock1Before = getLock(lock1_Id);
+        assertLt(lock1Before.expiry, block.timestamp, "Lock1 should be expired");
+        
+        // Capture balances before unlock
+        user1_MocaBalanceBefore = uint128(user1.balance);
+        user1_EsMocaBalanceBefore = uint128(esMoca.balanceOf(user1));
+        
+        // Unlock lock1
+        vm.prank(user1);
+        veMoca.unlock(lock1_Id);
+    }
+}
+
+contract StateE4_User1_Unlocks_Lock1_Test is StateE4_User1_Unlocks_Lock1 {
+
+    // ============ State Verification ============
+
+    function test_Lock1_IsUnlocked() public {
+        DataTypes.Lock memory lock = getLock(lock1_Id);
+        assertTrue(lock.isUnlocked, "Lock1 should be unlocked");
+    }
+
+    function test_User1_ReceivedPrincipals() public {
+        // user1 should receive lock1's MOCA and esMOCA
+        uint128 user1MocaAfter = uint128(user1.balance);
+        uint128 user1EsMocaAfter = uint128(esMoca.balanceOf(user1));
+        
+        assertEq(user1MocaAfter, user1_MocaBalanceBefore + lock1_MocaAmount, "User1 received MOCA");
+        assertEq(user1EsMocaAfter, user1_EsMocaBalanceBefore + lock1_EsMocaAmount, "User1 received esMOCA");
+    }
+
+    function test_TotalLocked_Decreased() public {
+        // TOTAL_LOCKED should only include lock2 now
+        uint128 expectedTotalMoca = lock2_MocaAmount + lock2_AdditionalMoca;
+        uint128 expectedTotalEsMoca = lock2_EsMocaAmount + lock2_AdditionalEsMoca;
+        
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), expectedTotalMoca, "Total locked MOCA = lock2 only");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), expectedTotalEsMoca, "Total locked esMOCA = lock2 only");
+    }
+
+    function test_User3_DelegatedVp_Zero() public {
+        // lock1 was delegated to user3, but now it's expired (E4, lock1 expired at E3)
+        // Lock VP decays to 0 at expiry, so user3 should have 0 delegated VP
+        uint128 user3DelegatedVp = veMoca.balanceOfAt(user3, uint128(block.timestamp), true);
+        assertEq(user3DelegatedVp, 0, "User3 delegated VP = 0 (lock1 expired)");
+    }
+
+    function test_GlobalState_ReflectsLock2() public {
+        // veGlobal should reflect lock2 (lock1 expired)
+        (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
+        
+        // Verify global slope includes at least lock2's slope
+        uint128 lock2Slope = lock2_VeBalance_AfterIncreaseAmount.slope;
+        assertGe(globalSlope, lock2Slope, "Global slope >= lock2 slope");
+    }
+
+    function test_Lock1_NoLongerContributesToVp() public {
+        // Lock1 expired at E3, so its VP should be 0 now
+        uint128 lock1Vp = veMoca.getLockVotingPowerAt(lock1_Id, uint128(block.timestamp));
+        assertEq(lock1Vp, 0, "Lock1 VP = 0 (expired)");
+    }
+
+    function test_TotalSupplyAt_E2_E3_Finalized() public {
+        // unlock() in setUp triggered _updateAccountAndGlobalAndPendingDeltas
+        // which should have finalized historical epochs
+        
+        // totalSupplyAt[E2] and totalSupplyAt[E3] should be finalized
+        uint128 epoch2Start = uint128(getEpochStartTimestamp(2));
+        uint128 epoch3Start = uint128(getEpochStartTimestamp(3));
+        
+        uint128 totalSupplyAtE2 = veMoca.totalSupplyAt(epoch2Start);
+        uint128 totalSupplyAtE3 = veMoca.totalSupplyAt(epoch3Start);
+        
+        // E2 and E3 should have > 0 supply (lock1 was active, lock2 was created in E2)
+        assertGt(totalSupplyAtE2, 0, "totalSupplyAt[E2] finalized");
+        assertGt(totalSupplyAtE3, 0, "totalSupplyAt[E3] finalized");
+    }
+
+    // ============ Negative Tests ============
+
+    function testRevert_Unlock_NonExpiredLock() public {
+        // lock2 is not expired, cannot unlock
+        vm.expectRevert(Errors.InvalidExpiry.selector);
+        vm.prank(user1);
+        veMoca.unlock(lock2_Id);
+    }
+
+    function testRevert_Unlock_AlreadyUnlocked() public {
+        // lock1 already unlocked
+        vm.expectRevert(Errors.InvalidLockState.selector);
+        vm.prank(user1);
+        veMoca.unlock(lock1_Id);
+    }
+
+    function testRevert_Unlock_NonOwner() public {
+        // Warp far into future to expire lock2
+        vm.warp(lock2_NewExpiry + 1);
+        
+        vm.expectRevert(Errors.InvalidOwner.selector);
+        vm.prank(user2);
+        veMoca.unlock(lock2_Id);
+    }
+
+    // ============ State Transition Test ============
+
+    function test_StateTransition_User3_CreatesLock3_DelegatesToUser2() public {
+        // Fund user3
+        vm.startPrank(user3);
+            vm.deal(user3, 300 ether);
+            esMoca.escrowMoca{value: 150 ether}();
+            esMoca.approve(address(veMoca), 150 ether);
+        vm.stopPrank();
+        
+        // Lock3 parameters
+        uint128 lock3Expiry = uint128(getEpochEndTimestamp(15));
+        uint128 lock3MocaAmount = 150 ether;
+        uint128 lock3EsMocaAmount = 150 ether;
+        
+        // Create lock3 and delegate to user2
+        vm.startPrank(user3);
+            bytes32 lock3Id = veMoca.createLock{value: lock3MocaAmount}(lock3Expiry, lock3EsMocaAmount);
+            veMoca.delegateLock(lock3Id, user2);
+        vm.stopPrank();
+        
+        // Verify
+        DataTypes.Lock memory lock3 = getLock(lock3Id);
+        assertEq(lock3.owner, user3, "Lock3 owner = user3");
+        assertEq(lock3.delegate, user2, "Lock3 delegate = user2");
+    }
+}
+
+// =====================================================
+// ================= EPOCH 4 - USER3 DELEGATES LOCK3 TO USER2 =================
+// =====================================================
+
+// note: user3 creates lock3 and delegates to user2
+// lock1: unlocked
+// lock2: user1's personal VP (undelegated)
+// lock3: user3 -> user2 delegation
+abstract contract StateE4_User3_DelegateLock3_ToUser2 is StateE4_User1_Unlocks_Lock1 {
+    
+    bytes32 public lock3_Id;
+    uint128 public lock3_Expiry;
+    uint128 public lock3_MocaAmount;
+    uint128 public lock3_EsMocaAmount;
+    DataTypes.VeBalance public lock3_VeBalance;
+    
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // Lock3 parameters
+        lock3_Expiry = uint128(getEpochEndTimestamp(15));
+        lock3_MocaAmount = 150 ether;
+        lock3_EsMocaAmount = 150 ether;
+        
+        // Fund user3
+        vm.startPrank(user3);
+            vm.deal(user3, 300 ether);
+            esMoca.escrowMoca{value: lock3_EsMocaAmount}();
+            esMoca.approve(address(veMoca), lock3_EsMocaAmount);
+            
+            // Create lock3 and delegate to user2
+            lock3_Id = veMoca.createLock{value: lock3_MocaAmount}(lock3_Expiry, lock3_EsMocaAmount);
+            veMoca.delegateLock(lock3_Id, user2);
+        vm.stopPrank();
+        
+        // Capture lock3 veBalance
+        lock3_VeBalance = veMoca.getLockVeBalance(lock3_Id);
+    }
+}
+
+contract StateE4_User3_DelegateLock3_ToUser2_Test is StateE4_User3_DelegateLock3_ToUser2 {
+
+    // ============ State Verification ============
+
+    function test_Lock3_Created_AndDelegated() public {
+        DataTypes.Lock memory lock = getLock(lock3_Id);
+        assertEq(lock.owner, user3, "Lock3 owner = user3");
+        assertEq(lock.delegate, user2, "Lock3 delegate = user2");
+        assertEq(lock.moca, lock3_MocaAmount, "Lock3 moca");
+        assertEq(lock.esMoca, lock3_EsMocaAmount, "Lock3 esMoca");
+        assertEq(lock.expiry, lock3_Expiry, "Lock3 expiry");
+    }
+
+    function test_Lock3_DelegationPendingDeltas_Booked() public {
+        // Lock3 delegation books pending deltas for next epoch
+        uint128 nextEpochStart = getCurrentEpochStart() + EPOCH_DURATION;
+        
+        // User3 pending subtraction should be booked
+        (bool hasAdd, bool hasSub, DataTypes.VeBalance memory additions, DataTypes.VeBalance memory subtractions) 
+            = veMoca.userPendingDeltas(user3, nextEpochStart);
+        assertTrue(hasSub, "User3 pending subtraction booked");
+        assertEq(subtractions.slope, lock3_VeBalance.slope, "User3 pending sub slope = lock3 slope");
+        
+        // User2 (delegate) pending addition should be booked
+        (hasAdd, hasSub, additions, subtractions) = veMoca.delegatePendingDeltas(user2, nextEpochStart);
+        assertTrue(hasAdd, "Delegate pending addition booked");
+        assertEq(additions.slope, lock3_VeBalance.slope, "Delegate pending add slope = lock3 slope");
+    }
+
+    function test_User2_DelegatedVp_ZeroThisEpoch() public {
+        // In current epoch, user2's delegated VP is 0 (pending takes effect next epoch)
+        uint128 user2DelegatedVp = veMoca.balanceOfAt(user2, uint128(block.timestamp), true);
+        assertEq(user2DelegatedVp, 0, "User2 delegated VP = 0 (pending)");
+    }
+
+    function test_User3_PersonalVp_HasLock3() public {
+        // In current epoch, user3 still has lock3's personal VP (pending subtraction applies next epoch)
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 user3PersonalVp = veMoca.balanceOfAt(user3, currentTimestamp, false);
+        
+        // User3's personal VP = lock3 VP (delegation pending)
+        uint128 expectedVp = getValueAt(lock3_VeBalance, currentTimestamp);
+        assertEq(user3PersonalVp, expectedVp, "User3 personal VP = lock3 (pending delegation)");
+    }
+
+    function test_GlobalState_Lock2_And_Lock3() public {
+        // Global state should include lock2 + lock3
+        uint128 expectedTotalMoca = (lock2_MocaAmount + lock2_AdditionalMoca) + lock3_MocaAmount;
+        uint128 expectedTotalEsMoca = (lock2_EsMocaAmount + lock2_AdditionalEsMoca) + lock3_EsMocaAmount;
+        
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), expectedTotalMoca, "Total locked MOCA");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), expectedTotalEsMoca, "Total locked esMOCA");
+    }
+
+    function test_TotalSupply_Lock2_And_Lock3() public {
+        // Total supply should reflect both active locks (lock2 + lock3)
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 totalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+        
+        uint128 lock2Vp = getValueAt(lock2_VeBalance_AfterIncreaseAmount, currentTimestamp);
+        uint128 lock3Vp = getValueAt(lock3_VeBalance, currentTimestamp);
+        
+        // Total supply should be at least lock2 + lock3 (may include residual from state updates)
+        assertGe(totalSupply, lock2Vp + lock3Vp, "Total supply >= lock2 + lock3");
+    }
+
+    function test_Lock3_VpAtEpochEnd() public {
+        uint128 currentEpoch = getCurrentEpochNumber();
+        uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
+        
+        uint128 lock3VpAtEnd = veMoca.getLockVotingPowerAt(lock3_Id, epochEndTimestamp);
+        uint128 expectedVp = getValueAt(lock3_VeBalance, epochEndTimestamp);
+        
+        assertEq(lock3VpAtEnd, expectedVp, "Lock3 VP at epoch end");
+    }
+
+    // ============ Negative Tests ============
+
+    function testRevert_User3_DelegateToUnregistered() public {
+        // user3 cannot delegate to unregistered address
+        address unregistered = address(0x456);
+        
+        // First need to create another lock for user3 to test
+        vm.startPrank(user3);
+            vm.deal(user3, 100 ether);
+            bytes32 tempLockId = veMoca.createLock{value: 100 ether}(lock3_Expiry, 0);
+        vm.stopPrank();
+        
+        vm.expectRevert(Errors.DelegateNotRegistered.selector);
+        vm.prank(user3);
+        veMoca.delegateLock(tempLockId, unregistered);
+    }
+
+    // ============ State Transition Test ============
+
+    function test_StateTransition_User2_CreatesLock4() public {
+        // Fund user2
+        vm.startPrank(user2);
+            vm.deal(user2, 100 ether);
+            esMoca.escrowMoca{value: 50 ether}();
+            esMoca.approve(address(veMoca), 50 ether);
+        vm.stopPrank();
+        
+        // Lock4 parameters (personal lock, not delegated)
+        uint128 lock4Expiry = uint128(getEpochEndTimestamp(16));
+        uint128 lock4MocaAmount = 50 ether;
+        uint128 lock4EsMocaAmount = 50 ether;
+        
+        // Create lock4 (don't delegate)
+        vm.prank(user2);
+        bytes32 lock4Id = veMoca.createLock{value: lock4MocaAmount}(lock4Expiry, lock4EsMocaAmount);
+        
+        // Verify
+        DataTypes.Lock memory lock4 = getLock(lock4Id);
+        assertEq(lock4.owner, user2, "Lock4 owner = user2");
+        assertEq(lock4.delegate, address(0), "Lock4 not delegated");
+    }
+}
+
+// =====================================================
+// ================= EPOCH 4 - USER2 CREATES LOCK4 =================
+// =====================================================
+
+// note: user2 creates personal lock4 (not delegated)
+// user2 has both personal VP (lock4) and delegated VP (lock3)
+abstract contract StateE4_User2_CreatesLock4 is StateE4_User3_DelegateLock3_ToUser2 {
+    
+    bytes32 public lock4_Id;
+    uint128 public lock4_Expiry;
+    uint128 public lock4_MocaAmount;
+    uint128 public lock4_EsMocaAmount;
+    DataTypes.VeBalance public lock4_VeBalance;
+    
+    function setUp() public virtual override {
+        super.setUp();
+        
+        // Lock4 parameters
+        lock4_Expiry = uint128(getEpochEndTimestamp(16));
+        lock4_MocaAmount = 50 ether;
+        lock4_EsMocaAmount = 50 ether;
+        
+        // Fund user2
+        vm.startPrank(user2);
+            vm.deal(user2, 100 ether);
+            esMoca.escrowMoca{value: lock4_EsMocaAmount}();
+            esMoca.approve(address(veMoca), lock4_EsMocaAmount);
+            
+            // Create lock4 (personal, not delegated)
+            lock4_Id = veMoca.createLock{value: lock4_MocaAmount}(lock4_Expiry, lock4_EsMocaAmount);
+        vm.stopPrank();
+        
+        // Capture lock4 veBalance
+        lock4_VeBalance = veMoca.getLockVeBalance(lock4_Id);
+    }
+}
+
+contract StateE4_User2_CreatesLock4_Test is StateE4_User2_CreatesLock4 {
+
+    // ============ State Verification ============
+
+    function test_Lock4_Created_NotDelegated() public {
+        DataTypes.Lock memory lock = getLock(lock4_Id);
+        assertEq(lock.owner, user2, "Lock4 owner = user2");
+        assertEq(lock.delegate, address(0), "Lock4 not delegated");
+        assertEq(lock.moca, lock4_MocaAmount, "Lock4 moca");
+        assertEq(lock.esMoca, lock4_EsMocaAmount, "Lock4 esMoca");
+    }
+
+    function test_User2_HasPersonalVp_Lock4() public {
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 user2PersonalVp = veMoca.balanceOfAt(user2, currentTimestamp, false);
+        
+        // user2 personal VP = lock4
+        uint128 expectedVp = getValueAt(lock4_VeBalance, currentTimestamp);
+        assertEq(user2PersonalVp, expectedVp, "User2 personal VP = lock4");
+    }
+
+    function test_User2_DelegatedVp_PendingFromLock3() public {
+        // In current epoch, user2's delegated VP is still 0 
+        // (lock3 delegation pending, takes effect next epoch)
+        uint128 user2DelegatedVp = veMoca.balanceOfAt(user2, uint128(block.timestamp), true);
+        assertEq(user2DelegatedVp, 0, "User2 delegated VP = 0 (pending)");
+        
+        // Verify pending addition is booked
+        uint128 nextEpochStart = getCurrentEpochStart() + EPOCH_DURATION;
+        (bool hasAdd, , DataTypes.VeBalance memory additions, ) = veMoca.delegatePendingDeltas(user2, nextEpochStart);
+        assertTrue(hasAdd, "User2 has pending addition from lock3");
+    }
+
+    function test_GlobalState_AllActiveLocks() public {
+        // Global state: lock2 (user1 personal) + lock3 (user3->user2) + lock4 (user2 personal)
+        uint128 expectedTotalMoca = (lock2_MocaAmount + lock2_AdditionalMoca) + lock3_MocaAmount + lock4_MocaAmount;
+        uint128 expectedTotalEsMoca = (lock2_EsMocaAmount + lock2_AdditionalEsMoca) + lock3_EsMocaAmount + lock4_EsMocaAmount;
+        
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), expectedTotalMoca, "Total locked MOCA");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), expectedTotalEsMoca, "Total locked esMOCA");
+    }
+
+    function test_AllUsers_BalanceAtEpochEnd_CurrentState() public {
+        // In current epoch (E4), delegation pending deltas haven't been applied yet
+        uint128 currentEpoch = getCurrentEpochNumber();
+        uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
+        
+        // user1: personal VP = lock2 (undelegated in E2)
+        uint128 user1BalanceAtEnd = veMoca.balanceAtEpochEnd(user1, currentEpoch, false);
+        uint128 expectedUser1Vp = getValueAt(lock2_VeBalance_AfterIncreaseAmount, epochEndTimestamp);
+        assertEq(user1BalanceAtEnd, expectedUser1Vp, "User1 balanceAtEpochEnd = lock2");
+        
+        // user2: personal VP = lock4
+        uint128 user2PersonalAtEnd = veMoca.balanceAtEpochEnd(user2, currentEpoch, false);
+        uint128 expectedUser2PersonalVp = getValueAt(lock4_VeBalance, epochEndTimestamp);
+        assertEq(user2PersonalAtEnd, expectedUser2PersonalVp, "User2 personal balanceAtEpochEnd = lock4");
+        
+        // user2: delegated VP = 0 (lock3 delegation pending, takes effect next epoch)
+        uint128 user2DelegatedAtEnd = veMoca.balanceAtEpochEnd(user2, currentEpoch, true);
+        assertEq(user2DelegatedAtEnd, 0, "User2 delegated balanceAtEpochEnd = 0 (pending)");
+        
+        // user3: personal VP = lock3 (delegation pending)
+        uint128 user3PersonalAtEnd = veMoca.balanceAtEpochEnd(user3, currentEpoch, false);
+        uint128 expectedUser3Vp = getValueAt(lock3_VeBalance, epochEndTimestamp);
+        assertEq(user3PersonalAtEnd, expectedUser3Vp, "User3 personal balanceAtEpochEnd = lock3 (pending delegation)");
+    }
+
+    function test_TotalSupply_AllLocks() public {
+        uint128 currentTimestamp = uint128(block.timestamp);
+        uint128 totalSupply = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+        
+        // Expected: lock2 + lock3 + lock4
+        uint128 lock2Vp = getValueAt(lock2_VeBalance_AfterIncreaseAmount, currentTimestamp);
+        uint128 lock3Vp = getValueAt(lock3_VeBalance, currentTimestamp);
+        uint128 lock4Vp = getValueAt(lock4_VeBalance, currentTimestamp);
+        
+        // Total supply should be at least the sum of active locks
+        assertGe(totalSupply, lock2Vp + lock3Vp + lock4Vp, "Total supply >= lock2 + lock3 + lock4");
+    }
+
+    // ============ Final Comprehensive State Verification ============
+
+    function test_FinalState_AllLocks() public view {
+        // Lock1: unlocked
+        DataTypes.Lock memory lock1 = getLock(lock1_Id);
+        assertTrue(lock1.isUnlocked, "Lock1 is unlocked");
+        
+        // Lock2: user1's personal lock (undelegated)
+        DataTypes.Lock memory lock2 = getLock(lock2_Id);
+        assertEq(lock2.owner, user1, "Lock2 owner = user1");
+        assertEq(lock2.delegate, address(0), "Lock2 not delegated");
+        assertFalse(lock2.isUnlocked, "Lock2 not unlocked");
+        
+        // Lock3: user3 -> user2 delegation
+        DataTypes.Lock memory lock3 = getLock(lock3_Id);
+        assertEq(lock3.owner, user3, "Lock3 owner = user3");
+        assertEq(lock3.delegate, user2, "Lock3 delegate = user2");
+        assertFalse(lock3.isUnlocked, "Lock3 not unlocked");
+        
+        // Lock4: user2's personal lock
+        DataTypes.Lock memory lock4 = getLock(lock4_Id);
+        assertEq(lock4.owner, user2, "Lock4 owner = user2");
+        assertEq(lock4.delegate, address(0), "Lock4 not delegated");
+        assertFalse(lock4.isUnlocked, "Lock4 not unlocked");
+    }
+
+    function test_FinalState_DelegateRegistrations() public view{
+        // user2 and user3 are registered delegates
+        assertTrue(veMoca.isRegisteredDelegate(user2), "User2 is registered delegate");
+        assertTrue(veMoca.isRegisteredDelegate(user3), "User3 is registered delegate");
+        // user1 is not a registered delegate
+        assertFalse(veMoca.isRegisteredDelegate(user1), "User1 is not a delegate");
+    }
+}
 
 */
-
-
-
-
-//Note: specialized capture fns
-/**
-
-    // Captures State: delegateLock(targetDelegate) -> user + targetDelegate + user-delegate pair
-    function captureStateForDelegateLock(bytes32 lockId, address targetDelegate) internal returns (UnifiedStateSnapshot memory) {
-        UnifiedStateSnapshot memory state;
-        
-        // First get the lock to access owner and expiry
-        DataTypes.Lock memory lock = getLock(lockId);
-        uint128 expiry = lock.expiry;
-        address owner = lock.owner;
-        
-        // core:  newExpiry = 0
-        state.tokensState = captureTokensState(owner);
-        state.globalState = captureGlobalState(expiry, 0);
-        state.userState = captureUserState(owner, expiry, 0);
-        state.lockState = captureLockState(lockId);
-
-        // targetDelegate: newExpiry = 0
-        state.targetDelegateState = captureDelegateState(targetDelegate, expiry, 0);
-        
-        // user-targetDelegate pair: newExpiry = 0
-        state.targetPairState = captureUserDelegatePairState(owner, targetDelegate, expiry, 0);
-
-        return state;
-    }
-
-    // Captures State: switchDelegate(newDelegate) -> user + oldDelegate + user-oldDelegate pair + newDelegate + user-newDelegate pair
-    function captureStateForSwitchDelegate(bytes32 lockId, address newDelegate) internal returns (UnifiedStateSnapshot memory) {
-        UnifiedStateSnapshot memory state;
-        
-        // First get the lock to access owner, oldDelegate and expiry
-        DataTypes.Lock memory lock = getLock(lockId);
-        uint128 expiry = lock.expiry;
-        address owner = lock.owner;
-        address oldDelegate = lock.delegate;
-        
-        // core:  newExpiry = 0
-        state.tokensState = captureTokensState(owner);
-        state.globalState = captureGlobalState(expiry, 0);
-        state.userState = captureUserState(owner, expiry, 0);
-        state.lockState = captureLockState(lockId);
-
-        // oldDelegate: newExpiry = 0
-        state.oldDelegateState = captureDelegateState(oldDelegate, expiry, 0);
-        // user-oldDelegate pair: newExpiry = 0
-        state.oldPairState = captureUserDelegatePairState(owner, oldDelegate, expiry, 0);
-
-        // newDelegate: newExpiry = 0
-        state.targetDelegateState = captureDelegateState(newDelegate, expiry, 0);   
-        // user-newDelegate pair: newExpiry = 0
-        state.targetPairState = captureUserDelegatePairState(owner, newDelegate, expiry, 0);
-
-        return state;
-    }
-
-    
-    // Captures State: undelegateLock -> user + oldDelegate + user-oldDelegate pair
-    function captureStateForUndelegateLock(bytes32 lockId) internal returns (UnifiedStateSnapshot memory) {
-        UnifiedStateSnapshot memory state;
-        
-        // First get the lock to access owner and expiry
-        DataTypes.Lock memory lock = getLock(lockId);
-        uint128 expiry = lock.expiry;
-        address owner = lock.owner;
-        address oldDelegate = lock.delegate;
-        
-        // core: newExpiry = 0
-        state.tokensState = captureTokensState(owner);
-        state.globalState = captureGlobalState(expiry, 0);
-        state.userState = captureUserState(owner, expiry, 0);
-        state.lockState = captureLockState(lockId);
-
-        // oldDelegate: newExpiry = 0
-        state.oldDelegateState = captureDelegateState(oldDelegate, expiry, 0);
-        // user-oldDelegate pair: newExpiry = 0
-        state.oldPairState = captureUserDelegatePairState(owner, oldDelegate, expiry, 0);
-        
-        return state;
-    }
-
-
-    // Captures State: increaseAmount/increaseDuration on DELEGATED lock
-    function captureStateForModifyDelegatedLock(bytes32 lockId, uint128 newExpiry) internal returns (UnifiedStateSnapshot memory) {
-        UnifiedStateSnapshot memory state;
-        
-        DataTypes.Lock memory lock = getLock(lockId);
-        uint128 expiry = lock.expiry;
-        address owner = lock.owner;
-        address delegate = lock.delegate;
-        
-        state.tokensState = captureTokensState(owner);
-        state.globalState = captureGlobalState(expiry, newExpiry);
-        state.userState = captureUserState(owner, expiry, newExpiry);
-        state.lockState = captureLockState(lockId);
-        
-        // Current delegate and pair state
-        state.targetDelegateState = captureDelegateState(delegate, expiry, newExpiry);
-        state.targetPairState = captureUserDelegatePairState(owner, delegate, expiry, newExpiry);
-
-        return state;
-    }
-
-
-
- */
