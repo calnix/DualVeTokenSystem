@@ -415,6 +415,9 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         uint128 currentEpochStart = _minimumDurationCheck(lock.expiry);
         uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
+        // increment delegate action counter (reverts on 256th action via uint8 overflow)
+        ++numOfDelegateActionsPerEpoch[lockId][currentEpochStart];
+
         // Validation per action type
         bool isDelegating = action == DataTypes.DelegationAction.Delegate;
         bool isSwitching = action == DataTypes.DelegationAction.Switch;
@@ -433,10 +436,8 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             
             // switching check: new delegate must not be the same as the old delegate
             if (isSwitching) require(oldDelegate != targetDelegate, Errors.InvalidDelegate());
-
-            // increment delegate action counter (reverts on 256th action via uint8 overflow)
-            ++numOfDelegateActionsPerEpoch[lockId][currentEpochStart];
         }
+
 
         // common veBal variables
         DataTypes.VeBalance memory veGlobal_;
@@ -445,103 +446,111 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         if (isDelegating) {
             
             // ---- Update global, owner, targetDelegate to currentEpochStart [STORAGE: updates lastUpdatedTimestamp for global & accounts] ----
-            DataTypes.VeBalance memory veUser_;
-            DataTypes.VeBalance memory veDelegate_;
-            (veGlobal_, veUser_) = _updateAccountAndGlobalAndPendingDeltas(owner, currentEpochStart, false);
-            (, veDelegate_) = _updateAccountAndGlobalAndPendingDeltas(targetDelegate, currentEpochStart, true);
+                DataTypes.VeBalance memory veUser_;
+                DataTypes.VeBalance memory veDelegate_;
+                (veGlobal_, veUser_) = _updateAccountAndGlobalAndPendingDeltas(owner, currentEpochStart, false);
+                (, veDelegate_) = _updateAccountAndGlobalAndPendingDeltas(targetDelegate, currentEpochStart, true);
 
             // ---- Book pending deltas for user & delegate & aggregated [STORAGE: updates lastUpdatedTimestamp for owner-delegate pair] ----
-            DataTypes.VeBalance memory veDelegatePair_ = _updatePendingForDelegatePair(owner, targetDelegate, currentEpochStart);
+                DataTypes.VeBalance memory veDelegatePair_ = _updatePendingForDelegatePair(owner, targetDelegate, currentEpochStart);
 
             // ---- Storage: update veGlobal & emit events ----
-            veGlobal = veGlobal_;
-            emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-            emit Events.UserUpdated(owner, veUser_.bias, veUser_.slope);
-            emit Events.DelegateUpdated(targetDelegate, veDelegate_.bias, veDelegate_.slope);
-            emit Events.DelegatedAggregationUpdated(owner, targetDelegate, veDelegatePair_.bias, veDelegatePair_.slope);
+                veGlobal = veGlobal_;
+                emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
+                emit Events.UserUpdated(owner, veUser_.bias, veUser_.slope);
+                emit Events.DelegateUpdated(targetDelegate, veDelegate_.bias, veDelegate_.slope);
+                emit Events.DelegatedAggregationUpdated(owner, targetDelegate, veDelegatePair_.bias, veDelegatePair_.slope);
 
             // ------ Handle delegation of lock [only takes effect in the next epoch; not current] ------
 
-            // Scheduled SlopeChanges: shift from user -> delegate
-            userSlopeChanges[owner][lock.expiry] -= lockVeBalance.slope;
-            delegateSlopeChanges[targetDelegate][lock.expiry] += lockVeBalance.slope;
-            userDelegatedSlopeChanges[owner][targetDelegate][lock.expiry] += lockVeBalance.slope;
+                // Scheduled SlopeChanges: shift from user -> delegate
+                userSlopeChanges[owner][lock.expiry] -= lockVeBalance.slope;
+                delegateSlopeChanges[targetDelegate][lock.expiry] += lockVeBalance.slope;
+                userDelegatedSlopeChanges[owner][targetDelegate][lock.expiry] += lockVeBalance.slope;
 
             // --- PendingDeltas: subtract from user, add to both delegate & owner-delegate pair aggregation ---
             
-            _bookPendingSub(userPendingDeltas[owner][nextEpochStart], lockVeBalance);
-            _bookPendingAdd(delegatePendingDeltas[targetDelegate][nextEpochStart], lockVeBalance);
-            _bookPendingAdd(userPendingDeltasForDelegate[owner][targetDelegate][nextEpochStart], lockVeBalance);
+                _bookPendingSub(userPendingDeltas[owner][nextEpochStart], lockVeBalance);
+                _bookPendingAdd(delegatePendingDeltas[targetDelegate][nextEpochStart], lockVeBalance);
+                _bookPendingAdd(userPendingDeltasForDelegate[owner][targetDelegate][nextEpochStart], lockVeBalance);
 
             // storage: update lock to mark it as delegated to targetDelegate
-            lock.delegate = targetDelegate;
-            locks[lockId] = lock;
-            emit Events.LockDelegated(lockId, owner, targetDelegate);
+                lock.delegate = targetDelegate;
+                locks[lockId] = lock;
+                emit Events.LockDelegated(lockId, owner, targetDelegate);
 
         } else if (isSwitching) {  // switch: oldDelegate -> targetDelegate            
 
             // ------ Update global, oldDelegate, targetDelegate to currentEpochStart ------
-            DataTypes.VeBalance memory veOld_;
-            DataTypes.VeBalance memory veNew_;
-            (veGlobal_, veOld_) = _updateAccountAndGlobalAndPendingDeltas(oldDelegate, currentEpochStart, true);
-            (, veNew_) = _updateAccountAndGlobalAndPendingDeltas(targetDelegate, currentEpochStart, true);
-            
+                DataTypes.VeBalance memory veOld_;
+                DataTypes.VeBalance memory veNew_;
+                (veGlobal_, veOld_) = _updateAccountAndGlobalAndPendingDeltas(oldDelegate, currentEpochStart, true);
+                (, veNew_) = _updateAccountAndGlobalAndPendingDeltas(targetDelegate, currentEpochStart, true);
+                
             // ------ Book pending deltas for owner-oldDelegate pair & owner-targetDelegate pair ------
-            DataTypes.VeBalance memory vePairOld_ = _updatePendingForDelegatePair(owner, oldDelegate, currentEpochStart);
-            DataTypes.VeBalance memory vePairNew_ = _updatePendingForDelegatePair(owner, targetDelegate, currentEpochStart);
-            
-            // ---- Storage: update veGlobal & emit events ----
-            veGlobal = veGlobal_;
-            emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-            emit Events.DelegateUpdated(oldDelegate, veOld_.bias, veOld_.slope);
-            emit Events.DelegateUpdated(targetDelegate, veNew_.bias, veNew_.slope);
-            emit Events.DelegatedAggregationUpdated(owner, oldDelegate, vePairOld_.bias, vePairOld_.slope);
-            emit Events.DelegatedAggregationUpdated(owner, targetDelegate, vePairNew_.bias, vePairNew_.slope);
+                DataTypes.VeBalance memory vePairOld_ = _updatePendingForDelegatePair(owner, oldDelegate, currentEpochStart);
+                DataTypes.VeBalance memory vePairNew_ = _updatePendingForDelegatePair(owner, targetDelegate, currentEpochStart);
+                
+            // ------ Storage: update veGlobal & emit events ------
+                veGlobal = veGlobal_;
+                emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
+                emit Events.DelegateUpdated(oldDelegate, veOld_.bias, veOld_.slope);
+                emit Events.DelegateUpdated(targetDelegate, veNew_.bias, veNew_.slope);
+                emit Events.DelegatedAggregationUpdated(owner, oldDelegate, vePairOld_.bias, vePairOld_.slope);
+                emit Events.DelegatedAggregationUpdated(owner, targetDelegate, vePairNew_.bias, vePairNew_.slope);
 
             // ------ Handle delegation of lock [only takes effect in the next epoch; not current] ------
 
-            // Scheduled SlopeChanges: shift from old -> new delegate
-            delegateSlopeChanges[oldDelegate][lock.expiry] -= lockVeBalance.slope;
-            delegateSlopeChanges[targetDelegate][lock.expiry] += lockVeBalance.slope;
+                // Scheduled SlopeChanges: shift from old -> new delegate
+                delegateSlopeChanges[oldDelegate][lock.expiry] -= lockVeBalance.slope;
+                delegateSlopeChanges[targetDelegate][lock.expiry] += lockVeBalance.slope;
 
-            // PendingDeltas: subtract from oldDelegate, add to targetDelegate (similar for the delegate pairs)
-            _bookPendingSub(delegatePendingDeltas[oldDelegate][nextEpochStart], lockVeBalance);
-            _bookPendingAdd(delegatePendingDeltas[targetDelegate][nextEpochStart], lockVeBalance);
-            _bookPendingSub(userPendingDeltasForDelegate[owner][oldDelegate][nextEpochStart], lockVeBalance);
-            _bookPendingAdd(userPendingDeltasForDelegate[owner][targetDelegate][nextEpochStart], lockVeBalance);
+                // Shift per-pair slope: from old delegate to new delegate
+                userDelegatedSlopeChanges[owner][oldDelegate][lock.expiry] -= lockVeBalance.slope;
+                userDelegatedSlopeChanges[owner][targetDelegate][lock.expiry] += lockVeBalance.slope;
 
-            // storage: update lock to mark it as delegated to targetDelegate
-            lock.delegate = targetDelegate;
-            locks[lockId] = lock;
-            emit Events.LockDelegateSwitched(lockId, owner, oldDelegate, targetDelegate);
+                // PendingDeltas: subtract from oldDelegate, add to targetDelegate (similar for the delegate pairs)
+                _bookPendingSub(delegatePendingDeltas[oldDelegate][nextEpochStart], lockVeBalance);
+                _bookPendingAdd(delegatePendingDeltas[targetDelegate][nextEpochStart], lockVeBalance);
+                _bookPendingSub(userPendingDeltasForDelegate[owner][oldDelegate][nextEpochStart], lockVeBalance);
+                _bookPendingAdd(userPendingDeltasForDelegate[owner][targetDelegate][nextEpochStart], lockVeBalance);
+
+                // storage: update lock to mark it as delegated to targetDelegate
+                lock.delegate = targetDelegate;
+                locks[lockId] = lock;
+                emit Events.LockDelegateSwitched(lockId, owner, oldDelegate, targetDelegate);
 
         } else {                   // undelegate: delegate loses, user gains
             
             // ------ Update global, owner, delegate to currentEpochStart ------
-            DataTypes.VeBalance memory veUser_;
-            DataTypes.VeBalance memory veDelegate_;
-            (veGlobal_, veUser_) = _updateAccountAndGlobalAndPendingDeltas(owner, currentEpochStart, false);
-            (, veDelegate_) = _updateAccountAndGlobalAndPendingDeltas(oldDelegate, currentEpochStart, true);
-            // ------ Book pending deltas for owner-delegate pair ------
-            DataTypes.VeBalance memory vePair_ = _updatePendingForDelegatePair(owner, oldDelegate, currentEpochStart);
+                DataTypes.VeBalance memory veUser_;
+                DataTypes.VeBalance memory veDelegate_;
+                (veGlobal_, veUser_) = _updateAccountAndGlobalAndPendingDeltas(owner, currentEpochStart, false);
+                (, veDelegate_) = _updateAccountAndGlobalAndPendingDeltas(oldDelegate, currentEpochStart, true);
 
-            // ---- Storage: update veGlobal & emit events ----
-            veGlobal = veGlobal_;
-            emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-            emit Events.UserUpdated(owner, veUser_.bias, veUser_.slope);
-            emit Events.DelegateUpdated(oldDelegate, veDelegate_.bias, veDelegate_.slope);
-            emit Events.DelegatedAggregationUpdated(owner, oldDelegate, vePair_.bias, vePair_.slope);
+            // ------ Book pending deltas for owner-delegate pair ------
+                DataTypes.VeBalance memory vePair_ = _updatePendingForDelegatePair(owner, oldDelegate, currentEpochStart);
+
+            // ------ Storage: update veGlobal & emit events ------
+                veGlobal = veGlobal_;
+                emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
+                emit Events.UserUpdated(owner, veUser_.bias, veUser_.slope);
+                emit Events.DelegateUpdated(oldDelegate, veDelegate_.bias, veDelegate_.slope);
+                emit Events.DelegatedAggregationUpdated(owner, oldDelegate, vePair_.bias, vePair_.slope);
 
             // ------ Handle delegation of lock [only takes effect in the next epoch; not current] ------
 
-            // Scheduled SlopeChanges: shift from delegate -> owner
-            delegateSlopeChanges[oldDelegate][lock.expiry] -= lockVeBalance.slope;
-            userSlopeChanges[owner][lock.expiry] += lockVeBalance.slope;
+                // Scheduled SlopeChanges: shift from delegate -> owner
+                delegateSlopeChanges[oldDelegate][lock.expiry] -= lockVeBalance.slope;
+                userSlopeChanges[owner][lock.expiry] += lockVeBalance.slope;
+                
+                // Shift per-pair slope: from old delegate to user
+                userDelegatedSlopeChanges[owner][oldDelegate][lock.expiry] -= lockVeBalance.slope;
 
-            // Pending: subtract from delegate & pair, add to owner
-            _bookPendingSub(delegatePendingDeltas[oldDelegate][nextEpochStart], lockVeBalance);
-            _bookPendingSub(userPendingDeltasForDelegate[owner][oldDelegate][nextEpochStart], lockVeBalance);
-            _bookPendingAdd(userPendingDeltas[owner][nextEpochStart], lockVeBalance);
+                // Pending: subtract from delegate & pair, add to owner
+                _bookPendingSub(delegatePendingDeltas[oldDelegate][nextEpochStart], lockVeBalance);
+                _bookPendingSub(userPendingDeltasForDelegate[owner][oldDelegate][nextEpochStart], lockVeBalance);
+                _bookPendingAdd(userPendingDeltas[owner][nextEpochStart], lockVeBalance);
 
 
             delete lock.delegate;
@@ -945,6 +954,53 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return (veGlobal_, veAccount_);
     }
 
+    function _updatePendingForDelegatePair(address user, address delegate, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory) {
+        uint128 pairLastUpdatedAt = userDelegatedPairLastUpdatedTimestamp[user][delegate];
+
+        // init user veUser
+        DataTypes.VeBalance memory vePair_;
+
+        // if the pair has never been updated, return the initial aggregated veBalance
+        if(pairLastUpdatedAt == 0) {
+            // update the last updated timestamp
+            userDelegatedPairLastUpdatedTimestamp[user][delegate] = currentEpochStart;
+            return vePair_;
+        }
+
+        // copy the previous aggregated veBalance to mem [if the pair is already up to date, return]
+        vePair_ = delegatedAggregationHistory[user][delegate][pairLastUpdatedAt];
+        if(pairLastUpdatedAt == currentEpochStart) return vePair_; 
+
+        // update pair's aggregated veBalance to current epoch start
+        while(pairLastUpdatedAt < currentEpochStart) {
+
+            // advance to next epoch
+            pairLastUpdatedAt += EpochMath.EPOCH_DURATION;
+
+            // apply decay to the aggregated veBalance
+            vePair_ = _subtractExpired(vePair_, userDelegatedSlopeChanges[user][delegate][pairLastUpdatedAt], pairLastUpdatedAt);
+            
+            // get the pending delta for the current epoch
+            DataTypes.VeDeltas storage deltaPtr = userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
+            
+            // apply the pending deltas to the vePair [add then sub]
+            if (deltaPtr.hasAddition) vePair_ = _add(vePair_, deltaPtr.additions);
+            if (deltaPtr.hasSubtraction) vePair_ = _sub(vePair_, deltaPtr.subtractions);
+
+            // STORAGE: book veBalance for epoch 
+            delegatedAggregationHistory[user][delegate][pairLastUpdatedAt] = vePair_;
+
+            // clean up after applying
+            delete userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
+        }
+
+        // update the last updated timestamp
+        userDelegatedPairLastUpdatedTimestamp[user][delegate] = pairLastUpdatedAt;
+
+        return vePair_;
+    }
+
+
     /**
      * @dev Internal function to handle lock modifications (amount or duration changes)
      * @param veGlobal_ Current global veBalance (already updated to currentEpochStart)
@@ -1041,53 +1097,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         return newVeBalance;
     }
-
-    function _updatePendingForDelegatePair(address user, address delegate, uint128 currentEpochStart) internal returns (DataTypes.VeBalance memory) {
-        uint128 pairLastUpdatedAt = userDelegatedPairLastUpdatedTimestamp[user][delegate];
-
-        // init user veUser
-        DataTypes.VeBalance memory vePair_;
-
-        // if the pair has never been updated, return the initial aggregated veBalance
-        if(pairLastUpdatedAt == 0) {
-            // update the last updated timestamp
-            userDelegatedPairLastUpdatedTimestamp[user][delegate] = currentEpochStart;
-            return vePair_;
-        }
-
-        // copy the previous aggregated veBalance to mem [if the pair is already up to date, return]
-        vePair_ = delegatedAggregationHistory[user][delegate][pairLastUpdatedAt];
-        if(pairLastUpdatedAt == currentEpochStart) return vePair_; 
-
-        // update pair's aggregated veBalance to current epoch start
-        while(pairLastUpdatedAt < currentEpochStart) {
-
-            // advance to next epoch
-            pairLastUpdatedAt += EpochMath.EPOCH_DURATION;
-
-            // apply decay to the aggregated veBalance
-            vePair_ = _subtractExpired(vePair_, userDelegatedSlopeChanges[user][delegate][pairLastUpdatedAt], pairLastUpdatedAt);
-            
-            // get the pending delta for the current epoch
-            DataTypes.VeDeltas storage deltaPtr = userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
-            
-            // apply the pending deltas to the vePair [add then sub]
-            if (deltaPtr.hasAddition) vePair_ = _add(vePair_, deltaPtr.additions);
-            if (deltaPtr.hasSubtraction) vePair_ = _sub(vePair_, deltaPtr.subtractions);
-
-            // STORAGE: book veBalance for epoch 
-            delegatedAggregationHistory[user][delegate][pairLastUpdatedAt] = vePair_;
-
-            // clean up after applying
-            delete userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
-        }
-
-        // update the last updated timestamp
-        userDelegatedPairLastUpdatedTimestamp[user][delegate] = pairLastUpdatedAt;
-
-        return vePair_;
-    }
-    
+ 
 
 //------------------------------ Internal: helper functions----------------------------------------------
 

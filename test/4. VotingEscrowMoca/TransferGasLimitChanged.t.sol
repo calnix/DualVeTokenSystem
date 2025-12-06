@@ -8,7 +8,7 @@ import "./veUserTest.t.sol";
 
 // Inherits from StateE3_User2_CreateLock3 where lock1 is about to expire
 // lock1 expires at end of epoch 3, we warp to epoch 4 to unlock
-abstract contract StateT1_TransferGasLimitChanged is StateE3_User2_CreateLock3 {
+abstract contract StateE3_TransferGasLimitChanged is StateE3_User2_CreateLock3 {
 
     function setUp() public virtual override {
         super.setUp();
@@ -19,7 +19,7 @@ abstract contract StateT1_TransferGasLimitChanged is StateE3_User2_CreateLock3 {
     }
 }
 
-contract StateT1_TransferGasLimitChanged_Test is StateT1_TransferGasLimitChanged {
+contract StateE3_TransferGasLimitChanged_Test is StateE3_TransferGasLimitChanged {
 
     // ---- Negative tests: setMocaTransferGasLimit ----
 

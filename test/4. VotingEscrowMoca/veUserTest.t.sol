@@ -25,7 +25,6 @@ abstract contract StateE1_Deploy is TestingHarness {
         So we need to use a dummy variable to prevent the compiler from inlining the functions.
     */
     uint256 private dummy; // so that solidity compiler does not optimize out the functions
-    // Removed duplicate MOCA_TRANSFER_GAS_LIMIT here
 
     function setUp() public virtual override {
         super.setUp();
