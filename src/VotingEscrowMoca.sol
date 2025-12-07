@@ -425,7 +425,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     }
 
 
-    function _preDelegationChecksAndUpdates(bytes32 lockId, DataTypes.DelegationType action, address targetDelegate) internal returns (uint128 currentEpochStart, DataTypes.Lock memory){
+    function _preDelegationChecksAndUpdates(bytes32 lockId, DataTypes.DelegationType action, address targetDelegate) internal returns (uint128, DataTypes.Lock memory){
         DataTypes.Lock memory lock = locks[lockId];
         
         // sanity check: caller must be the lock owner
@@ -503,6 +503,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             emit Events.DelegatedAggregationUpdated(lock.owner, targetDelegate, vePairSecond_.bias, vePairSecond_.slope);
         }
 
+        return (currentEpochStart, lock);
     }
 
 
