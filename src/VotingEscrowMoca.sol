@@ -12,8 +12,10 @@ import {EpochMath} from "./libraries/EpochMath.sol";
 import {DataTypes} from "./libraries/DataTypes.sol";
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
-// external libraries
-//import {VeEmergencyExitLib} from "./libraries/VeEmergencyExitLib.sol";
+
+// 
+import {VeMathLib} from "./libraries/VeMathLib.sol";
+import {VeDelegationLib} from "./libraries/VeDelegationLib.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";
@@ -96,10 +98,6 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
         address monitorBot, address emergencyExitHandler) {
 
-        //@audit calnix: possibly redundant: only matters if chain is not following UNIX timestamp for block.timestamp
-        // sanity check: chain is operating on Unix timestamp 
-        //require(block.timestamp > EpochMath.EPOCH_DURATION, Errors.InvalidTimestamp());
-
         // wrapped moca 
         require(wMoca_ != address(0), Errors.InvalidAddress());
         WMOCA = wMoca_;
@@ -165,7 +163,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         require(EpochMath.isValidEpochTime(expiry), Errors.InvalidEpochTime());
 
         // check: lock will minimally exist for 3 epochs [current + 2 more epochs]
-        uint128 currentEpochStart = _minimumDurationCheck(expiry);
+        uint128 currentEpochStart = VeMathLib.minimumDurationCheck(expiry);
         // check: lock duration is within allowed range [min check handled by _minimumDurationCheck]
         require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, Errors.InvalidLockDuration());
 
@@ -237,7 +235,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         require(oldLock.owner == msg.sender, Errors.InvalidLockId());
 
         // check: lock has at least 3 epochs left before expiry [current + 2 more epochs]
-        uint128 currentEpochStart = _minimumDurationCheck(oldLock.expiry);
+        uint128 currentEpochStart = VeMathLib.minimumDurationCheck(oldLock.expiry);
 
         // Enforce minimum increment amount to avoid precision loss
         uint128 mocaToAdd = uint128(msg.value);
@@ -290,7 +288,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         require(oldLock.owner == msg.sender, Errors.InvalidLockId());
         
         // check: lock has at least 3 epochs left before expiry [current + 2 more epochs]
-        uint128 currentEpochStart = _minimumDurationCheck(oldLock.expiry);
+        uint128 currentEpochStart = VeMathLib.minimumDurationCheck(oldLock.expiry);
 
         // check: new expiry is a valid epoch time & within allowed range
         uint128 newExpiry = oldLock.expiry + durationToIncrease;
@@ -392,182 +390,121 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 //------------------------------- Delegation functions----------------------------------------------------
 
     function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
-        _handleDelegation(lockId, DataTypes.DelegationAction.Delegate, delegate);
+        (uint128 currentEpochStart, DataTypes.Lock memory lock) 
+            = _preDelegationChecksAndUpdates(lockId, DataTypes.DelegationType.Delegate, delegate);
+
+        VeDelegationLib.executeDelegateLock(
+            lock, currentEpochStart, delegate, locks,
+            userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges, 
+            userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate
+        );
     }
 
     function switchDelegate(bytes32 lockId, address newDelegate) external whenNotPaused {
-        _handleDelegation(lockId, DataTypes.DelegationAction.Switch, newDelegate);
+        (uint128 currentEpochStart, DataTypes.Lock memory lock) 
+            = _preDelegationChecksAndUpdates(lockId, DataTypes.DelegationType.Switch, newDelegate);
+
+
+        VeDelegationLib.executeSwitchDelegateLock(
+            lock, currentEpochStart, newDelegate, locks,
+            delegateSlopeChanges, delegatePendingDeltas, 
+            userDelegatedSlopeChanges, userPendingDeltasForDelegate
+        );
     }
 
     function undelegateLock(bytes32 lockId) external whenNotPaused {
-        _handleDelegation(lockId, DataTypes.DelegationAction.Undelegate, address(0));
+        (uint128 currentEpochStart, DataTypes.Lock memory lock) 
+            = _preDelegationChecksAndUpdates(lockId, DataTypes.DelegationType.Undelegate, address(0));
+
+
+        VeDelegationLib.executeUndelegateLock(
+            lock, currentEpochStart, locks,
+            userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges,
+            userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate
+        );
     }
 
-    function _handleDelegation(bytes32 lockId, DataTypes.DelegationAction action, address targetDelegate) internal {
+
+    function _preDelegationChecksAndUpdates(bytes32 lockId, DataTypes.DelegationType action, address targetDelegate) internal returns (uint128 currentEpochStart, DataTypes.Lock memory){
         DataTypes.Lock memory lock = locks[lockId];
-        address owner = lock.owner;
-        address oldDelegate = lock.delegate;
         
         // sanity check: caller must be the lock owner
-        require(owner == msg.sender, Errors.InvalidOwner());
+        require(lock.owner == msg.sender, Errors.InvalidOwner());
 
         // get current and next epoch start
-        uint128 currentEpochStart = _minimumDurationCheck(lock.expiry);
-        uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+        uint128 currentEpochStart = VeMathLib.minimumDurationCheck(lock.expiry);
 
         // increment delegate action counter (reverts on 256th action via uint8 overflow)
         ++numOfDelegateActionsPerEpoch[lockId][currentEpochStart];
 
         // Validation per action type
-        bool isDelegating = action == DataTypes.DelegationAction.Delegate;
-        bool isSwitching = action == DataTypes.DelegationAction.Switch;
-        
+        bool isDelegating = action == DataTypes.DelegationType.Delegate;
+        bool isSwitching = action == DataTypes.DelegationType.Switch;
+
         // Current Delegation State: Delegate requires NOT delegated; Switch/Undelegate require IS delegated
         if (isDelegating) {
-            require(oldDelegate == address(0), Errors.LockAlreadyDelegated());        // Delegate
+            require(lock.delegate == address(0), Errors.LockAlreadyDelegated());        // Delegate
         } else { 
-            require(oldDelegate != address(0), Errors.LockNotDelegated());           // Switch or Undelegate
+            require(lock.delegate != address(0), Errors.LockNotDelegated());           // Switch or Undelegate
         }
 
-        // Target validation + counter (Delegate and Switch only)
+        // Target validation (Delegate and Switch only)
         if (isDelegating || isSwitching) {
-            require(targetDelegate != owner, Errors.InvalidDelegate());
+            require(targetDelegate != lock.owner, Errors.InvalidDelegate());
             require(isRegisteredDelegate[targetDelegate], Errors.DelegateNotRegistered());
             
             // switching check: new delegate must not be the same as the old delegate
-            if (isSwitching) require(oldDelegate != targetDelegate, Errors.InvalidDelegate());
+            if (isSwitching) require(lock.delegate != targetDelegate, Errors.InvalidDelegate());
         }
 
+        // ---- Unified account updates ----
+        // determine accounts to update based on action type
+        address userOrOldDelegate = isSwitching ? lock.delegate : lock.owner;
+        address delegateToUpdate = isSwitching || isDelegating ? targetDelegate : lock.delegate; 
+        bool updateAsDelegate = isSwitching; // Switch: update oldDelegate; Delegate/Undelegate: update user
 
-        // common veBal variables
         DataTypes.VeBalance memory veGlobal_;
-        DataTypes.VeBalance memory lockVeBalance = _convertToVeBalance(lock);
-        
-        if (isDelegating) {
-            
-            // ---- Update global, owner, targetDelegate to currentEpochStart [STORAGE: updates lastUpdatedTimestamp for global & accounts] ----
-                DataTypes.VeBalance memory veUser_;
-                DataTypes.VeBalance memory veDelegate_;
-                (veGlobal_, veUser_) = _updateAccountAndGlobalAndPendingDeltas(owner, currentEpochStart, false);
-                (, veDelegate_) = _updateAccountAndGlobalAndPendingDeltas(targetDelegate, currentEpochStart, true);
+        DataTypes.VeBalance memory veFirst_;
+        DataTypes.VeBalance memory veSecond_;
 
-            // ---- Book pending deltas for user & delegate & aggregated [STORAGE: updates lastUpdatedTimestamp for owner-delegate pair] ----
-                DataTypes.VeBalance memory veDelegatePair_ = _updatePendingForDelegatePair(owner, targetDelegate, currentEpochStart);
+        // Update first account (user or oldDelegate) + global [updateAsDelegate -> delegate(): false, switch(): true, undelegate(): false]
+        (veGlobal_, veFirst_) = _updateAccountAndGlobalAndPendingDeltas(userOrOldDelegate, currentEpochStart, updateAsDelegate);
 
-            // ---- Storage: update veGlobal & emit events ----
-                veGlobal = veGlobal_;
-                emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-                emit Events.UserUpdated(owner, veUser_.bias, veUser_.slope);
-                emit Events.DelegateUpdated(targetDelegate, veDelegate_.bias, veDelegate_.slope);
-                emit Events.DelegatedAggregationUpdated(owner, targetDelegate, veDelegatePair_.bias, veDelegatePair_.slope);
-
-            // ------ Handle delegation of lock [only takes effect in the next epoch; not current] ------
-
-                // Scheduled SlopeChanges: shift from user -> delegate
-                userSlopeChanges[owner][lock.expiry] -= lockVeBalance.slope;
-                delegateSlopeChanges[targetDelegate][lock.expiry] += lockVeBalance.slope;
-                userDelegatedSlopeChanges[owner][targetDelegate][lock.expiry] += lockVeBalance.slope;
-
-            // --- PendingDeltas: subtract from user, add to both delegate & owner-delegate pair aggregation ---
-            
-                _bookPendingSub(userPendingDeltas[owner][nextEpochStart], lockVeBalance);
-                _bookPendingAdd(delegatePendingDeltas[targetDelegate][nextEpochStart], lockVeBalance);
-                _bookPendingAdd(userPendingDeltasForDelegate[owner][targetDelegate][nextEpochStart], lockVeBalance);
-
-            // storage: update lock to mark it as delegated to targetDelegate
-                lock.delegate = targetDelegate;
-                locks[lockId] = lock;
-                emit Events.LockDelegated(lockId, owner, targetDelegate);
-
-        } else if (isSwitching) {  // switch: oldDelegate -> targetDelegate            
-
-            // ------ Update global, oldDelegate, targetDelegate to currentEpochStart ------
-                DataTypes.VeBalance memory veOld_;
-                DataTypes.VeBalance memory veNew_;
-                (veGlobal_, veOld_) = _updateAccountAndGlobalAndPendingDeltas(oldDelegate, currentEpochStart, true);
-                (, veNew_) = _updateAccountAndGlobalAndPendingDeltas(targetDelegate, currentEpochStart, true);
-                
-            // ------ Book pending deltas for owner-oldDelegate pair & owner-targetDelegate pair ------
-                DataTypes.VeBalance memory vePairOld_ = _updatePendingForDelegatePair(owner, oldDelegate, currentEpochStart);
-                DataTypes.VeBalance memory vePairNew_ = _updatePendingForDelegatePair(owner, targetDelegate, currentEpochStart);
-                
-            // ------ Storage: update veGlobal & emit events ------
-                veGlobal = veGlobal_;
-                emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-                emit Events.DelegateUpdated(oldDelegate, veOld_.bias, veOld_.slope);
-                emit Events.DelegateUpdated(targetDelegate, veNew_.bias, veNew_.slope);
-                emit Events.DelegatedAggregationUpdated(owner, oldDelegate, vePairOld_.bias, vePairOld_.slope);
-                emit Events.DelegatedAggregationUpdated(owner, targetDelegate, vePairNew_.bias, vePairNew_.slope);
-
-            // ------ Handle delegation of lock [only takes effect in the next epoch; not current] ------
-
-                // Scheduled SlopeChanges: shift from old -> new delegate
-                delegateSlopeChanges[oldDelegate][lock.expiry] -= lockVeBalance.slope;
-                delegateSlopeChanges[targetDelegate][lock.expiry] += lockVeBalance.slope;
-
-                // Shift per-pair slope: from old delegate to new delegate
-                userDelegatedSlopeChanges[owner][oldDelegate][lock.expiry] -= lockVeBalance.slope;
-                userDelegatedSlopeChanges[owner][targetDelegate][lock.expiry] += lockVeBalance.slope;
-
-                // PendingDeltas: subtract from oldDelegate, add to targetDelegate (similar for the delegate pairs)
-                _bookPendingSub(delegatePendingDeltas[oldDelegate][nextEpochStart], lockVeBalance);
-                _bookPendingAdd(delegatePendingDeltas[targetDelegate][nextEpochStart], lockVeBalance);
-                _bookPendingSub(userPendingDeltasForDelegate[owner][oldDelegate][nextEpochStart], lockVeBalance);
-                _bookPendingAdd(userPendingDeltasForDelegate[owner][targetDelegate][nextEpochStart], lockVeBalance);
-
-                // storage: update lock to mark it as delegated to targetDelegate
-                lock.delegate = targetDelegate;
-                locks[lockId] = lock;
-                emit Events.LockDelegateSwitched(lockId, owner, oldDelegate, targetDelegate);
-
-        } else {                   // undelegate: delegate loses, user gains
-            
-            // ------ Update global, owner, delegate to currentEpochStart ------
-                DataTypes.VeBalance memory veUser_;
-                DataTypes.VeBalance memory veDelegate_;
-                (veGlobal_, veUser_) = _updateAccountAndGlobalAndPendingDeltas(owner, currentEpochStart, false);
-                (, veDelegate_) = _updateAccountAndGlobalAndPendingDeltas(oldDelegate, currentEpochStart, true);
-
-            // ------ Book pending deltas for owner-delegate pair ------
-                DataTypes.VeBalance memory vePair_ = _updatePendingForDelegatePair(owner, oldDelegate, currentEpochStart);
-
-            // ------ Storage: update veGlobal & emit events ------
-                veGlobal = veGlobal_;
-                emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-                emit Events.UserUpdated(owner, veUser_.bias, veUser_.slope);
-                emit Events.DelegateUpdated(oldDelegate, veDelegate_.bias, veDelegate_.slope);
-                emit Events.DelegatedAggregationUpdated(owner, oldDelegate, vePair_.bias, vePair_.slope);
-
-            // ------ Handle delegation of lock [only takes effect in the next epoch; not current] ------
-
-                // Scheduled SlopeChanges: shift from delegate -> owner
-                delegateSlopeChanges[oldDelegate][lock.expiry] -= lockVeBalance.slope;
-                userSlopeChanges[owner][lock.expiry] += lockVeBalance.slope;
-                
-                // Shift per-pair slope: from old delegate to user
-                userDelegatedSlopeChanges[owner][oldDelegate][lock.expiry] -= lockVeBalance.slope;
-
-                // Pending: subtract from delegate & pair, add to owner
-                _bookPendingSub(delegatePendingDeltas[oldDelegate][nextEpochStart], lockVeBalance);
-                _bookPendingSub(userPendingDeltasForDelegate[owner][oldDelegate][nextEpochStart], lockVeBalance);
-                _bookPendingAdd(userPendingDeltas[owner][nextEpochStart], lockVeBalance);
+        // Update second account (delegate)
+        (, veSecond_) = _updateAccountAndGlobalAndPendingDeltas(delegateToUpdate, currentEpochStart, true);
 
 
-            delete lock.delegate;
-            locks[lockId] = lock;
-            emit Events.LockUndelegated(lockId, owner, oldDelegate);
+        // ---- Unified pair updates ----
+        // First pair: user -> (Switch(): oldDelegate, Delegate(): targetDelegate, Undelegate(): delegate)
+        address firstPairDelegate = isDelegating ? targetDelegate : lock.delegate;
+        DataTypes.VeBalance memory vePairFirst_ = _updatePendingForDelegatePair(lock.owner, firstPairDelegate, currentEpochStart);
+
+        // Second pair: only for Switch(): user -> targetDelegate
+        DataTypes.VeBalance memory vePairSecond_;
+        if (isSwitching) {
+            vePairSecond_ = _updatePendingForDelegatePair(lock.owner, targetDelegate, currentEpochStart);
         }
+
+        // ---- Storage: update veGlobal once ----
+        veGlobal = veGlobal_;
+        emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
+
+        // ---- Emit account events ----
+        if (updateAsDelegate) {
+            emit Events.DelegateUpdated(userOrOldDelegate, veFirst_.bias, veFirst_.slope);
+        } else {
+            emit Events.UserUpdated(userOrOldDelegate, veFirst_.bias, veFirst_.slope);
+        }
+        emit Events.DelegateUpdated(delegateToUpdate, veSecond_.bias, veSecond_.slope);
+
+        // ---- Emit pair events ----
+        emit Events.DelegatedAggregationUpdated(lock.owner, firstPairDelegate, vePairFirst_.bias, vePairFirst_.slope);
+        if (isSwitching) {
+            emit Events.DelegatedAggregationUpdated(lock.owner, targetDelegate, vePairSecond_.bias, vePairSecond_.slope);
+        }
+
     }
 
-    function _bookPendingAdd(DataTypes.VeDeltas storage delta, DataTypes.VeBalance memory ve) internal {
-        delta.hasAddition = true;
-        delta.additions = _add(delta.additions, ve);
-    }
-
-    function _bookPendingSub(DataTypes.VeDeltas storage delta, DataTypes.VeBalance memory ve) internal {
-        delta.hasSubtraction = true;
-        delta.subtractions = _add(delta.subtractions, ve);
-    }
 
 //------------------------------ CronJob: Update state functions ----------------------------------------
 
@@ -684,7 +621,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         require(EpochMath.isValidEpochTime(expiry), Errors.InvalidEpochTime());
 
         // check: lock will minimally exist for 3 epochs [current + 2 more epochs]
-        uint128 currentEpochStart = _minimumDurationCheck(expiry);
+        uint128 currentEpochStart = VeMathLib.minimumDurationCheck(expiry);
         require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, Errors.InvalidLockDuration());
 
         // update global veBalance
@@ -1097,6 +1034,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         return newVeBalance;
     }
+
  
 
 //------------------------------ Internal: helper functions----------------------------------------------
@@ -1111,33 +1049,6 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         require(totalAmount >= Constants.MIN_LOCK_AMOUNT, Errors.InvalidAmount());
     }
     
-    /*  lock must have at least 3 epochs `liveliness` before expiry: current + 2 more epochs
-        - non-zero voting power in the current and next epoch.  
-        - 0 voting power in the 3rd epoch.
-        This is a result of forward-decay: benchmarking voting power to the end of the epoch [to freeze intra-epoch decay] 
-        
-        We also want locks created to be delegated, and since delegation takes effect in the next epoch;
-        need to check that the lock has at least 3 epochs left, before expiry: current + 2 epochs.
-
-        Example:
-        - Epoch 1: User delegates lock; user still retains voting rights of lock 
-        - Epoch 2: Delegation takes effect; delegate can now vote with lock
-        - Epoch 3: Lock's voting power is forward decay-ed to 0
-
-        Lock must expire at the end of Epoch3 for the above to be feasible. 
-        Therefore, the minimum expiry of a lock is currentEpoch + 3 epochs [currentEpoch + 2 more epochs]
-    */  
-    function _minimumDurationCheck(uint128 expiry) internal view returns (uint128) {
-        // get current epoch start
-        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
-
-        // multiply start by 3, to get the end of the 3rd epoch [lock has 0 voting power in the 3rd epoch]
-        require(expiry >= currentEpochStart + (3 * EpochMath.EPOCH_DURATION), Errors.LockExpiresTooSoon());
-
-        return currentEpochStart;
-    }
-
-
 //------------------------------ Internal: lib-----------------------------------------------------------   
     /** note: for _subtractExpired(), _convertToVeBalance(), _getValueAt()
 

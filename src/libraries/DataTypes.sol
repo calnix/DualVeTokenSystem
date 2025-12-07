@@ -178,11 +178,13 @@ library DataTypes {
     }
 
     // for delegateLock, switchDelegate, undelegateLock
-    enum DelegationAction {
+    enum DelegationType {
         Delegate,
         Switch,
         Undelegate
     }
+
+    
 
 // --------- EscrowedMoca.sol -------
 

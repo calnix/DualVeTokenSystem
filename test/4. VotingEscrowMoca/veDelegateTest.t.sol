@@ -120,7 +120,7 @@ abstract contract StateE1_User1_CreateLock1 is StateE1_Deploy {
 
 contract StateE1_User1_CreateLock1_Test is StateE1_User1_CreateLock1 {
 
-    function test_User1_balanceAtEpochEnd_Epoch1() public {
+    function test_User1_BalanceAtEpochEnd_E1() public {
         uint128 currentEpoch = getCurrentEpochNumber();
         
         // User1's balance at end of current epoch
@@ -673,42 +673,40 @@ contract StateE2_Lock1DelegationTakesEffect_Test is StateE2_Lock1DelegationTakes
 
     // ============ State Transition Test ============
 
-        function test_StateTransition_User1_CreatesLock2() public {
-            
-            // Setup: fund user1 for lock2
-            vm.startPrank(user1);
-                vm.deal(user1, 400 ether);
-                esMoca.escrowMoca{value: 200 ether}();
-                esMoca.approve(address(veMoca), 200 ether);
-            vm.stopPrank();
-            
-            // Lock2 parameters: long duration (expires E10)
-            uint128 lock2Expiry = uint128(getEpochEndTimestamp(10));
-            uint128 lock2MocaAmount = 200 ether;
-            uint128 lock2EsMocaAmount = 200 ether;
-            bytes32 expectedLock2Id = generateLockId(block.number, user1);
-            
-            // Capture state before
-            UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(user1, expectedLock2Id, lock2Expiry, 0, user3, address(0));
-            
-            // Execute: create lock2 and delegate to user3
-            vm.startPrank(user1);
-                bytes32 lock2Id = veMoca.createLock{value: lock2MocaAmount}(lock2Expiry, lock2EsMocaAmount);
-                veMoca.delegateLock(lock2Id, user3);
-            vm.stopPrank();
-            
-            // Verify lock created
-            DataTypes.Lock memory lock2 = getLock(lock2Id);
-            assertEq(lock2.owner, user1, "Lock2 owner");
-            assertEq(lock2.delegate, user3, "Lock2 delegate");
-            assertEq(lock2.moca, lock2MocaAmount, "Lock2 moca");
-            assertEq(lock2.esMoca, lock2EsMocaAmount, "Lock2 esMoca");
-            assertEq(lock2.expiry, lock2Expiry, "Lock2 expiry");
-        }
+    // user1 creates lock2 and delegates to user3; but delegation only applies in E3
+    function test_StateTransition_User1CreatesLock2_DelegatesToUser3_E2() public {
+        
+        // Setup: fund user1 for lock2
+        vm.startPrank(user1);
+            vm.deal(user1, 400 ether);
+            esMoca.escrowMoca{value: 200 ether}();
+            esMoca.approve(address(veMoca), 200 ether);
+        vm.stopPrank();
+        
+        // Lock2 parameters: long duration (expires E10)
+        uint128 lock2Expiry = uint128(getEpochEndTimestamp(10));
+        uint128 lock2MocaAmount = 200 ether;
+        uint128 lock2EsMocaAmount = 200 ether;
+        
+        // Execute: create lock2 
+        vm.startPrank(user1);
+            bytes32 lock2Id = veMoca.createLock{value: lock2MocaAmount}(lock2Expiry, lock2EsMocaAmount);
+        vm.stopPrank();
 
+        // Capture state before delegation
+        UnifiedStateSnapshot memory beforeState = captureAllStatesPlusDelegates(user1, lock2Id, lock2Expiry, 0, user3, address(0));
+        
+        // Execute: delegate to user3
+        vm.startPrank(user1);
+            veMoca.delegateLock(lock2Id, user3);
+        vm.stopPrank();
+        
+        // Verify delegation
+        verifyDelegateLock(beforeState, user3);
+    }
 }
 
-/*
+
 // =====================================================
 // ================= EPOCH 2 - USER1 CREATES LOCK2 =================
 // =====================================================
@@ -726,23 +724,10 @@ abstract contract StateE2_User1_CreatesLock2 is StateE2_Lock1DelegationTakesEffe
     
     // Captured state before lock2 creation (for verification)
     UnifiedStateSnapshot public stateBeforeLock2Creation;
+    UnifiedStateSnapshot public stateAfterLock2Creation;
     
     function setUp() public virtual override {
         super.setUp();
-        
-        // Apply E1 delegation (bring state up to date before new actions)
-        vm.startPrank(cronJob);
-            address[] memory accounts = new address[](2);
-            accounts[0] = user1;
-            accounts[1] = user3;
-            veMoca.updateAccountsAndPendingDeltas(accounts, false);
-            
-            address[] memory users = new address[](1);
-            users[0] = user1;
-            address[] memory delegates = new address[](1);
-            delegates[0] = user3;
-            veMoca.updateDelegatePairs(users, delegates);
-        vm.stopPrank();
         
         // Lock2 parameters: long duration (expires E10)
         lock2_Expiry = uint128(getEpochEndTimestamp(10));
@@ -766,24 +751,17 @@ abstract contract StateE2_User1_CreatesLock2 is StateE2_Lock1DelegationTakesEffe
             veMoca.delegateLock(lock2_Id, user3);
         vm.stopPrank();
         
-        // Capture lock2 veBalance
+        // Capture lock2 veBalance (ADD THIS LINE)
         lock2_VeBalance = veMoca.getLockVeBalance(lock2_Id);
+
+        // Capture state after lock2 creation
+        stateAfterLock2Creation = captureAllStatesPlusDelegates(user1, lock2_Id, lock2_Expiry, 0, user3, address(0));
     }
 }
 
 contract StateE2_User1_CreatesLock2_Test is StateE2_User1_CreatesLock2 {
 
     // ============ Lock Creation State Tests ============
-
-    function test_Lock2_Created() public {
-        DataTypes.Lock memory lock = getLock(lock2_Id);
-        assertEq(lock.owner, user1, "Lock2 owner");
-        assertEq(lock.delegate, user3, "Lock2 delegate");
-        assertEq(lock.moca, lock2_MocaAmount, "Lock2 moca");
-        assertEq(lock.esMoca, lock2_EsMocaAmount, "Lock2 esMoca");
-        assertEq(lock.expiry, lock2_Expiry, "Lock2 expiry");
-        assertFalse(lock.isUnlocked, "Lock2 not unlocked");
-    }
 
     function test_GlobalState_TwoLocks() public {
         // Verify TOTAL_LOCKED reflects both locks
@@ -798,6 +776,9 @@ contract StateE2_User1_CreatesLock2_Test is StateE2_User1_CreatesLock2 {
         
         uint128 expectedSlope = lock1_VeBalance.slope + lock2_VeBalance.slope;
         assertEq(globalSlope, expectedSlope, "Global slope should be sum of both locks");
+
+        uint128 expectedBias = lock1_VeBalance.bias + lock2_VeBalance.bias;
+        assertEq(globalBias, expectedBias, "Global bias should be sum of both locks");
     }
 
     function test_Lock2_DelegationPendingDeltas_Booked() public {
@@ -814,6 +795,11 @@ contract StateE2_User1_CreatesLock2_Test is StateE2_User1_CreatesLock2 {
         (hasAdd, hasSub, additions, subtractions) = veMoca.delegatePendingDeltas(user3, nextEpochStart);
         assertTrue(hasAdd, "Delegate pending addition booked");
         assertEq(additions.slope, lock2_VeBalance.slope, "Delegate pending add slope = lock2 slope");
+
+        // User-Delegate pair pending deltas should be booked
+        (hasAdd, hasSub, additions, subtractions) = veMoca.userPendingDeltasForDelegate(user1, user3, nextEpochStart);
+        assertTrue(hasAdd, "User-Delegate pair pending addition booked");
+        assertEq(additions.slope, lock2_VeBalance.slope, "User-Delegate pair pending add slope = lock2 slope");
     }
 
     function test_BothLocks_VpAtEpochEnd() public {
@@ -831,6 +817,7 @@ contract StateE2_User1_CreatesLock2_Test is StateE2_User1_CreatesLock2 {
         assertEq(lock2VpAtEnd, expectedLock2Vp, "Lock2 VP at epoch end");
     }
 
+    // lock2 still with user1 as personal lock
     function test_User1_PersonalVp_ReflectsLock2() public {
         // In E2, user1 still has lock2's personal VP (delegation pending, takes effect next epoch)
         // Lock1 delegation already took effect (applied in parent state)
@@ -842,9 +829,9 @@ contract StateE2_User1_CreatesLock2_Test is StateE2_User1_CreatesLock2 {
         assertEq(user1PersonalVp, expectedVp, "User1 personal VP = lock2 (pending delegation)");
     }
 
-    // ============ State Transition Test ============
+    // ============ State Transition Test: user1 increases duration on lock2 ============
 
-    function test_StateTransition_IncreaseDuration_Lock2() public {
+    function test_User1_IncreaseDuration_Lock2Delegated_E2() public {
         // lock2 can have duration increased (far from expiry)
         uint128 targetExpiry = uint128(getEpochEndTimestamp(12)); // extend to E12
         uint128 durationIncrease = targetExpiry - lock2_Expiry;
@@ -864,11 +851,13 @@ contract StateE2_User1_CreatesLock2_Test is StateE2_User1_CreatesLock2 {
     }
 }
 
+
 // =====================================================
 // ================= EPOCH 2 - INCREASE DURATION LOCK2 =================
 // =====================================================
 
-// note: user1 increases duration on lock2 (delegated lock)
+// note: user1 increases duration on lock2 
+// note: lock2 is set to be delegated in E3, so increaseDuration on lock2 will have immediate effect on user1's VP in E2
 abstract contract StateE2_User1_IncreaseDuration_Lock2 is StateE2_User1_CreatesLock2 {
     
     uint128 public lock2_NewExpiry;
@@ -1001,6 +990,7 @@ contract StateE2_User1_IncreaseDuration_Lock2_Test is StateE2_User1_IncreaseDura
     }
 }
 
+/*
 // =====================================================
 // ================= EPOCH 2 - INCREASE AMOUNT LOCK2 =================
 // =====================================================
