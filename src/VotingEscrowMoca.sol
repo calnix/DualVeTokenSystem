@@ -156,50 +156,23 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         // check: lock duration is within allowed range [min check handled by _minimumDurationCheck]
         require(expiry <= block.timestamp + EpochMath.MAX_LOCK_DURATION, Errors.InvalidLockDuration());
 
-        // update user and global veBalance: [STORAGE: updates lastUpdatedTimestamp for: global, user, pending deltas]
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser_) = _updateAccountAndGlobalAndPendingDeltas(msg.sender, currentEpochStart, false);
+        // 1. Create Lock (reuse internal logic)
+        // - Handles amount validation
+        // - Generates Lock ID
+        // - Updates User state (history, slopes) & emits UserUpdated
+        // - Updates Global timestamp (via internal _updateAccountAndGlobalAndPendingDeltas)
+        (bytes32 lockId, DataTypes.VeBalance memory veIncoming) = _createSingleLock(msg.sender, moca, esMoca, expiry, currentEpochStart);
 
-        // --------- generate lockId ---------
 
-            // lockId generation
-            bytes32 lockId;
-            {
-                uint256 salt = block.number;
-                lockId = _generateLockId(salt, msg.sender);
-                while (locks[lockId].owner != address(0)) lockId = _generateLockId(++salt, msg.sender);      // If lockId exists, generate new random Id
-            }
+        // --------- Update global state & schedule slopes ---------
 
-        // --------- create lock ---------
-            DataTypes.Lock memory newLock;
-                newLock.owner = msg.sender;
-                newLock.moca = moca;
-                newLock.esMoca = esMoca;
-                newLock.expiry = expiry;
-            // STORAGE: book lock
-            locks[lockId] = newLock;
+        // Retrieve current global state (guaranteed up-to-date by _createSingleLock)
+        DataTypes.VeBalance memory veGlobal_ = veGlobal;
 
-            // get lock's veBalance
-            DataTypes.VeBalance memory veIncoming = newLock.convertToVeBalance();
-
-            // STORAGE: book checkpoint into lock history 
-            _pushCheckpoint(lockHistory[lockId], veIncoming, uint128(currentEpochStart));
-
-            // emit: lock created
-            emit Events.LockCreated(lockId, msg.sender, newLock.moca, newLock.esMoca, newLock.expiry);
-
-        // --------- Update global state: add veIncoming to veGlobal ---------
-        
         veGlobal_ = veGlobal_.add(veIncoming);
         veGlobal = veGlobal_;
-        slopeChanges[newLock.expiry] += veIncoming.slope;
+        slopeChanges[expiry] += veIncoming.slope;
         emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-
-        // --------- Update user state: add veIncoming to user ---------
-
-        veUser_ = veUser_.add(veIncoming);
-        userHistory[msg.sender][currentEpochStart] = veUser_;
-        userSlopeChanges[msg.sender][newLock.expiry] += veIncoming.slope;
-        emit Events.UserUpdated(msg.sender, veUser_.bias, veUser_.slope);
     
         // --------- Handle asset booking & transfers ---------
 
@@ -391,7 +364,25 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
 //------------------------------- Delegation functions----------------------------------------------------
 
-    function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
+    function delegationAction(bytes32 lockId, address delegate, DataTypes.DelegationType action) external whenNotPaused {
+        (uint128 currentEpochStart, DataTypes.Lock memory lock) 
+            = _preDelegationChecksAndUpdates(lockId, action, delegate);
+
+        if (action == DataTypes.DelegationType.Delegate) {
+            VeDelegationLib.executeDelegateLock(lockId, currentEpochStart, delegate, locks, userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges, userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate);
+        } 
+
+        // delegate is new delegate
+        if (action == DataTypes.DelegationType.Switch) {
+            VeDelegationLib.executeSwitchDelegateLock(lockId, currentEpochStart, delegate, locks, delegateSlopeChanges, delegatePendingDeltas, userDelegatedSlopeChanges, userPendingDeltasForDelegate);
+        } 
+
+        if (action == DataTypes.DelegationType.Undelegate) {
+            VeDelegationLib.executeUndelegateLock(lockId, currentEpochStart, locks, userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges, userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate);
+        }
+    }
+
+    /*function delegateLock(bytes32 lockId, address delegate) external whenNotPaused {
         (uint128 currentEpochStart, DataTypes.Lock memory lock) 
             = _preDelegationChecksAndUpdates(lockId, DataTypes.DelegationType.Delegate, delegate);
 
@@ -424,9 +415,8 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges,
             userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate
         );
-    }
-
-
+    }*/
+    
     function _preDelegationChecksAndUpdates(bytes32 lockId, DataTypes.DelegationType action, address targetDelegate) internal returns (uint128, DataTypes.Lock memory){
         DataTypes.Lock memory lock = locks[lockId];
         
