@@ -13,9 +13,10 @@ import {DataTypes} from "./libraries/DataTypes.sol";
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
 
-// 
+// logic libraries
 import {VeMathLib} from "./libraries/VeMathLib.sol";
 import {VeDelegationLib} from "./libraries/VeDelegationLib.sol";
+import {VeViewLib} from "./libraries/VeViewLib.sol";
 
 // contracts
 import {LowLevelWMoca} from "./LowLevelWMoca.sol";
@@ -31,9 +32,10 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     using SafeERC20 for IERC20;
     using VeMathLib for DataTypes.VeBalance;
     using VeMathLib for DataTypes.Lock;
+    using VeViewLib for DataTypes.VeBalance;
 
-    address public immutable WMOCA;
     IERC20 public immutable ESMOCA;
+    address public immutable WMOCA;
     
     address public VOTING_CONTROLLER; // mutable: can be set by VotingEscrowMocaAdmin
 
@@ -100,35 +102,20 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
         address monitorBot, address emergencyExitHandler) {
 
-        // wrapped moca 
-        require(wMoca_ != address(0), Errors.InvalidAddress());
+        // wrapped moca & roles: sanity check all addresses are not zero address
+        require(
+            wMoca_ != address(0) && esMoca_ != address(0) &&
+            globalAdmin != address(0) && votingEscrowMocaAdmin != address(0) && monitorAdmin != address(0) && 
+            cronJobAdmin != address(0) && monitorBot != address(0) && emergencyExitHandler != address(0), 
+            Errors.InvalidAddress()
+        );
+        
+        // wrapped moca & esMoca
         WMOCA = wMoca_;
-
-        // esMoca 
-        require(esMoca_ != address(0), Errors.InvalidAddress());
         ESMOCA = IERC20(esMoca_);
-
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
-        MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
-
-        // roles
-        _setupRoles(globalAdmin, votingEscrowMocaAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler);
-    }
-
-    // cronJob is not setup here; as its preferably to not keep it persistent. I.e. add address to cronJob when needed; then revoke.
-    function _setupRoles(
-        address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
-        address monitorBot, address emergencyExitHandler) 
-    internal {
-
-        // sanity check: all addresses are not zero address
-        require(globalAdmin != address(0), Errors.InvalidAddress());
-        require(votingEscrowMocaAdmin != address(0), Errors.InvalidAddress());
-        require(monitorAdmin != address(0), Errors.InvalidAddress());
-        require(cronJobAdmin != address(0), Errors.InvalidAddress());
-        require(monitorBot != address(0), Errors.InvalidAddress());
-        require(emergencyExitHandler != address(0), Errors.InvalidAddress());
+        MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;    
 
         // grant roles to addresses
         _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);    
@@ -249,17 +236,12 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         // Update pending deltas for delegate pair 
         if (currentIsDelegate) _updatePendingForDelegatePair(oldLock.owner, currentAccount, currentEpochStart);
 
-
-        // Create new lock: update amounts
-        DataTypes.Lock memory newLock = oldLock; 
-        newLock.moca += mocaToAdd;
-        newLock.esMoca += esMocaToAdd;
-
         // Execute modification via library
         // Step 1: Update history
-        (DataTypes.VeBalance memory updatedVeAccount, DataTypes.VeBalance memory increaseInVeBalance) = 
+        (DataTypes.VeBalance memory updatedVeAccount, DataTypes.VeBalance memory increaseInVeBalance, DataTypes.Lock memory newLock) = 
             VeDelegationLib.executeIncreaseAmount_UpdateHistory(
-                oldLock, newLock, veAccount_, currentEpochStart,
+                oldLock, esMocaToAdd, mocaToAdd, veAccount_, 
+                currentEpochStart,
                 currentAccount, currentIsDelegate,
                 userHistory, delegateHistory, delegatedAggregationHistory
             );
@@ -326,15 +308,11 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         // Update pending deltas for delegate pair 
         if (currentIsDelegate) _updatePendingForDelegatePair(oldLock.owner, currentAccount, currentEpochStart);
 
-        // Copy old lock: update duration
-        DataTypes.Lock memory newLock = oldLock;
-        newLock.expiry = newExpiry;
-
         // Execute modification via library
         // Step 1: Update history
-        (DataTypes.VeBalance memory updatedVeAccount, uint128 oldSlope, uint128 newSlope, DataTypes.VeBalance memory increaseInVeBalance) = 
+        (DataTypes.VeBalance memory updatedVeAccount, uint128 oldSlope, uint128 newSlope, DataTypes.VeBalance memory increaseInVeBalance, DataTypes.Lock memory newLock) = 
             VeDelegationLib.executeIncreaseDuration_UpdateHistory(
-                oldLock, newLock, veAccount_, currentEpochStart,
+                oldLock, newExpiry, veAccount_, currentEpochStart,
                 currentAccount, currentIsDelegate,
                 userHistory, delegateHistory, delegatedAggregationHistory
             );
@@ -342,10 +320,10 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // Step 2: Update slopes
         VeDelegationLib.executeIncreaseDuration_UpdateSlopes(
-            oldLock.owner, futureAccount, oldLock.expiry, newLock.expiry,
-            oldSlope, newSlope, futureIsDelegate,
-            slopeChanges, userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges
-        );
+                oldLock.owner, futureAccount, oldLock.expiry, newLock.expiry,
+                oldSlope, newSlope, futureIsDelegate,
+                slopeChanges, userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges
+            );
 
         // Step 3: Update pending deltas (if needed)
         if (oldLock.delegationEpoch > currentEpochStart) {
@@ -380,50 +358,35 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
      * @param lockId The unique identifier of the lock to unlock.
      */
     function unlock(bytes32 lockId) external whenNotPaused {
-        DataTypes.Lock memory lock = locks[lockId];
+        DataTypes.Lock storage lockPtr = locks[lockId];
 
-        // sanity check: lock exists + user is the owner
-        require(lock.owner == msg.sender, Errors.InvalidOwner());
-        // sanity check: lock must be expired 
-        require(lock.expiry <= block.timestamp, Errors.InvalidExpiry());
-        // sanity check: lock is not already unlocked
-        require(lock.isUnlocked == false, Errors.InvalidLockState());
+        // sanity checks
+        require(lockPtr.owner == msg.sender, Errors.InvalidOwner());
+        require(lockPtr.expiry <= block.timestamp, Errors.InvalidExpiry());
+        require(!lockPtr.isUnlocked, Errors.InvalidLockState());
 
-        // get current epoch start
-        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
-
-        // update user and global veBalance: [STORAGE: updates lastUpdatedTimestamp & veBalance & slopeChange]
-        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veUser_) = _updateAccountAndGlobalAndPendingDeltas(msg.sender, currentEpochStart, false);
-
-        // STORAGE: update global veBalance 
-        veGlobal = veGlobal_;
-        emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
-        emit Events.UserUpdated(msg.sender, veUser_.bias, veUser_.slope); // userHistory & slopeChanges were updated above
-
+        // cache principals before clearing
+        uint128 cachedMoca = lockPtr.moca;
+        uint128 cachedEsMoca = lockPtr.esMoca;
+        address owner = lockPtr.owner;
 
         // STORAGE: push final checkpoint into lock history
-        _pushCheckpoint(lockHistory[lockId], lock.convertToVeBalance(), uint128(currentEpochStart)); 
+        _pushCheckpoint(lockHistory[lockId], lockPtr.convertToVeBalance(), EpochMath.getCurrentEpochStart()); 
 
         // STORAGE: decrement global totalLocked counters
-        TOTAL_LOCKED_MOCA -= lock.moca;
-        TOTAL_LOCKED_ESMOCA -= lock.esMoca;
+        TOTAL_LOCKED_MOCA -= cachedMoca;
+        TOTAL_LOCKED_ESMOCA -= cachedEsMoca;
 
+        // STORAGE: clear principals and mark unlocked
+        delete lockPtr.moca;
+        delete lockPtr.esMoca;
+        lockPtr.isUnlocked = true;    
 
-        // cache principals + delete from lock
-        uint128 cachedMoca = lock.moca;
-        uint128 cachedEsMoca = lock.esMoca;
-        delete lock.moca;
-        delete lock.esMoca;
+        emit Events.LockUnlocked(lockId, owner, cachedMoca, cachedEsMoca);
 
-        // storage: update lock
-        lock.isUnlocked = true;    
-        locks[lockId] = lock;
-
-        emit Events.LockUnlocked(lockId, lock.owner, cachedMoca, cachedEsMoca);
-
-        // return principals to lock.owner
-        if(cachedEsMoca > 0) ESMOCA.safeTransfer(lock.owner, cachedEsMoca);        
-        if(cachedMoca > 0) _transferMocaAndWrapIfFailWithGasLimit(WMOCA, lock.owner, cachedMoca, MOCA_TRANSFER_GAS_LIMIT);
+        // return principals to owner
+        if(cachedEsMoca > 0) ESMOCA.safeTransfer(owner, cachedEsMoca);        
+        if(cachedMoca > 0) _transferMocaAndWrapIfFailWithGasLimit(WMOCA, owner, cachedMoca, MOCA_TRANSFER_GAS_LIMIT);
     }
 
 
@@ -829,13 +792,10 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             return veGlobal_;
         }
 
-        // cache epoch duration
-        uint128 epochDuration = EpochMath.EPOCH_DURATION;
-
         // update global veBalance
         while (lastUpdatedAt < currentEpochStart) {
             // advance 1 epoch [unchecked: can't overflow; saves some gas]
-            unchecked {lastUpdatedAt += epochDuration;}                  
+            unchecked {lastUpdatedAt += EpochMath.EPOCH_DURATION;}                  
 
             // apply scheduled slope reductions and decrement bias for expiring locks
             veGlobal_ = veGlobal_.subtractExpired(slopeChanges[lastUpdatedAt], lastUpdatedAt);
@@ -890,14 +850,12 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         veAccount_ = accountHistoryMapping[account][accountLastUpdatedAt];
         if(accountLastUpdatedAt >= currentEpochStart) return (veGlobal_, veAccount_); 
 
-        // cache epoch duration
-        uint128 epochDuration = EpochMath.EPOCH_DURATION;
 
         // update both global and account veBalance to current epoch
         while (accountLastUpdatedAt < currentEpochStart) {
             
             // advance 1 epoch [unchecked: can't overflow; saves some gas]
-            unchecked {accountLastUpdatedAt += epochDuration;}
+            unchecked {accountLastUpdatedAt += EpochMath.EPOCH_DURATION;}
 
             // update global: if needed 
             if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
@@ -914,18 +872,16 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     
             // get the pending delta for the current epoch
             DataTypes.VeDeltas storage deltaPtr = accountPendingDeltas[account][accountLastUpdatedAt];
-            bool hasAdd = deltaPtr.hasAddition;
-            bool hasSub = deltaPtr.hasSubtraction;
 
             // apply the pending delta to the veAccount [add then sub]
-            if(hasAdd) veAccount_ = veAccount_.add(deltaPtr.additions);
-            if(hasSub) veAccount_ = veAccount_.sub(deltaPtr.subtractions);
+            if(deltaPtr.hasAddition) veAccount_ = veAccount_.add(deltaPtr.additions);
+            if(deltaPtr.hasSubtraction) veAccount_ = veAccount_.sub(deltaPtr.subtractions);
 
             // book account checkpoint 
             accountHistoryMapping[account][accountLastUpdatedAt] = veAccount_;
 
             // clear slot only when it contained something
-            if (hasAdd || hasSub) {
+            if (deltaPtr.hasAddition || deltaPtr.hasSubtraction) {
                 delete accountPendingDeltas[account][accountLastUpdatedAt];
             }
         }
@@ -957,27 +913,25 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         while(pairLastUpdatedAt < currentEpochStart) {
 
             // advance to next epoch
-            pairLastUpdatedAt += EpochMath.EPOCH_DURATION;
+            unchecked {pairLastUpdatedAt += EpochMath.EPOCH_DURATION;}
 
             // apply decay to the aggregated veBalance
             vePair_ = vePair_.subtractExpired(userDelegatedSlopeChanges[user][delegate][pairLastUpdatedAt], pairLastUpdatedAt);
             
             // get the pending delta for the current epoch
             DataTypes.VeDeltas storage deltaPtr = userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
-            bool hasAdd = deltaPtr.hasAddition;     
+            bool hasAdd = deltaPtr.hasAddition;
             bool hasSub = deltaPtr.hasSubtraction;
-            
+
             // apply the pending deltas to the vePair [add then sub]
             if (hasAdd) vePair_ = vePair_.add(deltaPtr.additions);
             if (hasSub) vePair_ = vePair_.sub(deltaPtr.subtractions);
 
             // STORAGE: book veBalance for epoch 
             delegatedAggregationHistory[user][delegate][pairLastUpdatedAt] = vePair_;
-
+            
             // clear slot only when it contained something
-            if (hasAdd || hasSub) {
-                delete userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
-            }
+            if (hasAdd || hasSub) delete userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
         }
 
         // update the last updated timestamp
@@ -1080,31 +1034,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
 
 //------------------------------ Internal: view functions------------------------------------------------
-    // needed for totalSupplyAtTimestamp() & _viewAccountAndGlobalAndPendingDeltas
-    function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint128 lastUpdatedAt, uint128 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {       
-        // nothing to update: lastUpdate was within current epoch 
-        if(lastUpdatedAt >= currentEpochStart) return (veGlobal_); 
-
-        // skip first time: no prior updates needed | set lastUpdatedAt | return
-        if(lastUpdatedAt == 0) {
-            return veGlobal_;
-        }
-
-        // cache epoch duration
-        uint128 epochDuration = EpochMath.EPOCH_DURATION;
-
-        // update global veBalance
-        while (lastUpdatedAt < currentEpochStart) {
-            // advance 1 epoch [unchecked: can't overflow; saves some gas]
-            unchecked {lastUpdatedAt += epochDuration;}                  
-
-            // apply scheduled slope reductions and decrement bias for expiring locks
-            veGlobal_ = veGlobal_.subtractExpired(slopeChanges[lastUpdatedAt], lastUpdatedAt);
-        }
-
-        return (veGlobal_);
-    }
-
+    
     function _viewAccountAndGlobalAndPendingDeltas(address account, uint128 currentEpochStart, bool isDelegate) internal view returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
         // Streamlined mapping lookups based on account type
         (
@@ -1115,6 +1045,14 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         ) 
             = isDelegate ? (delegateHistory, delegateSlopeChanges, delegatePendingDeltas, delegateLastUpdatedTimestamp) : (userHistory, userSlopeChanges, userPendingDeltas, userLastUpdatedTimestamp);
 
+        (DataTypes.VeBalance memory veGlobal_, DataTypes.VeBalance memory veAccount_) 
+         = VeViewLib.viewAccountAndGlobalAndPendingDeltas(
+            account, currentEpochStart, veGlobal, lastUpdatedTimestamp, 
+            slopeChanges, accountHistoryMapping, accountSlopeChangesMapping, accountPendingDeltas, accountLastUpdatedMapping);
+            
+        return (veGlobal_, veAccount_);
+
+/*
         // CACHE: global veBalance + lastUpdatedTimestamp
         DataTypes.VeBalance memory veGlobal_ = veGlobal;
         uint128 lastUpdatedTimestamp_ = lastUpdatedTimestamp;
@@ -1127,10 +1065,8 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
         // account's first time: no prior updates to execute 
         if (accountLastUpdatedAt == 0) {
-            
             // view global: does not update storage
             veGlobal_ = _viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart);
-
             return (veGlobal_, veAccount_);
         }
 
@@ -1138,14 +1074,11 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         veAccount_ = accountHistoryMapping[account][accountLastUpdatedAt];
         if(accountLastUpdatedAt >= currentEpochStart) return (veGlobal_, veAccount_); 
 
-        // cache epoch duration
-        uint128 epochDuration = EpochMath.EPOCH_DURATION;
-
         // update both global and account veBalance to current epoch
         while (accountLastUpdatedAt < currentEpochStart) {
             
             // advance 1 epoch [unchecked: can't overflow; saves some gas]
-            unchecked {accountLastUpdatedAt += epochDuration;}
+            unchecked {accountLastUpdatedAt += EpochMath.EPOCH_DURATION;}
 
             // update global: if needed 
             if(lastUpdatedTimestamp_ < accountLastUpdatedAt) {
@@ -1174,7 +1107,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             if(hasSubtraction) veAccount_ = veAccount_.sub(deltaPtr.subtractions);
         }
 
-        return (veGlobal_, veAccount_);
+        return (veGlobal_, veAccount_);*/
     }
 
 //------------------------------ Risk management---------------------------------------------------------
@@ -1274,17 +1207,17 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 //------------------------------ View functions----------------------------------------------------------
 
     // can be for past or future queries 
-    function totalSupplyAtTimestamp(uint128 timestamp) public view returns (uint128) {
+    function totalSupplyAtTimestamp(uint128 timestamp) external view returns (uint128) {
 
         // get target epoch start
         uint128 targetEpochStartTime = EpochMath.getEpochStartForTimestamp(timestamp);  
 
-        DataTypes.VeBalance memory veGlobal_ = _viewGlobal(veGlobal, lastUpdatedTimestamp, targetEpochStartTime);
+        DataTypes.VeBalance memory veGlobal_ = VeViewLib.viewGlobal(veGlobal, lastUpdatedTimestamp, targetEpochStartTime, slopeChanges);
         return veGlobal_.getValueAt(timestamp);
     }
 
     // returns either a user's personal voting power, or voting power that was delegated to him, at given timestamp 
-    function balanceOfAt(address user, uint128 timestamp, bool isDelegate) public view returns (uint128) {
+    function balanceOfAt(address user, uint128 timestamp, bool isDelegate) external view returns (uint128) {
         require(user != address(0), Errors.InvalidAddress());
         require(timestamp <= block.timestamp, Errors.InvalidTimestamp());   // cannot query the future
 
@@ -1320,7 +1253,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     }
 
     function getLockVotingPowerAt(bytes32 lockId, uint128 timestamp) external view returns (uint128) {
-        DataTypes.Lock memory lockPtr = locks[lockId];
+        DataTypes.Lock storage lockPtr = locks[lockId];
         if(lockPtr.expiry <= timestamp) return 0;
 
         return lockPtr.convertToVeBalance().getValueAt(timestamp);
@@ -1375,7 +1308,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         while (lastUpdate < epochStartTime) {
 
             // advance to the next epoch
-            lastUpdate += EpochMath.EPOCH_DURATION;
+            unchecked {lastUpdate += EpochMath.EPOCH_DURATION;}
 
             // Apply decay and slope changes scheduled for this epoch
             veBalance = veBalance.subtractExpired(userDelegatedSlopeChanges[user][delegate][lastUpdate], lastUpdate);

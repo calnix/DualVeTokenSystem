@@ -159,26 +159,32 @@ library VeDelegationLib {
      */
     function executeIncreaseAmount_UpdateHistory(
         DataTypes.Lock memory oldLock,
-        DataTypes.Lock memory newLock, 
+        uint128 esMocaToAdd,
+        uint128 mocaToAdd,
         DataTypes.VeBalance memory veCurrentAccount_,
         uint128 currentEpochStart,
         address currentAccount,
         bool currentIsDelegate,
-        // Storage (3 mappings)
+        // Storage (4 mappings)
         mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage userHistory,
         mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage delegateHistory,
         mapping(address => mapping(address => mapping(uint128 => DataTypes.VeBalance))) storage delegatedAggregationHistory
-    ) external returns (DataTypes.VeBalance memory veCurrentAccount, DataTypes.VeBalance memory increaseInVeBalance) {
+    ) external returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory, DataTypes.Lock memory) {
         
+        // create new lock: update amounts
+        DataTypes.Lock memory newLock = abi.decode(abi.encode(oldLock), (DataTypes.Lock));
+        newLock.moca += mocaToAdd;
+        newLock.esMoca += esMocaToAdd;
+
         // convert old and new lock to veBalance
         DataTypes.VeBalance memory oldVeBalance = oldLock.convertToVeBalance();
         DataTypes.VeBalance memory newVeBalance = newLock.convertToVeBalance();
 
         // get increase in veBalance
-        increaseInVeBalance = newVeBalance.sub(oldVeBalance);
+        DataTypes.VeBalance memory increaseInVeBalance = newVeBalance.sub(oldVeBalance);
 
         // increment current account's veBalance 
-        veCurrentAccount = veCurrentAccount_.add(increaseInVeBalance);
+        DataTypes.VeBalance memory veCurrentAccount = veCurrentAccount_.add(increaseInVeBalance);
 
         // Current holder of lock benefits from the increase immediately [update history mappings]
         if (currentIsDelegate) {
@@ -193,6 +199,8 @@ library VeDelegationLib {
             // update user history
             userHistory[currentAccount][currentEpochStart] = veCurrentAccount;
         }
+
+        return (veCurrentAccount, increaseInVeBalance, newLock);
     }
 
 
@@ -327,7 +335,7 @@ library VeDelegationLib {
     */
     function executeIncreaseDuration_UpdateHistory(
         DataTypes.Lock memory oldLock,
-        DataTypes.Lock memory newLock, 
+        uint128 newExpiry,
         DataTypes.VeBalance memory veCurrentAccount_,
         uint128 currentEpochStart,
         address currentAccount,
@@ -337,7 +345,12 @@ library VeDelegationLib {
         mapping(address => mapping(uint128 => DataTypes.VeBalance)) storage delegateHistory,
         mapping(address => mapping(address => mapping(uint128 => DataTypes.VeBalance))) storage delegatedAggregationHistory
     ) external returns (
-        DataTypes.VeBalance memory, uint128, uint128,DataTypes.VeBalance memory) {
+        DataTypes.VeBalance memory, uint128, uint128,DataTypes.VeBalance memory, DataTypes.Lock memory) {
+        
+        // Create new lock: update amounts
+        DataTypes.Lock memory newLock = abi.decode(abi.encode(oldLock), (DataTypes.Lock));
+        newLock.expiry = newExpiry;
+        
         // convert old and new lock to veBalance
         DataTypes.VeBalance memory oldVeBalance = oldLock.convertToVeBalance();
         DataTypes.VeBalance memory newVeBalance = newLock.convertToVeBalance();
@@ -366,7 +379,7 @@ library VeDelegationLib {
             userHistory[currentAccount][currentEpochStart] = veCurrentAccount;
         }
 
-        return (veCurrentAccount, oldSlope, newSlope, increaseInVeBalance);
+        return (veCurrentAccount, oldSlope, newSlope, increaseInVeBalance, newLock);
     }
 
     /**

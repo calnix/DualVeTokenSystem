@@ -3,7 +3,7 @@ pragma solidity 0.8.27;
 
 import {EpochMath} from "./EpochMath.sol";
 import {DataTypes} from "./DataTypes.sol";
-
+ 
 library VeMathLib {
 
 
@@ -67,6 +67,16 @@ library VeMathLib {
         return veBalance;
     }
 
+    function convertToVeBalance(uint128 moca, uint128 esMoca, uint128 expiry) internal pure returns (DataTypes.VeBalance memory) {
+        DataTypes.VeBalance memory veBalance;
+
+        // In practice, this should never overflow given MOCA supply constraints
+        veBalance.slope = (moca + esMoca) / EpochMath.MAX_LOCK_DURATION;
+        veBalance.bias = veBalance.slope * expiry;
+
+        return veBalance;
+    }
+    
     // subtracts b from a: a - b
     function sub(DataTypes.VeBalance memory a, DataTypes.VeBalance memory b) internal pure returns (DataTypes.VeBalance memory) {
         DataTypes.VeBalance memory res;
@@ -94,3 +104,5 @@ library VeMathLib {
         return a.bias - decay;
     }
 }
+
+    

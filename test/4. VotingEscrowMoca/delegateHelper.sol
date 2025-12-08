@@ -88,17 +88,18 @@ abstract contract DelegateHelper is Test, TestingHarness {
 // ================= STATE VERIFICATION HELPERS =================
 
     
-    function getLock(bytes32 lockId) public view returns (DataTypes.Lock memory) {
-        DataTypes.Lock memory lock;
-        (bytes32 id, address owner, address delegate, uint128 moca, uint128 esMoca_, uint128 expiry, bool isUnlocked) = veMoca.locks(lockId);
-        lock.lockId = id;
-        lock.owner = owner;
-        lock.delegate = delegate;
-        lock.moca = moca;
-        lock.esMoca = esMoca_;
-        lock.expiry = expiry;
-        lock.isUnlocked = isUnlocked;
-        return lock;
+    function getLock(bytes32 lockId) public view returns (DataTypes.Lock memory lock) {
+        (
+            lock.lockId,
+            lock.owner,
+            lock.delegate,
+            lock.moca,
+            lock.esMoca,
+            lock.expiry,
+            lock.isUnlocked,
+            lock.delegationEpoch,
+            lock.currentHolder
+        ) = veMoca.locks(lockId);
     }
 
     function getLockHistory(bytes32 lockId, uint256 index) public view returns (DataTypes.Checkpoint memory) {
