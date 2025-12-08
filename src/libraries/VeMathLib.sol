@@ -104,5 +104,3 @@ library VeMathLib {
         return a.bias - decay;
     }
 }
-
-    

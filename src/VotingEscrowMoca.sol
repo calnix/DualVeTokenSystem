@@ -103,16 +103,19 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         address monitorBot, address emergencyExitHandler) {
 
         // wrapped moca & roles: sanity check all addresses are not zero address
-        require(
-            wMoca_ != address(0) && esMoca_ != address(0) &&
-            globalAdmin != address(0) && votingEscrowMocaAdmin != address(0) && monitorAdmin != address(0) && 
-            cronJobAdmin != address(0) && monitorBot != address(0) && emergencyExitHandler != address(0), 
-            Errors.InvalidAddress()
-        );
-        
+        require(wMoca_ != address(0), Errors.InvalidAddress());
+        require(esMoca_ != address(0), Errors.InvalidAddress());
+        require(globalAdmin != address(0), Errors.InvalidAddress());
+        require(votingEscrowMocaAdmin != address(0), Errors.InvalidAddress());
+        require(monitorAdmin != address(0), Errors.InvalidAddress());
+        require(cronJobAdmin != address(0), Errors.InvalidAddress());
+        require(monitorBot != address(0), Errors.InvalidAddress());
+        require(emergencyExitHandler != address(0), Errors.InvalidAddress());
+
         // wrapped moca & esMoca
         WMOCA = wMoca_;
         ESMOCA = IERC20(esMoca_);
+
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;    
@@ -620,53 +623,17 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         // update global veBalance
         DataTypes.VeBalance memory veGlobal_ = _updateGlobal(veGlobal, lastUpdatedTimestamp, currentEpochStart);
 
-
-        // Create locks and aggregate results
-        (bytes32[] memory lockIds, uint128 totalMoca, uint128 totalEsMoca, uint128 totalSlopeChanges, DataTypes.VeBalance memory updatedVeGlobal_) 
-            = _createLocksBatch(users, mocaAmounts, esMocaAmounts, expiry, currentEpochStart, veGlobal_);
-        
-        // check: msg.value matches totalMoca
-        require(msg.value == totalMoca, Errors.InvalidAmount());
-
-        // STORAGE: update global veBalance after all locks
-        veGlobal = updatedVeGlobal_;
-        slopeChanges[expiry] += totalSlopeChanges;
-        emit Events.GlobalUpdated(updatedVeGlobal_.bias, updatedVeGlobal_.slope);
-
-        // Update Global asset counters + esMoca transfer
-        TOTAL_LOCKED_MOCA += totalMoca;
-        if(totalEsMoca > 0) {
-            TOTAL_LOCKED_ESMOCA += totalEsMoca;
-            ESMOCA.safeTransferFrom(msg.sender, address(this), totalEsMoca);
-        }
-
-        // emit events
-        emit Events.LocksCreatedFor(users, lockIds, totalMoca, totalEsMoca);
-        return lockIds;
-    }
-
-
-    function _createLocksBatch(
-        address[] memory users,
-        uint128[] memory mocaAmounts,
-        uint128[] memory esMocaAmounts,
-        uint128 expiry,
-        uint128 currentEpochStart,
-        DataTypes.VeBalance memory veGlobal_
-    ) internal returns (bytes32[] memory, uint128, uint128, uint128, DataTypes.VeBalance memory) {
-       
         // counters: track totals
         uint128 totalEsMoca;
         uint128 totalMoca;
         uint128 totalSlopeChanges;
 
         // to store lockIds
-        uint256 length = users.length;
         bytes32[] memory lockIds = new bytes32[](length);
 
         // loop through users, create locks, aggregate global stats, accumulate totals
         for(uint256 i; i < length; ++i) {
-          
+            
             DataTypes.VeBalance memory veIncoming_;
             (lockIds[i], veIncoming_) = _createSingleLock(users[i], mocaAmounts[i], esMocaAmounts[i], expiry, currentEpochStart);
 
@@ -679,7 +646,24 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             totalEsMoca += esMocaAmounts[i];
         }
         
-        return (lockIds, totalMoca, totalEsMoca, totalSlopeChanges, veGlobal_);
+        // check: msg.value matches totalMoca
+        require(msg.value == totalMoca, Errors.InvalidAmount());
+
+        // STORAGE: update global veBalance after all locks
+        veGlobal = veGlobal_;
+        slopeChanges[expiry] += totalSlopeChanges;
+        emit Events.GlobalUpdated(veGlobal_.bias, veGlobal_.slope);
+
+        // Update Global asset counters + esMoca transfer
+        TOTAL_LOCKED_MOCA += totalMoca;
+        if(totalEsMoca > 0) {
+            TOTAL_LOCKED_ESMOCA += totalEsMoca;
+            ESMOCA.safeTransferFrom(msg.sender, address(this), totalEsMoca);
+        }
+
+        // emit events
+        emit Events.LocksCreatedFor(users, lockIds, totalMoca, totalEsMoca);
+        return lockIds;
     }
     
     function _createSingleLock(address user, uint128 moca, uint128 esMoca, uint128 expiry, uint128 currentEpochStart) internal returns (bytes32, DataTypes.VeBalance memory) {
@@ -693,12 +677,9 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         (, DataTypes.VeBalance memory veUser_) = _updateAccountAndGlobalAndPendingDeltas(user, currentEpochStart, false);
 
         // Generate Lock ID
-        bytes32 lockId;
-        {
-            uint256 salt = block.number;
-            lockId = _generateLockId(salt, user);
-            while (locks[lockId].owner != address(0)) lockId = _generateLockId(++salt, user);      // If lockId exists, generate new random Id
-        }
+        uint256 salt = block.number;
+        bytes32 lockId = _generateLockId(salt, user);
+        while (locks[lockId].owner != address(0)) lockId = _generateLockId(++salt, user);      // If lockId exists, generate new random Id
 
         // Create Lock
         DataTypes.Lock memory newLock;
@@ -932,6 +913,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return vePair_;
     }
 
+    // used in increaseAmount & increaseDuration
     /**
      * @dev Returns who currently has voting power for this lock and whether they are a delegate.
      * 
