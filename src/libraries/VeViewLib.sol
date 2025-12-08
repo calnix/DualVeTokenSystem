@@ -11,7 +11,7 @@ import {VeMathLib} from "./VeMathLib.sol";
 library VeViewLib {
     using VeMathLib for DataTypes.VeBalance;
 
-    function viewGlobal(
+    function _viewGlobal(
         DataTypes.VeBalance memory veGlobal_, 
         uint128 lastUpdatedAt, 
         uint128 currentEpochStart,
@@ -57,7 +57,7 @@ library VeViewLib {
         // account's first time: no prior updates to execute 
         if (accountLastUpdatedAt == 0) {
             // view global: does not update storage
-            veGlobal_ = viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart, slopeChanges);
+            veGlobal_ = _viewGlobal(veGlobal_, lastUpdatedTimestamp_, currentEpochStart, slopeChanges);
             return (veGlobal_, veAccount_);
         }
 

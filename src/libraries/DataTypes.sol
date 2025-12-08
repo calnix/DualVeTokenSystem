@@ -146,20 +146,19 @@ library DataTypes {
 
 // --------- VotingEscrowMoca.sol -------
     struct Lock {
-        bytes32 lockId;             // can i remove lockId since ownerAddress can be the flag
         address owner;              
-        address delegate;           // flag: zero = not delegated, non-zero = delegated
+        uint128 expiry;        // timestamp when lock ends
 
         // locked principal
         uint128 moca;    
         uint128 esMoca;
             
-        uint128 expiry;        // timestamp when lock ends
         bool isUnlocked;       // flag: indicates lock's principals are returned
-        
+        address delegate;           // flag: zero = not delegated, non-zero = delegated
+ 
         // Delegation tracking
-        uint96 delegationEpoch;    // epoch start when delegate field becomes effective; 0 = none
         address currentHolder;     // current holder until delegationEpoch (pending scenario)
+        uint96 delegationEpoch;    // epoch start when delegate field becomes effective; 0 = none
     }
 
     // Aggregation: global + user

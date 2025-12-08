@@ -166,12 +166,11 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             {
                 uint256 salt = block.number;
                 lockId = _generateLockId(salt, msg.sender);
-                while (locks[lockId].lockId != bytes32(0)) lockId = _generateLockId(++salt, msg.sender);      // If lockId exists, generate new random Id
+                while (locks[lockId].owner != address(0)) lockId = _generateLockId(++salt, msg.sender);      // If lockId exists, generate new random Id
             }
 
         // --------- create lock ---------
             DataTypes.Lock memory newLock;
-                newLock.lockId = lockId;
                 newLock.owner = msg.sender;
                 newLock.moca = moca;
                 newLock.esMoca = esMoca;
@@ -397,7 +396,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             = _preDelegationChecksAndUpdates(lockId, DataTypes.DelegationType.Delegate, delegate);
 
         VeDelegationLib.executeDelegateLock(
-            lock, currentEpochStart, delegate, locks,
+            lockId, currentEpochStart, delegate, locks,
             userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges, 
             userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate
         );
@@ -409,7 +408,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
 
         VeDelegationLib.executeSwitchDelegateLock(
-            lock, currentEpochStart, newDelegate, locks,
+            lockId, currentEpochStart, newDelegate, locks,
             delegateSlopeChanges, delegatePendingDeltas, 
             userDelegatedSlopeChanges, userPendingDeltasForDelegate
         );
@@ -421,7 +420,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
 
         VeDelegationLib.executeUndelegateLock(
-            lock, currentEpochStart, locks,
+            lockId, currentEpochStart, locks,
             userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges,
             userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate
         );
@@ -708,12 +707,11 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         {
             uint256 salt = block.number;
             lockId = _generateLockId(salt, user);
-            while (locks[lockId].lockId != bytes32(0)) lockId = _generateLockId(++salt, user);      // If lockId exists, generate new random Id
+            while (locks[lockId].owner != address(0)) lockId = _generateLockId(++salt, user);      // If lockId exists, generate new random Id
         }
 
         // Create Lock
         DataTypes.Lock memory newLock;
-        newLock.lockId = lockId;
         newLock.owner = user;
         newLock.moca = moca;
         newLock.esMoca = esMoca;
@@ -872,16 +870,18 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     
             // get the pending delta for the current epoch
             DataTypes.VeDeltas storage deltaPtr = accountPendingDeltas[account][accountLastUpdatedAt];
-
+            bool hasAdd = deltaPtr.hasAddition;
+            bool hasSub = deltaPtr.hasSubtraction;
+            
             // apply the pending delta to the veAccount [add then sub]
-            if(deltaPtr.hasAddition) veAccount_ = veAccount_.add(deltaPtr.additions);
-            if(deltaPtr.hasSubtraction) veAccount_ = veAccount_.sub(deltaPtr.subtractions);
+            if(hasAdd) veAccount_ = veAccount_.add(deltaPtr.additions);
+            if(hasSub) veAccount_ = veAccount_.sub(deltaPtr.subtractions);
 
             // book account checkpoint 
             accountHistoryMapping[account][accountLastUpdatedAt] = veAccount_;
 
             // clear slot only when it contained something
-            if (deltaPtr.hasAddition || deltaPtr.hasSubtraction) {
+            if (hasAdd || hasSub) {
                 delete accountPendingDeltas[account][accountLastUpdatedAt];
             }
         }
@@ -931,7 +931,9 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             delegatedAggregationHistory[user][delegate][pairLastUpdatedAt] = vePair_;
             
             // clear slot only when it contained something
-            if (hasAdd || hasSub) delete userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
+            if (hasAdd || hasSub){
+                delete userPendingDeltasForDelegate[user][delegate][pairLastUpdatedAt];
+            }
         }
 
         // update the last updated timestamp
@@ -1034,7 +1036,11 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
 
 //------------------------------ Internal: view functions------------------------------------------------
-    
+
+    /*function _viewGlobal(DataTypes.VeBalance memory veGlobal_, uint128 lastUpdatedAt, uint128 currentEpochStart) internal view returns (DataTypes.VeBalance memory) {
+        return VeViewLib.viewGlobal(veGlobal_, lastUpdatedAt, currentEpochStart, slopeChanges);
+    }*/
+
     function _viewAccountAndGlobalAndPendingDeltas(address account, uint128 currentEpochStart, bool isDelegate) internal view returns (DataTypes.VeBalance memory, DataTypes.VeBalance memory) {
         // Streamlined mapping lookups based on account type
         (
@@ -1212,7 +1218,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         // get target epoch start
         uint128 targetEpochStartTime = EpochMath.getEpochStartForTimestamp(timestamp);  
 
-        DataTypes.VeBalance memory veGlobal_ = VeViewLib.viewGlobal(veGlobal, lastUpdatedTimestamp, targetEpochStartTime, slopeChanges);
+        DataTypes.VeBalance memory veGlobal_ = VeViewLib._viewGlobal(veGlobal, lastUpdatedTimestamp, targetEpochStartTime, slopeChanges);
         return veGlobal_.getValueAt(timestamp);
     }
 

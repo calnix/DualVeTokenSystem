@@ -14,7 +14,7 @@ library VeDelegationLib {
     using VeMathLib for DataTypes.Lock;
 
     function executeDelegateLock(
-        DataTypes.Lock memory lock, uint128 currentEpochStart, address delegate,
+        bytes32 lockId, uint128 currentEpochStart, address delegate,
         mapping(bytes32 lockId => DataTypes.Lock lock) storage locks,
         mapping(address user => mapping(uint128 eTime => uint128 slopeChange)) storage userSlopeChanges,
         mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange)) storage delegateSlopeChanges,
@@ -23,6 +23,9 @@ library VeDelegationLib {
         mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas)) storage delegatePendingDeltas,
         mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) storage userPendingDeltasForDelegate
     ) external {
+
+        // get the lock
+        DataTypes.Lock memory lock = locks[lockId];
 
         uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
@@ -50,18 +53,21 @@ library VeDelegationLib {
         }
 
         lock.delegate = delegate;
-        locks[lock.lockId] = lock;
-        emit Events.LockDelegated(lock.lockId, lock.owner, delegate);
+        locks[lockId] = lock;
+        emit Events.LockDelegated(lockId, lock.owner, delegate);
     }
 
     function executeSwitchDelegateLock(
-        DataTypes.Lock memory lock, uint128 currentEpochStart, address newDelegate,
+        bytes32 lockId, uint128 currentEpochStart, address newDelegate,
         mapping(bytes32 lockId => DataTypes.Lock lock) storage locks,
         mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange)) storage delegateSlopeChanges,
         mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas)) storage delegatePendingDeltas,
         mapping(address user => mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange))) storage userDelegatedSlopeChanges,
         mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) storage userPendingDeltasForDelegate
     ) external {
+
+        // get the lock
+        DataTypes.Lock memory lock = locks[lockId];
 
         uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
@@ -96,14 +102,14 @@ library VeDelegationLib {
         }
 
         lock.delegate = newDelegate;
-        locks[lock.lockId] = lock;
+        locks[lockId] = lock;
 
-        emit Events.LockDelegateSwitched(lock.lockId, owner, oldDelegate, newDelegate);
+        emit Events.LockDelegateSwitched(lockId, owner, oldDelegate, newDelegate);
     }
 
 
     function executeUndelegateLock(
-        DataTypes.Lock memory lock, uint128 currentEpochStart,
+        bytes32 lockId, uint128 currentEpochStart,
         mapping(bytes32 lockId => DataTypes.Lock lock) storage locks,
         mapping(address user => mapping(uint128 eTime => uint128 slopeChange)) storage userSlopeChanges,
         mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange)) storage delegateSlopeChanges, 
@@ -113,28 +119,28 @@ library VeDelegationLib {
         mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) storage userPendingDeltasForDelegate
     ) external {
 
+        // get the lock
+        DataTypes.Lock memory lock = locks[lockId];
+
         uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
         // get the lock's veBalance
         DataTypes.VeBalance memory lockVeBalance = lock.convertToVeBalance();
 
-        address delegate = lock.delegate;
-        address owner = lock.owner;
-
         // Scheduled SlopeChanges: shift from delegate -> owner
-        delegateSlopeChanges[delegate][lock.expiry] -= lockVeBalance.slope;
-        userSlopeChanges[owner][lock.expiry] += lockVeBalance.slope;
+        delegateSlopeChanges[lock.delegate][lock.expiry] -= lockVeBalance.slope;
+        userSlopeChanges[lock.owner][lock.expiry] += lockVeBalance.slope;
         
         // Remove per-pair slope: from user-delegate pair
-        userDelegatedSlopeChanges[owner][delegate][lock.expiry] -= lockVeBalance.slope;
+        userDelegatedSlopeChanges[lock.owner][lock.delegate][lock.expiry] -= lockVeBalance.slope;
 
 
         // PendingDeltas: subtract from delegate & user-delegate pair aggregation
-        _bookPendingSub(delegatePendingDeltas[delegate][nextEpochStart], lockVeBalance);
-        _bookPendingSub(userPendingDeltasForDelegate[owner][delegate][nextEpochStart], lockVeBalance);
+        _bookPendingSub(delegatePendingDeltas[lock.delegate][nextEpochStart], lockVeBalance);
+        _bookPendingSub(userPendingDeltasForDelegate[lock.owner][lock.delegate][nextEpochStart], lockVeBalance);
 
         // PendingDeltas: add to owner
-        _bookPendingAdd(userPendingDeltas[owner][nextEpochStart], lockVeBalance);
+        _bookPendingAdd(userPendingDeltas[lock.owner][nextEpochStart], lockVeBalance);
 
         // If NO pending change exists (delegationEpoch <= current), snapshot the current holder
         // If pending change exists, we keep the existing currentHolder and only update `delegate`.
@@ -145,9 +151,9 @@ library VeDelegationLib {
 
         // STORAGE: update lock to mark it as not delegated
         delete lock.delegate;
-        locks[lock.lockId] = lock;
+        locks[lockId] = lock;
 
-        emit Events.LockUndelegated(lock.lockId, owner, delegate);
+        emit Events.LockUndelegated(lockId, lock.owner, lock.delegate);
     }
 
 //------------------------------- IncreaseAmount: Split Functions -----------------------------------
