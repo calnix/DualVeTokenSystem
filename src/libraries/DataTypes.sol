@@ -156,6 +156,10 @@ library DataTypes {
             
         uint128 expiry;        // timestamp when lock ends
         bool isUnlocked;       // flag: indicates lock's principals are returned
+        
+        // Delegation tracking
+        uint96 delegationEpoch;    // epoch start when delegate field becomes effective; 0 = none
+        address currentHolder;     // current holder until delegationEpoch (pending scenario)
     }
 
     // Aggregation: global + user

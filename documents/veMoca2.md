@@ -370,3 +370,92 @@ Note: totalSupplyAt[epochStart] is a HISTORICAL snapshot
 | Includes intra-epoch actions| NO - only reflects state at epoch START      | YES - uses current locks                    |
 | Decay direction             | Later epochs MAY be higher (if locks added)  | Later epochs always lower (pure decay)      |
 ```
+
+## _getCurrentAndFutureAccounts
+
+**Scenario 1: Lock is NOT delegated**
+
+Lock state:
+- delegate = address(0)
+- delegationEpoch = 0
+
+```ruby
+| Variable          | Value   | Reasoning                        |
+|-------------------|---------|----------------------------------|
+| futureAccount     | owner   | delegate == 0                    |
+| hasPending        | false   | 0 > currentEpochStart = false    |
+| currentAccount    | owner   | = futureAccount (else branch)    |
+| currentIsDelegate | false   | owner != owner                   |
+| futureIsDelegate  | false   | owner != owner                   |
+```
+
+**In executeModifyLock:**
+
+✅ userHistory[owner] updated (line 292)
+✅ userSlopeChanges[owner][expiry] updated (lines 312-317)
+✅ Pair NOT updated (currentIsDelegate = false)
+✅ No pending deltas (hasPending = false)
+
+CORRECT 
+
+**Scenario 2: Lock delegated - delegation PENDING**
+
+Lock state (after delegating in current epoch):
+- delegate = targetDelegate
+- delegationEpoch = nextEpochStart
+- currentHolder = owner (set during `delegateLock()`)
+
+```ruby
+| Variable           | Value           | Reasoning                      |
+|--------------------|-----------------|--------------------------------|
+| futureAccount      | targetDelegate  | delegate != 0                  |
+| hasPending         | true            | nextEpoch > currentEpoch       |
+| currentAccount     | owner           | currentHolder = owner          |
+| currentIsDelegate  | false           | owner != owner                 |
+| futureIsDelegate   | true            | targetDelegate != owner        |
+```
+
+***Scenario 3: Lock delegated - delegation IN EFFECT**
+
+```ruby
+| Variable           | Value          | Reasoning                          |
+|--------------------|----------------|------------------------------------|
+| futureAccount      | activeDelegate | delegate != 0                      |
+| hasPending         | false          | delegationEpoch <= currentEpoch    |
+| currentAccount     | activeDelegate | = futureAccount (else branch)      |
+| currentIsDelegate  | true           | activeDelegate != owner            |
+| futureIsDelegate   | true           | activeDelegate != owner            |
+```
+
+
+```
+| State                | Behavior in increase functions                                                                                       |
+|----------------------|----------------------------------------------------------------------------------------------------------------------|
+| Not Delegated        | currentAccount and futureAccount are both the Owner.
+|                        The increase is applied immediately to the Owner's veBalance and slope. 
+|----------------------|----------------------------------------------------------------------------------------------------------------------|
+| Presently Delegated  | currentAccount and futureAccount are both the Delegate.
+|                         The increase is applied immediately to the Delegate's veBalance and slope. Pair aggregations are also updated.       |
+|----------------------|----------------------------------------------------------------------------------------------------------------------|
+| Pending Delegation   | currentAccount (Old Delegate/Owner) gets the increase immediately. 
+|                         A Pending Delta is queued to subtract this increase from currentAccount,
+|                         and add it to futureAccount (New Delegate) at the start of the next epoch.                                           |
+|----------------------|----------------------------------------------------------------------------------------------------------------------|
+```
+
+**Verification Matrix: All Combinations**
+
+```
+| Initial State         | Operation        | Current Holder| Future Holder | Pending Deltas Needed? | Result |
+|-----------------------|------------------|---------------|---------------|------------------------|--------|
+| Not delegated         | increaseAmount   | owner         | owner         | No                     |   ✓    |
+| Not delegated         | increaseDuration | owner         | owner         | No                     |   ✓    |
+| Pending (owner→D)     | increaseAmount   | owner         | D             | Yes                    |   ✓    |
+| Pending (owner→D)     | increaseDuration | owner         | D             | Yes                    |   ✓    |
+| Pending (D1→D2)       | increaseAmount   | D1            | D2            | Yes                    |   ✓    |
+| Pending (D1→D2)       | increaseDuration | D1            | D2            | Yes                    |   ✓    |
+| Pending (D→owner)     | increaseAmount   | D             | owner         | Yes                    |   ✓    |
+| Pending (D→owner)     | increaseDuration | D             | owner         | Yes                    |   ✓    |
+| Delegated (D)         | increaseAmount   | D             | D             | No                     |   ✓    |
+| Delegated (D)         | increaseDuration | D             | D             | No                     |   ✓    |
+```

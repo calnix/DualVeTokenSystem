@@ -3,35 +3,9 @@ pragma solidity 0.8.27;
 
 import {EpochMath} from "./EpochMath.sol";
 import {DataTypes} from "./DataTypes.sol";
-import {Errors} from "./Errors.sol";
 
 library VeMathLib {
 
-    /*  lock must have at least 3 epochs `liveliness` before expiry: current + 2 more epochs
-        - non-zero voting power in the current and next epoch.  
-        - 0 voting power in the 3rd epoch.
-        This is a result of forward-decay: benchmarking voting power to the end of the epoch [to freeze intra-epoch decay] 
-        
-        We also want locks created to be delegated, and since delegation takes effect in the next epoch;
-        need to check that the lock has at least 3 epochs left, before expiry: current + 2 epochs.
-
-        Example:
-        - Epoch 1: User delegates lock; user still retains voting rights of lock 
-        - Epoch 2: Delegation takes effect; delegate can now vote with lock
-        - Epoch 3: Lock's voting power is forward decay-ed to 0
-
-        Lock must expire at the end of Epoch3 for the above to be feasible. 
-        Therefore, the minimum expiry of a lock is currentEpoch + 3 epochs [currentEpoch + 2 more epochs]
-    */  
-    function minimumDurationCheck(uint128 expiry) internal view returns (uint128) {
-        // get current epoch start
-        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
-
-        // multiply start by 3, to get the end of the 3rd epoch [lock has 0 voting power in the 3rd epoch]
-        require(expiry >= currentEpochStart + (3 * EpochMath.EPOCH_DURATION), Errors.LockExpiresTooSoon());
-
-        return currentEpochStart;
-    }
 
 //------------------------------ Internal: Pure-----------------------------------------------------------   
 
