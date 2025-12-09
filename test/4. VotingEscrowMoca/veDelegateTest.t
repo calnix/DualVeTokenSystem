@@ -243,7 +243,7 @@ contract StateE1_RegisterDelegate_User3_Test is StateE1_RegisterDelegate_User3 {
                 emit Events.LockDelegated(lock1_Id, user1, user3);
             
                 // delegate
-                veMoca.delegateLock(lock1_Id, user3);
+                veMoca.delegationAction(lock1_Id, user3, DataTypes.DelegationType.Delegate);
 
             vm.stopPrank();
 
@@ -266,7 +266,7 @@ abstract contract StateE1_User1_DelegateLock1_ToUser3 is StateE1_RegisterDelegat
 
         // 2) Execute Delegation
         vm.startPrank(user1);
-            veMoca.delegateLock(lock1_Id, user3);
+            veMoca.delegationAction(lock1_Id, user3, DataTypes.DelegationType.Delegate);
         vm.stopPrank();
 
         // 3) Capture State
@@ -661,14 +661,14 @@ contract StateE2_Lock1DelegationTakesEffect_Test is StateE2_Lock1DelegationTakes
             
             vm.expectRevert(Errors.LockExpiresTooSoon.selector);
             vm.prank(user1);
-            veMoca.switchDelegate(lock1_Id, user2);
+            veMoca.delegationAction(lock1_Id, user2, DataTypes.DelegationType.Switch);
         }
 
         function testRevert_User1_CannotUndelegate_Lock1() public {
             // Same reason as above - action limit in final epoch before expiry
             vm.expectRevert(Errors.LockExpiresTooSoon.selector);
             vm.prank(user1);
-            veMoca.undelegateLock(lock1_Id);
+            veMoca.delegationAction(lock1_Id, address(0), DataTypes.DelegationType.Undelegate);
         }
 
     // ============ State Transition Test ============
@@ -698,7 +698,7 @@ contract StateE2_Lock1DelegationTakesEffect_Test is StateE2_Lock1DelegationTakes
         
         // Execute: delegate to user3
         vm.startPrank(user1);
-            veMoca.delegateLock(lock2Id, user3);
+            veMoca.delegationAction(lock2Id, user3, DataTypes.DelegationType.Delegate);
         vm.stopPrank();
         
         // Verify delegation
@@ -748,7 +748,7 @@ abstract contract StateE2_User1_CreatesLock2 is StateE2_Lock1DelegationTakesEffe
         // Create lock2 and delegate to user3
         vm.startPrank(user1);
             lock2_Id = veMoca.createLock{value: lock2_MocaAmount}(lock2_Expiry, lock2_EsMocaAmount);
-            veMoca.delegateLock(lock2_Id, user3);
+            veMoca.delegationAction(lock2_Id, user3, DataTypes.DelegationType.Delegate);
         vm.stopPrank();
         
         // Capture lock2 veBalance (ADD THIS LINE)
