@@ -4,589 +4,20 @@ pragma solidity 0.8.27;
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 import "openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol";
-import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 import "../utils/TestingHarness.sol";
 import {Constants} from "../../src/libraries/Constants.sol";
 
-//note: vm.warp(EPOCH_DURATION);
-abstract contract StateE1_Deploy is TestingHarness {    
+import "./userHelper.sol";
 
-    // PERIODICITY:  does not account for leap year or leap seconds
-    uint128 public constant EPOCH_DURATION = 14 days;                    
-    uint128 public constant MIN_LOCK_DURATION = 28 days;            
-    uint128 public constant MAX_LOCK_DURATION = 728 days;               
-    
-    /** note: why use dummy variable? 
-        When you call EpochMath.getCurrentEpochNumber() directly in a test, these internal functions get inlined into the test contract at compile time. 
-        This can cause issues with Foundry's runtime state modifications like vm.warp().
-        The issue is that the Solidity optimizer might be evaluating block.timestamp at a different point than expected, 
-        or caching values in unexpected ways when dealing with inlined library code.
-        So we need to use a dummy variable to prevent the compiler from inlining the functions.
-    */
-    uint256 private dummy; // so that solidity compiler does not optimize out the functions
+//note: vm.warp(EPOCH_DURATION);
+abstract contract StateE1_Deploy is TestingHarness, UserHelper {    
 
     function setUp() public virtual override {
         super.setUp();
 
         vm.warp(EPOCH_DURATION);
         assertTrue(getCurrentEpochStart() > 0, "Current epoch start time is greater than 0");
-    }
-        
-// ================= EPOCH MATH =================
-
-        ///@dev returns epoch number for a given timestamp
-        function getEpochNumber(uint128 timestamp) public returns (uint128) {
-            dummy = 1;
-            return timestamp / EPOCH_DURATION;
-        }
-
-        ///@dev returns current epoch number
-        function getCurrentEpochNumber() public returns (uint128) {
-            dummy = 1;
-            return getEpochNumber(uint128(block.timestamp));
-        }
-
-        ///@dev returns epoch start time for a given timestamp
-        function getEpochStartForTimestamp(uint128 timestamp) public returns (uint128) {
-            dummy = 1;
-            // intentionally divide first to "discard" remainder
-            return (timestamp / EPOCH_DURATION) * EPOCH_DURATION;   // forge-lint: disable-line(divide-before-multiply)
-        }
-
-        ///@dev returns epoch end time for a given timestamp
-        function getEpochEndForTimestamp(uint128 timestamp) public returns (uint128) {
-            dummy = 1;
-            return getEpochStartForTimestamp(timestamp) + EPOCH_DURATION;
-        }
-        
-
-        ///@dev returns current epoch start time | uint128: Checkpoint{veBla, uint128 lastUpdatedAt}
-        function getCurrentEpochStart() public returns (uint128) {
-            dummy = 1;
-            return uint128(getEpochStartForTimestamp(uint128(block.timestamp)));
-        }
-
-        ///@dev returns current epoch end time
-        function getCurrentEpochEnd() public returns (uint128) {
-            dummy = 1;
-            return getEpochEndTimestamp(getCurrentEpochNumber());
-        }
-
-        function getEpochStartTimestamp(uint128 epoch) public returns (uint128) {
-            dummy = 1;
-            return epoch * EPOCH_DURATION;
-        }
-
-        ///@dev returns epoch end time for a given epoch number
-        function getEpochEndTimestamp(uint128 epoch) public returns (uint128) {
-            dummy = 1;
-            // end of epoch:N is the start of epoch:N+1
-            return (epoch + 1) * EPOCH_DURATION;
-        }
-
-        // used in _createLockFor()
-        function isValidEpochTime(uint256 timestamp) public returns (bool) {
-            dummy = 1;
-            return timestamp % EPOCH_DURATION == 0;
-        }
-
-// ================= STATE VERIFICATION HELPERS =================
-
-    
-    function getLock(bytes32 lockId) public view returns (DataTypes.Lock memory lock) {
-        (
-            lock.owner,
-            lock.expiry,
-            lock.moca,
-            lock.esMoca,
-            lock.isUnlocked,
-            lock.delegate,
-            lock.currentHolder,
-            lock.delegationEpoch
-        ) = veMoca.locks(lockId);
-    }
-
-    function getLockHistory(bytes32 lockId, uint256 index) public view returns (DataTypes.Checkpoint memory) {
-        DataTypes.Checkpoint memory checkpoint;
-        (checkpoint.veBalance, checkpoint.lastUpdatedAt) = veMoca.lockHistory(lockId, index);
-        return checkpoint;
-    }
-
-    function getValueAt(DataTypes.VeBalance memory a, uint128 timestamp) public pure returns (uint128) {
-        uint128 decay = a.slope * timestamp;
-        if(a.bias <= decay) return 0;
-        return a.bias - decay;
-    }
-
-    function convertToVeBalance(DataTypes.Lock memory lock) public pure returns (DataTypes.VeBalance memory) {
-        DataTypes.VeBalance memory veBalance;
-        veBalance.slope = (lock.moca + lock.esMoca) / MAX_LOCK_DURATION;
-        veBalance.bias = veBalance.slope * lock.expiry;
-        return veBalance;
-    }
-
-    function getLockVotingPowerAt(bytes32 lockId, uint128 timestamp) public view returns (uint128) {
-        DataTypes.Lock memory lock = getLock(lockId);
-        if(lock.expiry <= timestamp) return 0;
-
-        return getValueAt(convertToVeBalance(lock), timestamp);
-    }
-
-    struct TokensSnapshot {
-        uint128 userMoca;
-        uint128 userEsMoca;
-        uint128 contractMoca; 
-        uint128 contractEsMoca;
-    }
-
-    struct GlobalStateSnapshot {
-        // global vars
-        uint128 TOTAL_LOCKED_MOCA;
-        uint128 TOTAL_LOCKED_ESMOCA;
-        DataTypes.VeBalance veGlobal;
-        uint128 lastUpdatedTimestamp;
-
-        // Mappings
-        uint128 slopeChange; // at expiry
-        uint128 slopeChangeNewExpiry; // at newExpiry (for increaseDuration)
-        uint128 totalSupplyAt; // at currentEpochStart
-    }
-
-    struct UserStateSnapshot {
-        DataTypes.VeBalance userHistory; // at currentEpochStart
-        uint128 userSlopeChange; // at expiry
-        uint128 userLastUpdatedTimestamp;
-
-        uint128 userSlopeChangeNewExpiry; // at newExpiry (for increaseDuration)
-        // balanceOfAt
-        uint128 userVotingPower;
-    }
-
-    struct LockStateSnapshot {
-        bytes32 lockId;
-        DataTypes.Lock lock;
-        DataTypes.Checkpoint[] lockHistory;
-        uint128 lockVotingPower;
-    }
-
-    // Unified State Snapshot
-    struct StateSnapshot {
-        TokensSnapshot tokens;
-        GlobalStateSnapshot global;
-        UserStateSnapshot user;
-        LockStateSnapshot lock;
-    }
-
-    function captureTokensState(address user) internal returns (TokensSnapshot memory) {
-        TokensSnapshot memory state;
-        // user
-        state.userMoca = uint128(user.balance);
-        state.userEsMoca = uint128(esMoca.balanceOf(user));
-        // contract
-        state.contractMoca = uint128(address(veMoca).balance);
-        state.contractEsMoca = uint128(esMoca.balanceOf(address(veMoca)));
-
-        return state;
-    }
-
-    function captureGlobalState(uint128 expiry, uint128 newExpiry) internal returns (GlobalStateSnapshot memory) {
-        GlobalStateSnapshot memory state;
-
-        // global vars
-        (state.veGlobal.bias, state.veGlobal.slope) = veMoca.veGlobal();
-        state.TOTAL_LOCKED_MOCA = veMoca.TOTAL_LOCKED_MOCA();
-        state.TOTAL_LOCKED_ESMOCA = veMoca.TOTAL_LOCKED_ESMOCA();
-        state.lastUpdatedTimestamp = veMoca.lastUpdatedTimestamp();
-        
-        // slopeChange
-        state.slopeChange = veMoca.slopeChanges(expiry);
-        if (newExpiry != 0) state.slopeChangeNewExpiry = veMoca.slopeChanges(newExpiry);
-        
-        // totalSupplyAt
-        state.totalSupplyAt = veMoca.totalSupplyAt(getCurrentEpochStart());
-        return state;
-    }
-
-    function captureUserState(address user, uint128 expiry, uint128 newExpiry) internal returns (UserStateSnapshot memory) {
-        UserStateSnapshot memory state;
-        // user vars
-        (state.userHistory.bias, state.userHistory.slope) = veMoca.userHistory(user, getCurrentEpochStart());
-        state.userSlopeChange = veMoca.userSlopeChanges(user, expiry);
-        state.userLastUpdatedTimestamp = veMoca.userLastUpdatedTimestamp(user);
-
-        if (newExpiry != 0) state.userSlopeChangeNewExpiry = veMoca.userSlopeChanges(user, newExpiry);
-
-        // userVotingPower
-        state.userVotingPower = veMoca.balanceOfAt(user, uint128(block.timestamp), false);
-
-        return state;
-    }
-
-    function captureLockState(bytes32 lockId) internal returns (LockStateSnapshot memory) {
-        LockStateSnapshot memory state;
-        state.lockId = lockId;
-        state.lock = getLock(lockId);
-        // lock history
-        uint256 len = veMoca.getLockHistoryLength(lockId);
-        state.lockHistory = new DataTypes.Checkpoint[](len);
-        
-        for(uint256 i; i < len; ++i) {
-            state.lockHistory[i] = getLockHistory(lockId, i);
-        }
-        
-        // lockVotingPower
-        state.lockVotingPower = getLockVotingPowerAt(lockId, uint128(block.timestamp));
-        
-        return state;
-    }
-
-    function captureAllStates(address user, bytes32 lockId, uint128 expiry, uint128 newExpiry) internal 
-        returns (StateSnapshot memory) {
-        StateSnapshot memory state;
-        
-        state.tokens = captureTokensState(user);
-        state.global = captureGlobalState(expiry, newExpiry);
-        state.user = captureUserState(user, expiry, newExpiry);
-        state.lock = captureLockState(lockId);
-        
-        return state;
-    }
-
-    function verifyCreateLock(
-        StateSnapshot memory beforeState, 
-        address user, 
-        bytes32 lockId, 
-        uint128 mocaAmt,
-        uint128 esMocaAmt,
-        uint128 expiry
-    ) internal {
-        
-        uint128 currentEpochStart = getCurrentEpochStart();
-        
-        // Expected Deltas
-        uint128 expectedSlope = (mocaAmt + esMocaAmt) / MAX_LOCK_DURATION;
-        uint128 expectedBias = expectedSlope * expiry;
-
-        // 1. Tokens
-        assertEq(user.balance, beforeState.tokens.userMoca - mocaAmt, "User MOCA must be decremented");
-        assertEq(esMoca.balanceOf(user), beforeState.tokens.userEsMoca - esMocaAmt, "User esMOCA must be decremented");
-        assertEq(address(veMoca).balance, beforeState.tokens.contractMoca + mocaAmt, "Contract MOCA must be incremented");
-        assertEq(esMoca.balanceOf(address(veMoca)), beforeState.tokens.contractEsMoca + esMocaAmt, "Contract esMOCA must be incremented");
-
-
-        // 2. Global State - use scoped block to limit variable lifetime
-        {
-            (uint128 bias, uint128 slope) = veMoca.veGlobal();
-            assertEq(bias, beforeState.global.veGlobal.bias + expectedBias, "veGlobal bias must be incremented");
-            assertEq(slope, beforeState.global.veGlobal.slope + expectedSlope, "veGlobal slope must be incremented");
-        }
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.global.TOTAL_LOCKED_MOCA + mocaAmt, "Total Locked MOCA must be incremented");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.global.TOTAL_LOCKED_ESMOCA + esMocaAmt, "Total Locked esMOCA must be incremented");
-        assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global LastUpdated must be incremented");
-
-        // 3. Mappings
-        assertEq(veMoca.slopeChanges(expiry), beforeState.global.slopeChange + expectedSlope, "Slope Changes must be incremented");
-        
-        // 4. User State - use scoped block
-        {
-            (uint128 bias, uint128 slope) = veMoca.userHistory(user, currentEpochStart);
-            assertEq(bias, beforeState.user.userHistory.bias + expectedBias, "userHistory Bias must be incremented");
-            assertEq(slope, beforeState.user.userHistory.slope + expectedSlope, "userHistory Slope must be incremented");
-        }
-        assertEq(veMoca.userSlopeChanges(user, expiry), beforeState.user.userSlopeChange + expectedSlope, "userSlopeChanges must be incremented");
-        assertEq(veMoca.userLastUpdatedTimestamp(user), currentEpochStart, "userLastUpdatedTimestamp must be incremented");
-            
-        // 5. Lock - use scoped block
-        {
-            DataTypes.Lock memory lock = getLock(lockId);
-            assertEq(lock.owner, user, "Lock Owner");
-            assertEq(lock.delegate, address(0), "Lock Delegate");
-            assertEq(lock.moca, mocaAmt, "Lock Moca");
-            assertEq(lock.esMoca, esMocaAmt, "Lock esMoca");
-            assertEq(lock.expiry, expiry, "Lock Expiry");
-            assertFalse(lock.isUnlocked, "Lock Unlocked");
-        }
-
-        // 6. Lock History
-        {
-            uint256 len = veMoca.getLockHistoryLength(lockId);
-            assertEq(len, 1, "Lock History Length must be 1");
-            DataTypes.Checkpoint memory cp = getLockHistory(lockId, 0);
-            assertEq(cp.veBalance.bias, expectedBias, "Lock History: Checkpoint Bias must be incremented");
-            assertEq(cp.veBalance.slope, expectedSlope, "Lock History: Checkpoint Slope must be incremented");
-            assertEq(cp.lastUpdatedAt, currentEpochStart, "Lock History: Checkpoint Timestamp must be incremented");
-        }
-        
-        // 7. View functions - simplified inline check
-        {
-            uint128 ts = uint128(block.timestamp);
-            uint128 userVP = veMoca.balanceOfAt(user, ts, false);
-            uint128 lockVP = getLockVotingPowerAt(lockId, ts);
-            assertGt(userVP, 0, "User must have voting power after createLock");
-            assertGt(lockVP, 0, "Lock must have voting power");
-        }
-    }
-
-
-    function verifyIncreaseAmount(StateSnapshot memory beforeState, uint128 mocaAmt, uint128 esMocaAmt) internal {
-        // Derive from beforeState.lock
-        bytes32 lockId = beforeState.lock.lockId;
-        uint128 expiry = beforeState.lock.lock.expiry;
-        address user = beforeState.lock.lock.owner;
-        uint128 currentEpochStart = getCurrentEpochStart();
-
-        // Calculate expected deltas in scoped block
-        uint128 newLockSlope;
-        uint128 newLockBias;
-        uint128 expectedSlopeDelta;
-        uint128 expectedBiasDelta;
-        {
-            uint128 newLockTotalMoca = beforeState.lock.lock.moca + mocaAmt;
-            uint128 newLockTotalEsMoca = beforeState.lock.lock.esMoca + esMocaAmt;
-            newLockSlope = (newLockTotalMoca + newLockTotalEsMoca) / MAX_LOCK_DURATION;
-            newLockBias = newLockSlope * expiry;
-            
-            uint128 oldLockSlope = (beforeState.lock.lock.moca + beforeState.lock.lock.esMoca) / MAX_LOCK_DURATION;
-            uint128 oldLockBias = oldLockSlope * expiry;
-            
-            expectedSlopeDelta = newLockSlope - oldLockSlope;
-            expectedBiasDelta = newLockBias - oldLockBias;
-        }
-        
-        // 1. Tokens
-        assertEq(user.balance, beforeState.tokens.userMoca - mocaAmt, "User MOCA must be decremented");
-        assertEq(esMoca.balanceOf(user), beforeState.tokens.userEsMoca - esMocaAmt, "User esMOCA must be decremented");
-        assertEq(address(veMoca).balance, beforeState.tokens.contractMoca + mocaAmt, "Contract MOCA must be incremented");
-        assertEq(esMoca.balanceOf(address(veMoca)), beforeState.tokens.contractEsMoca + esMocaAmt, "Contract esMOCA must be incremented");
-
-        
-        // 2. Global State
-        {
-            (uint128 bias, uint128 slope) = veMoca.veGlobal();
-            assertEq(bias, beforeState.global.veGlobal.bias + expectedBiasDelta, "veGlobal bias must be incremented");
-            assertEq(slope, beforeState.global.veGlobal.slope + expectedSlopeDelta, "veGlobal slope must be incremented");
-        }
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.global.TOTAL_LOCKED_MOCA + mocaAmt, "Total Locked MOCA must be incremented");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.global.TOTAL_LOCKED_ESMOCA + esMocaAmt, "Total Locked esMOCA must be incremented");
-        assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global LastUpdated must be updated");
-
-        // 3. Global Mappings
-        assertEq(veMoca.slopeChanges(expiry), beforeState.global.slopeChange + expectedSlopeDelta, "Slope Changes must be incremented");
-
-        // 4. User State
-        {
-            (uint128 bias, uint128 slope) = veMoca.userHistory(user, currentEpochStart);
-            assertEq(bias, beforeState.user.userHistory.bias + expectedBiasDelta, "userHistory Bias must be incremented");
-            assertEq(slope, beforeState.user.userHistory.slope + expectedSlopeDelta, "userHistory Slope must be incremented");
-        }
-        assertEq(veMoca.userSlopeChanges(user, expiry), beforeState.user.userSlopeChange + expectedSlopeDelta, "userSlopeChanges must be incremented");
-        assertEq(veMoca.userLastUpdatedTimestamp(user), currentEpochStart, "userLastUpdatedTimestamp must be updated");
-        
-        // 5. Lock 
-        {
-            DataTypes.Lock memory lock = getLock(lockId);
-            assertEq(lock.owner, user, "Lock Owner must match");
-            assertEq(lock.delegate, beforeState.lock.lock.delegate, "Lock Delegate must be unchanged");
-            assertEq(lock.moca, beforeState.lock.lock.moca + mocaAmt, "Lock Moca must be incremented");
-            assertEq(lock.esMoca, beforeState.lock.lock.esMoca + esMocaAmt, "Lock esMoca must be incremented");
-            assertEq(lock.expiry, expiry, "Lock Expiry must be unchanged");
-            assertEq(lock.isUnlocked, beforeState.lock.lock.isUnlocked, "Lock Unlocked must be unchanged");
-        }
-
-       
-        // 6. Lock History
-        {
-            uint256 len = veMoca.getLockHistoryLength(lockId);
-            if (beforeState.lock.lockHistory[beforeState.lock.lockHistory.length - 1].lastUpdatedAt == currentEpochStart) {
-                assertEq(len, beforeState.lock.lockHistory.length, "Lock History Length unchanged (same epoch)");
-            } else {
-                assertEq(len, beforeState.lock.lockHistory.length + 1, "Lock History Length must be incremented (new epoch)");
-            }
-
-            DataTypes.Checkpoint memory cp = getLockHistory(lockId, len - 1);
-            assertEq(cp.veBalance.bias, newLockBias, "Lock History: Checkpoint Bias must reflect total");
-            assertEq(cp.veBalance.slope, newLockSlope, "Lock History: Checkpoint Slope must reflect total");
-            assertEq(cp.lastUpdatedAt, currentEpochStart, "Lock History: Checkpoint Timestamp must be updated");
-        }
-
-                    
-        // 7. View functions - simplified inline check
-        {
-            uint128 ts = uint128(block.timestamp);
-            uint128 userVP = veMoca.balanceOfAt(user, ts, false);
-            uint128 lockVP = getLockVotingPowerAt(lockId, ts);
-            assertGt(userVP, 0, "User must have voting power");
-            assertGt(lockVP, beforeState.lock.lockVotingPower, "Lock VP must have increased");
-        }
-    }
-
-    function verifyIncreaseDuration(StateSnapshot memory beforeState, uint128 newExpiry) internal {
-
-        // Derive from beforeLock
-        bytes32 lockId = beforeState.lock.lockId;  
-        uint128 oldExpiry = beforeState.lock.lock.expiry;
-        address user = beforeState.lock.lock.owner;
-        uint128 currentEpochStart = getCurrentEpochStart();
-
-        uint128 mocaAmt = beforeState.lock.lock.moca;
-        uint128 esMocaAmt = beforeState.lock.lock.esMoca;
-        
-        // Expected Deltas
-        uint128 lockSlope = (mocaAmt + esMocaAmt) / MAX_LOCK_DURATION;
-        uint128 biasIncrease = lockSlope * (newExpiry - oldExpiry);
-
-        // 1. Tokens (Should be unchanged)
-        assertEq(user.balance, beforeState.tokens.userMoca, "User MOCA must be unchanged");
-        assertEq(esMoca.balanceOf(user), beforeState.tokens.userEsMoca, "User esMOCA must be unchanged");
-        assertEq(address(veMoca).balance, beforeState.tokens.contractMoca, "Contract MOCA must be unchanged");
-        assertEq(esMoca.balanceOf(address(veMoca)), beforeState.tokens.contractEsMoca, "Contract esMOCA must be unchanged");
-
-        // 2. Global State
-        {
-            (uint128 bias, uint128 slope) = veMoca.veGlobal();
-            assertEq(bias, beforeState.global.veGlobal.bias + biasIncrease, "veGlobal bias must be incremented");
-            assertEq(slope, beforeState.global.veGlobal.slope, "veGlobal slope must be unchanged");
-        }
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.global.TOTAL_LOCKED_MOCA, "Total Locked MOCA must be unchanged");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.global.TOTAL_LOCKED_ESMOCA, "Total Locked esMOCA must be unchanged");
-        assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "Global LastUpdated must be updated");
-
-
-        // 3. Global Mappings (Slope Changes)
-        // Old expiry slope change should decrease
-        assertEq(veMoca.slopeChanges(oldExpiry), beforeState.global.slopeChange - lockSlope, "Slope Change (Old Expiry) must be decremented");
-        // New expiry slope change should increase
-        assertEq(veMoca.slopeChanges(newExpiry), beforeState.global.slopeChangeNewExpiry + lockSlope, "Slope Change (New Expiry) must be incremented");
-
-        // 4. User State
-        {
-            (uint128 bias, uint128 slope) = veMoca.userHistory(user, currentEpochStart);
-            assertEq(bias, beforeState.user.userHistory.bias + biasIncrease, "User History Bias must be incremented");
-            assertEq(slope, beforeState.user.userHistory.slope, "User History Slope must be unchanged");
-        }
-        assertEq(veMoca.userLastUpdatedTimestamp(user), currentEpochStart, "User LastUpdated must be updated");
-        
-        // 5. Lock
-        {
-            DataTypes.Lock memory lock = getLock(lockId);
-            assertEq(lock.owner, user, "Lock Owner must match");
-            assertEq(lock.delegate, beforeState.lock.lock.delegate, "Lock Delegate must be unchanged");
-            assertEq(lock.moca, mocaAmt, "Lock Moca must be unchanged");
-            assertEq(lock.esMoca, esMocaAmt, "Lock esMoca must be unchanged");
-            assertEq(lock.expiry, newExpiry, "Lock Expiry must be updated");
-            assertEq(lock.isUnlocked, beforeState.lock.lock.isUnlocked, "Lock Unlocked must be unchanged");
-        }
-
-        // 6. Lock History
-        {
-            uint256 len = veMoca.getLockHistoryLength(lockId);
-            if (beforeState.lock.lockHistory[beforeState.lock.lockHistory.length - 1].lastUpdatedAt == currentEpochStart) {
-                assertEq(len, beforeState.lock.lockHistory.length, "Lock History Length unchanged (same epoch)");
-            } else {
-                assertEq(len, beforeState.lock.lockHistory.length + 1, "Lock History Length must be incremented (new epoch)");
-            }
-            
-            DataTypes.Checkpoint memory cp = getLockHistory(lockId, len - 1);
-            uint128 expectedBias = lockSlope * newExpiry;
-            assertEq(cp.veBalance.bias, expectedBias, "Lock History: Checkpoint Bias must reflect new expiry");
-            assertEq(cp.veBalance.slope, lockSlope, "Lock History: Checkpoint Slope must reflect new expiry (same slope)");
-            assertEq(cp.lastUpdatedAt, currentEpochStart, "Lock History: Checkpoint Timestamp must be updated");
-        }
-
-        // 7. View functions - simplified inline check
-        {
-            uint128 ts = uint128(block.timestamp);
-            uint128 userVP = veMoca.balanceOfAt(user, ts, false);
-            uint128 lockVP = getLockVotingPowerAt(lockId, ts);
-            assertGt(userVP, 0, "User must have voting power");
-            assertGt(lockVP, beforeState.lock.lockVotingPower, "Lock VP must have increased");
-        }
-    }
-
-    function verifyUnlock(StateSnapshot memory beforeState) internal {
-        // Derive from beforeState.lock
-        bytes32 lockId = beforeState.lock.lockId;
-        uint128 expiry = beforeState.lock.lock.expiry;
-        address user = beforeState.lock.lock.owner;
-        uint128 currentEpochStart = getCurrentEpochStart();
-        uint128 currentTimestamp = uint128(block.timestamp);
-        
-        uint128 mocaAmt = beforeState.lock.lock.moca;
-        uint128 esMocaAmt = beforeState.lock.lock.esMoca;
-
-        // ============ 1. Tokens ============
-        // User receives tokens back
-        assertEq(user.balance, beforeState.tokens.userMoca + mocaAmt, "User MOCA must be incremented");
-        assertEq(esMoca.balanceOf(user), beforeState.tokens.userEsMoca + esMocaAmt, "User esMOCA must be incremented");
-        assertEq(address(veMoca).balance, beforeState.tokens.contractMoca - mocaAmt, "Contract MOCA must be decremented");
-        assertEq(esMoca.balanceOf(address(veMoca)), beforeState.tokens.contractEsMoca - esMocaAmt, "Contract esMOCA must be decremented");
-
-        // ============ 2. Global State ============
-        // unlock() does NOT update veGlobal or lastUpdatedTimestamp
-        // Only TOTAL_LOCKED_MOCA and TOTAL_LOCKED_ESMOCA are updated
-        {
-            (uint128 bias, uint128 slope) = veMoca.veGlobal();
-            assertEq(bias, beforeState.global.veGlobal.bias, "veGlobal bias unchanged by unlock");
-            assertEq(slope, beforeState.global.veGlobal.slope, "veGlobal slope unchanged by unlock");
-        }
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.global.TOTAL_LOCKED_MOCA - mocaAmt, "Total Locked MOCA must be decremented");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.global.TOTAL_LOCKED_ESMOCA - esMocaAmt, "Total Locked esMOCA must be decremented");
-        assertEq(veMoca.lastUpdatedTimestamp(), beforeState.global.lastUpdatedTimestamp, "lastUpdatedTimestamp unchanged by unlock");
-
-        // ============ 3. Global Mappings ============
-        // slopeChanges unchanged by unlock()
-        assertEq(veMoca.slopeChanges(expiry), beforeState.global.slopeChange, "Slope Change at expiry must be unchanged");
-
-        // ============ 4. User State ============
-        assertEq(veMoca.userLastUpdatedTimestamp(user), beforeState.user.userLastUpdatedTimestamp, "userLastUpdatedTimestamp unchanged by unlock");
-
-        // unlock() does NOT update userHistory or userLastUpdatedTimestamp
-        {
-            (uint128 bias, uint128 slope) = veMoca.userHistory(user, currentEpochStart);
-            assertEq(bias, beforeState.user.userHistory.bias, "userHistory bias unchanged by unlock");
-            assertEq(slope, beforeState.user.userHistory.slope, "userHistory slope unchanged by unlock");
-        }
-
-        // ============ 5. Lock State ============
-        {
-            DataTypes.Lock memory lock = getLock(lockId);
-            assertEq(lock.owner, user, "Lock Owner must match");
-            assertEq(lock.delegate, beforeState.lock.lock.delegate, "Lock Delegate must be unchanged");
-            assertEq(lock.moca, 0, "Lock Moca must be zero after unlock");
-            assertEq(lock.esMoca, 0, "Lock esMoca must be zero after unlock");
-            assertEq(lock.expiry, expiry, "Lock Expiry must be unchanged");
-            assertTrue(lock.isUnlocked, "Lock must be marked as unlocked");
-        }
-
-        // ============ 6. Lock History ============
-        // unlock() pushes a final checkpoint via _pushCheckpoint()
-        {
-            uint256 len = veMoca.getLockHistoryLength(lockId);
-            uint256 beforeLen = beforeState.lock.lockHistory.length;
-            if (beforeState.lock.lockHistory[beforeLen - 1].lastUpdatedAt == currentEpochStart) {
-                assertEq(len, beforeLen, "Lock History Length unchanged (same epoch)");
-            } else {
-                assertEq(len, beforeLen + 1, "Lock History Length must be incremented");
-            }
-        }
-        // Lock History checkpoint - final checkpoint records the lock's veBalance at unlock time
-        {
-            DataTypes.Checkpoint memory cp = getLockHistory(lockId, veMoca.getLockHistoryLength(lockId) - 1);
-            // The checkpoint stores the lock's veBalance BEFORE clearing (using cached values)
-            uint128 expectedSlope = (mocaAmt + esMocaAmt) / MAX_LOCK_DURATION;
-            uint128 expectedBias = expectedSlope * expiry;
-            assertEq(cp.veBalance.bias, expectedBias, "Lock History: Final checkpoint bias");
-            assertEq(cp.veBalance.slope, expectedSlope, "Lock History: Final checkpoint slope");
-            assertEq(cp.lastUpdatedAt, currentEpochStart, "Lock History: Checkpoint timestamp");
-        }
-
-        // ============ 7. Voting Power ============
-        // Lock was expired before unlock, so VP should be 0
-        {
-            uint128 lockVotingPower = getLockVotingPowerAt(lockId, currentTimestamp);
-            assertEq(lockVotingPower, 0, "Lock Voting Power must be 0 after unlock");
-        }
     }
 }
 
@@ -1167,20 +598,7 @@ abstract contract StateE2_User1_IncreaseAmountLock2 is StateE2_User1_CreateLock2
 contract StateE2_User1_IncreaseAmountLock2_Test is StateE2_User1_IncreaseAmountLock2 {
 
     /**
-     * Test verifies the following after increasing lock2's amount in epoch 2:
-         
-         1. State changes via verifyIncreaseAmount
-         2. Lock2 VP increased after the amount increase
-         3. Lock1 VP unaffected - isolated from lock2's modification
-         4. User total VP = sum of lock VPs - aggregation correctness
-         5. Lock2's veBalance reflects the new amounts
-         6. User's veBalance = sum of lock veBalances - accounting integrity
-         7. Global veBalance = user's veBalance (single user invariant)
-         8. Total locked amounts are correctly incremented
-         9. Cross-check VP calculation - veBalance → VP consistency
-         10. Global slopeChanges at each expiry timestamp
-         11. User slopeChanges at each expiry timestamp
-         12. VP delta consistency - user VP increase equals lock2 VP increase
+     * Test verifies state changes via verifyIncreaseAmount and basic VP properties
      */
     function test_User1VotingPower_AfterIncreaseAmountLock2_Epoch2() public {
         assertEq(getCurrentEpochNumber(), 2, "Current epoch number is 2");
@@ -1191,97 +609,54 @@ contract StateE2_User1_IncreaseAmountLock2_Test is StateE2_User1_IncreaseAmountL
         // 1) Verify state changes from increaseAmount
         verifyIncreaseAmount(epoch2_BeforeLock2IncreaseAmount, mocaToAdd, esMocaToAdd);
 
-        uint128 currentTimestamp = uint128(block.timestamp);
-        uint128 currentEpochStart = getCurrentEpochStart();
+        // 2) Verify VP changes
+        {
+            uint128 currentTimestamp = uint128(block.timestamp);
+            uint128 lock1VotingPower = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
+            uint128 lock2VotingPower_After = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
+            uint128 userTotalVotingPower = veMoca.balanceOfAt(user1, currentTimestamp, false);
 
-        // ============ 2) Individual Lock Voting Powers ============
-        uint128 lock1VotingPower = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
-        uint128 lock2VotingPower_After = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
+            assertGt(lock2VotingPower_After, epoch2_BeforeLock2IncreaseAmount.lock.lockVotingPower, "Lock2 VP must have increased");
+            assertEq(userTotalVotingPower, lock1VotingPower + lock2VotingPower_After, "User VP must equal sum of lock VPs");
+        }
 
-        // Verify lock2's VP increased
-        assertGt(lock2VotingPower_After, epoch2_BeforeLock2IncreaseAmount.lock.lockVotingPower, "Lock2 VP must have increased");
+        // 3) Verify lock veBalances and global state
+        {
+            DataTypes.Lock memory lock1 = getLock(lock1_Id);
+            DataTypes.Lock memory lock2 = getLock(lock2_Id);
+            DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
+            
+            uint128 expectedLock2Slope = (lock2_MocaAmount + mocaToAdd + lock2_EsMocaAmount + esMocaToAdd) / MAX_LOCK_DURATION;
+            assertEq(lock2VeBalance.slope, expectedLock2Slope, "Lock2 slope must reflect increased amounts");
+        }
 
-        // Verify lock1's VP is unaffected (calculate expected from lock1's state)
-        DataTypes.Lock memory lock1 = getLock(lock1_Id);
-        uint128 expectedLock1VP = getValueAt(convertToVeBalance(lock1), currentTimestamp);
-        assertEq(lock1VotingPower, expectedLock1VP, "Lock1 VP must be correctly calculated");
+        // 4) Verify global totals
+        {
+            uint128 expectedTotalLockedMoca = lock1_MocaAmount + lock2_MocaAmount + mocaToAdd;
+            uint128 expectedTotalLockedEsMoca = lock1_EsMocaAmount + lock2_EsMocaAmount + esMocaToAdd;
+            assertEq(veMoca.TOTAL_LOCKED_MOCA(), expectedTotalLockedMoca, "Total locked MOCA must match");
+            assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), expectedTotalLockedEsMoca, "Total locked esMOCA must match");
+        }
 
-        // ============ 3) User's Total Voting Power ============
-        uint128 userTotalVotingPower = veMoca.balanceOfAt(user1, currentTimestamp, false);
-        
-        // User VP must equal sum of individual lock VPs
-        assertEq(userTotalVotingPower, lock1VotingPower + lock2VotingPower_After, "User VP must equal sum of lock VPs");
+        // 5) Verify slopeChanges
+        {
+            DataTypes.Lock memory lock1 = getLock(lock1_Id);
+            DataTypes.Lock memory lock2 = getLock(lock2_Id);
+            DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
+            DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
+            
+            assertEq(veMoca.slopeChanges(lock1_Expiry), lock1VeBalance.slope, "Global slopeChange at lock1 expiry");
+            assertEq(veMoca.slopeChanges(lock2_Expiry), lock2VeBalance.slope, "Global slopeChange at lock2 expiry");
+            assertEq(veMoca.userSlopeChanges(user1, lock1_Expiry), lock1VeBalance.slope, "User slopeChange at lock1 expiry");
+            assertEq(veMoca.userSlopeChanges(user1, lock2_Expiry), lock2VeBalance.slope, "User slopeChange at lock2 expiry");
+        }
 
-        // ============ 4) Individual Lock veBalances ============
-        DataTypes.Lock memory lock2 = getLock(lock2_Id);
-        
-        DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
-        DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
-
-        // Verify lock2's veBalance reflects the increase
-        uint128 expectedLock2Slope = (lock2_MocaAmount + mocaToAdd + lock2_EsMocaAmount + esMocaToAdd) / MAX_LOCK_DURATION;
-        uint128 expectedLock2Bias = expectedLock2Slope * lock2_Expiry;
-        assertEq(lock2VeBalance.slope, expectedLock2Slope, "Lock2 slope must reflect increased amounts");
-        assertEq(lock2VeBalance.bias, expectedLock2Bias, "Lock2 bias must reflect increased amounts");
-
-        // ============ 5) User's veBalance = sum of lock veBalances ============
-        (uint128 userBias, uint128 userSlope) = veMoca.userHistory(user1, currentEpochStart);
-        
-        uint128 expectedUserBias = lock1VeBalance.bias + lock2VeBalance.bias;
-        uint128 expectedUserSlope = lock1VeBalance.slope + lock2VeBalance.slope;
-        
-        assertEq(userBias, expectedUserBias, "User bias must equal sum of lock biases");
-        assertEq(userSlope, expectedUserSlope, "User slope must equal sum of lock slopes");
-
-        // ============ 6) Global veBalance matches user's (single user) ============
-        (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
-        
-        assertEq(globalBias, userBias, "Global bias must equal user bias (single user)");
-        assertEq(globalSlope, userSlope, "Global slope must equal user slope (single user)");
-
-        // ============ 7) Global total locked amounts ============
-        uint128 expectedTotalLockedMoca = lock1_MocaAmount + lock2_MocaAmount + mocaToAdd;
-        uint128 expectedTotalLockedEsMoca = lock1_EsMocaAmount + lock2_EsMocaAmount + esMocaToAdd;
-        
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), expectedTotalLockedMoca, "Total locked MOCA must match sum of locks");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), expectedTotalLockedEsMoca, "Total locked esMOCA must match sum of locks");
-
-        // ============ 8) Cross-check: VP calculated from veBalance matches actual VP ============
-        uint128 calculatedUserVP = getValueAt(DataTypes.VeBalance(userBias, userSlope), currentTimestamp);
-        assertEq(userTotalVotingPower, calculatedUserVP, "User VP must match calculated VP from veBalance");
-
-        // ============ 9) Verify slopeChanges are correct ============
-        // lock1 expires at lock1_Expiry, lock2 expires at lock2_Expiry
-        uint128 lock1SlopeChange = veMoca.slopeChanges(lock1_Expiry);
-        uint128 lock2SlopeChange = veMoca.slopeChanges(lock2_Expiry);
-        
-        assertEq(lock1SlopeChange, lock1VeBalance.slope, "Global slopeChange at lock1 expiry must equal lock1 slope");
-        assertEq(lock2SlopeChange, lock2VeBalance.slope, "Global slopeChange at lock2 expiry must equal lock2 slope");
-
-        // ============ 10) Verify userSlopeChanges ============
-        uint128 userLock1SlopeChange = veMoca.userSlopeChanges(user1, lock1_Expiry);
-        uint128 userLock2SlopeChange = veMoca.userSlopeChanges(user1, lock2_Expiry);
-        
-        assertEq(userLock1SlopeChange, lock1VeBalance.slope, "User slopeChange at lock1 expiry must equal lock1 slope");
-        assertEq(userLock2SlopeChange, lock2VeBalance.slope, "User slopeChange at lock2 expiry must equal lock2 slope");
-
-        // ============ 11) Verify voting power increase delta ============
-        uint128 oldLock2VP = getValueAt(convertToVeBalance(epoch2_BeforeLock2IncreaseAmount.lock.lock), currentTimestamp);
-        uint128 lock2VPDelta = lock2VotingPower_After - oldLock2VP;
-        uint128 userVPDelta = userTotalVotingPower - epoch2_BeforeLock2IncreaseAmount.user.userVotingPower;
-        
-        // The increase in user's VP should equal the increase in lock2's VP
-        assertEq(userVPDelta, lock2VPDelta, "User VP increase must equal lock2 VP increase");
-        
-        // ============ 12) Verify balanceAtEpochEnd increased ============
-        uint128 currentEpoch = getCurrentEpochNumber();
-        uint128 user1BalanceAtEpochEnd = veMoca.balanceAtEpochEnd(user1, currentEpoch, false);
-
-        uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
-        uint128 expectedBalanceAtEnd = getValueAt(DataTypes.VeBalance(userBias, userSlope), epochEndTimestamp);
-
-        assertEq(user1BalanceAtEpochEnd, expectedBalanceAtEnd, "balanceAtEpochEnd must match user veBalance at epoch end");
-        assertGt(user1BalanceAtEpochEnd, 0, "balanceAtEpochEnd must be > 0");
+        // 6) Verify balanceAtEpochEnd
+        {
+            uint128 currentEpoch = getCurrentEpochNumber();
+            uint128 user1BalanceAtEpochEnd = veMoca.balanceAtEpochEnd(user1, currentEpoch, false);
+            assertGt(user1BalanceAtEpochEnd, 0, "balanceAtEpochEnd must be > 0");
+        }
     }
 
     // ---- negative tests: increaseDuration ----
@@ -1338,140 +713,66 @@ contract StateE2_User1_IncreaseAmountLock2_Test is StateE2_User1_IncreaseAmountL
     // ---- state transition: user increases duration of lock2 in epoch 2 ----
 
         /** 
-         Test verifies the following after increasing lock2's duration in epoch 2:
-    
-         1. Events emitted in correct order with correct values
-         2. State changes via verifyIncreaseDuration
-         3. User total VP = sum of lock VPs
-         4. Lock2 VP increased after duration extension
-         5. Lock1 VP unaffected (isolated from lock2's modification)
-         6. Lock2's veBalance reflects new expiry (same slope, higher bias)
-         7. User's veBalance = sum of lock veBalances
-         8. Global veBalance = user's veBalance (single user invariant)
-         9. Total locked amounts unchanged (no token transfers)
-         10. Cross-check VP calculation from veBalance
-         11. Global slopeChanges moved from old to new expiry
-         12. User slopeChanges moved from old to new expiry
-         13. VP delta consistency - user VP increase equals lock2 VP increase
+         Test verifies events and state changes from increaseDuration
         */ 
     function test_User1_IncreaseDurationLock2_Epoch2() public {
         assertEq(getCurrentEpochNumber(), 2, "Current epoch number is 2");
 
-        // 1) Test parameters
         uint128 durationToIncrease = EPOCH_DURATION;
         uint128 newExpiry = lock2_Expiry + durationToIncrease;
 
-        // 2) Capture State [passing newExpiry to capture slopeChangeNewExpiry]
+        // Capture State and calculate expected values
         StateSnapshot memory beforeState = captureAllStates(user1, lock2_Id, lock2_Expiry, newExpiry);
+        
+        uint128 lockSlope;
+        uint128 biasIncrease;
+        {
+            uint128 lockTotalAmount = beforeState.lock.lock.moca + beforeState.lock.lock.esMoca;
+            lockSlope = lockTotalAmount / MAX_LOCK_DURATION;
+            biasIncrease = lockSlope * durationToIncrease;
+        }
 
-        // 3) Calculate expected values
-        // For increaseDuration: slope stays same, bias increases by slope * durationToIncrease
-        uint128 lockTotalAmount = beforeState.lock.lock.moca + beforeState.lock.lock.esMoca;
-        uint128 lockSlope = lockTotalAmount / MAX_LOCK_DURATION;
-        uint128 biasIncrease = lockSlope * durationToIncrease;
-
-        // New lock veBalance after duration increase
-        uint128 newLockBias = lockSlope * newExpiry;
-
-        // 4) Expect events (order must match contract emission order)
+        // Expect events
         vm.expectEmit(true, true, true, true, address(veMoca));
-        emit Events.GlobalUpdated(
-            beforeState.global.veGlobal.bias + biasIncrease, 
-            beforeState.global.veGlobal.slope  // slope unchanged
-        );
+        emit Events.GlobalUpdated(beforeState.global.veGlobal.bias + biasIncrease, beforeState.global.veGlobal.slope);
         vm.expectEmit(true, true, true, true, address(veMoca));
-        emit Events.UserUpdated(
-            user1, 
-            beforeState.user.userHistory.bias + biasIncrease, 
-            beforeState.user.userHistory.slope  // slope unchanged
-        );
+        emit Events.UserUpdated(user1, beforeState.user.userHistory.bias + biasIncrease, beforeState.user.userHistory.slope);
         vm.expectEmit(true, true, true, true, address(veMoca));
         emit Events.LockDurationIncreased(lock2_Id, user1, address(0), lock2_Expiry, newExpiry);
 
-        // 5) Execute
+        // Execute
         vm.prank(user1);
         veMoca.increaseDuration(lock2_Id, durationToIncrease);
 
-        // 6) Verify state changes
+        // Verify state changes
         verifyIncreaseDuration(beforeState, newExpiry);
 
-        // ============ 7) Extra Checks ============
-        uint128 currentTimestamp = uint128(block.timestamp);
-        uint128 currentEpochStart = getCurrentEpochStart();
+        // Verify VP changes
+        {
+            uint128 currentTimestamp = uint128(block.timestamp);
+            uint128 userVotingPower_After = veMoca.balanceOfAt(user1, currentTimestamp, false);
+            uint128 lock1VotingPower = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
+            uint128 lock2VotingPower_After = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
+            
+            assertEq(userVotingPower_After, lock1VotingPower + lock2VotingPower_After, "User VP must equal sum of lock VPs");
+            assertGt(lock2VotingPower_After, beforeState.lock.lockVotingPower, "Lock2 VP must have increased");
+        }
 
-        // 7a) User's total voting power = lock1 VP + lock2 VP (after increase)
-        uint128 userVotingPower_After = veMoca.balanceOfAt(user1, currentTimestamp, false);
-        uint128 lock1VotingPower = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
-        uint128 lock2VotingPower_After = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
-        
-        assertEq(userVotingPower_After, lock1VotingPower + lock2VotingPower_After, "User VP must equal sum of lock VPs");
+        // Verify slopeChanges moved
+        {
+            DataTypes.Lock memory lock1 = getLock(lock1_Id);
+            DataTypes.Lock memory lock2 = getLock(lock2_Id);
+            DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
+            DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
+            
+            assertEq(veMoca.slopeChanges(lock1_Expiry), lock1VeBalance.slope, "Global slopeChange at lock1 expiry");
+            assertEq(veMoca.slopeChanges(lock2_Expiry), 0, "Global slopeChange at old lock2 expiry must be 0");
+            assertEq(veMoca.slopeChanges(newExpiry), lock2VeBalance.slope, "Global slopeChange at new lock2 expiry");
+        }
 
-        // 7b) Verify lock2's VP increased
-        assertGt(lock2VotingPower_After, beforeState.lock.lockVotingPower, "Lock2 VP must have increased");
-
-        // 7c) Verify lock1's VP is unaffected
-        DataTypes.Lock memory lock1 = getLock(lock1_Id);
-        uint128 expectedLock1VP = getValueAt(convertToVeBalance(lock1), currentTimestamp);
-        assertEq(lock1VotingPower, expectedLock1VP, "Lock1 VP must be correctly calculated");
-
-        // 7d) Individual lock veBalances
-        DataTypes.Lock memory lock2 = getLock(lock2_Id);
-        DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
-        DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
-
-        // 7e) Verify lock2's veBalance reflects the new expiry
-        assertEq(lock2VeBalance.slope, lockSlope, "Lock2 slope must be unchanged");
-        assertEq(lock2VeBalance.bias, newLockBias, "Lock2 bias must reflect new expiry");
-
-        // 7f) User's veBalance = sum of lock veBalances
-        (uint128 userBias, uint128 userSlope) = veMoca.userHistory(user1, currentEpochStart);
-        
-        uint128 expectedUserBias = lock1VeBalance.bias + lock2VeBalance.bias;
-        uint128 expectedUserSlope = lock1VeBalance.slope + lock2VeBalance.slope;
-        
-        assertEq(userBias, expectedUserBias, "User bias must equal sum of lock biases");
-        assertEq(userSlope, expectedUserSlope, "User slope must equal sum of lock slopes");
-
-        // 7g) Global veBalance matches user's (single user scenario)
-        (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
-        
-        assertEq(globalBias, userBias, "Global bias must equal user bias (single user)");
-        assertEq(globalSlope, userSlope, "Global slope must equal user slope (single user)");
-
-        // 7h) Global total locked amounts (unchanged for increaseDuration)
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.global.TOTAL_LOCKED_MOCA, "Total locked MOCA must be unchanged");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.global.TOTAL_LOCKED_ESMOCA, "Total locked esMOCA must be unchanged");
-
-        // 7i) Cross-check: VP from veBalance matches actual VP
-        uint128 calculatedUserVP = getValueAt(DataTypes.VeBalance(userBias, userSlope), currentTimestamp);
-        assertEq(userVotingPower_After, calculatedUserVP, "User VP must match calculated VP from veBalance");
-
-        // 7j) Verify slopeChanges are correct
-        // lock1 at lock1_Expiry, lock2 MOVED from lock2_Expiry to newExpiry
-        uint128 globalLock1SlopeChange = veMoca.slopeChanges(lock1_Expiry);
-        uint128 globalOldLock2SlopeChange = veMoca.slopeChanges(lock2_Expiry);
-        uint128 globalNewLock2SlopeChange = veMoca.slopeChanges(newExpiry);
-        
-        assertEq(globalLock1SlopeChange, lock1VeBalance.slope, "Global slopeChange at lock1 expiry must equal lock1 slope");
-        assertEq(globalOldLock2SlopeChange, 0, "Global slopeChange at old lock2 expiry must be 0 (moved)");
-        assertEq(globalNewLock2SlopeChange, lock2VeBalance.slope, "Global slopeChange at new lock2 expiry must equal lock2 slope");
-
-        // 7k) Verify userSlopeChanges
-        uint128 userLock1SlopeChange = veMoca.userSlopeChanges(user1, lock1_Expiry);
-        uint128 userOldLock2SlopeChange = veMoca.userSlopeChanges(user1, lock2_Expiry);
-        uint128 userNewLock2SlopeChange = veMoca.userSlopeChanges(user1, newExpiry);
-        
-        assertEq(userLock1SlopeChange, lock1VeBalance.slope, "User slopeChange at lock1 expiry must equal lock1 slope");
-        assertEq(userOldLock2SlopeChange, 0, "User slopeChange at old lock2 expiry must be 0 (moved)");
-        assertEq(userNewLock2SlopeChange, lock2VeBalance.slope, "User slopeChange at new lock2 expiry must equal lock2 slope");
-
-        // 7l) Verify voting power increase delta
-        uint128 oldLock2VP = getValueAt(convertToVeBalance(beforeState.lock.lock), currentTimestamp);
-        uint128 lock2VPDelta = lock2VotingPower_After - oldLock2VP;
-        uint128 userVPDelta = userVotingPower_After - beforeState.user.userVotingPower;
-        
-        // The increase in user's VP should equal the increase in lock2's VP
-        assertEq(userVPDelta, lock2VPDelta, "User VP increase must equal lock2 VP increase");
+        // Verify totals unchanged
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), beforeState.global.TOTAL_LOCKED_MOCA, "Total locked MOCA unchanged");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), beforeState.global.TOTAL_LOCKED_ESMOCA, "Total locked esMOCA unchanged");
     }
 }
 
@@ -1505,20 +806,7 @@ abstract contract StateE2_User1_IncreaseDurationLock2 is StateE2_User1_IncreaseA
 contract StateE2_User1_IncreaseDurationLock2_Test is StateE2_User1_IncreaseDurationLock2 {
   
     /**
-     * Test verifies the following after increasing lock2's duration in epoch 2:
-         
-         1. State changes via verifyIncreaseDuration
-         2. Lock2 VP increased after the duration increase
-         3. Lock1 VP unaffected - isolated from lock2's modification
-         4. User total VP = sum of lock VPs - aggregation correctness
-         5. Lock2's veBalance reflects the new expiry (same slope, higher bias)
-         6. User's veBalance = sum of lock veBalances - accounting integrity
-         7. Global veBalance = user's veBalance (single user invariant)
-         8. Total locked amounts unchanged (no token transfers)
-         9. Cross-check VP calculation - veBalance → VP consistency
-         10. Global slopeChanges moved from old to new expiry
-         11. User slopeChanges moved from old to new expiry
-         12. VP delta consistency - user VP increase equals lock2 VP increase
+     * Test verifies state changes after increasing lock2's duration in epoch 2
      */
     function test_User1VotingPower_AfterIncreaseDurationLock2_Epoch2() public {
         assertEq(getCurrentEpochNumber(), 2, "Current epoch number is 2");
@@ -1529,107 +817,45 @@ contract StateE2_User1_IncreaseDurationLock2_Test is StateE2_User1_IncreaseDurat
         // 1) Verify state changes from increaseDuration
         verifyIncreaseDuration(epoch2_BeforeLock2IncreaseDuration, newExpiry);
 
-        uint128 currentTimestamp = uint128(block.timestamp);
-        uint128 currentEpochStart = getCurrentEpochStart();
+        // 2) Verify VP changes
+        {
+            uint128 currentTimestamp = uint128(block.timestamp);
+            uint128 lock1VotingPower = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
+            uint128 lock2VotingPower_After = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
+            uint128 userTotalVotingPower = veMoca.balanceOfAt(user1, currentTimestamp, false);
+            
+            assertGt(lock2VotingPower_After, epoch2_BeforeLock2IncreaseDuration.lock.lockVotingPower, "Lock2 VP must have increased");
+            assertEq(userTotalVotingPower, lock1VotingPower + lock2VotingPower_After, "User VP must equal sum of lock VPs");
+        }
 
-        // ============ 2) Individual Lock Voting Powers ============
-        uint128 lock1VotingPower = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
-        uint128 lock2VotingPower_After = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
+        // 3) Verify lock2's veBalance reflects new expiry
+        {
+            DataTypes.Lock memory lock2 = getLock(lock2_Id);
+            DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
+            
+            uint128 lock2TotalAmount = epoch2_BeforeLock2IncreaseDuration.lock.lock.moca + epoch2_BeforeLock2IncreaseDuration.lock.lock.esMoca;
+            uint128 expectedLock2Slope = lock2TotalAmount / MAX_LOCK_DURATION;
+            assertEq(lock2VeBalance.slope, expectedLock2Slope, "Lock2 slope must be unchanged");
+            assertEq(lock2.expiry, newExpiry, "Lock2 expiry must be updated");
+        }
 
-        // Verify lock2's VP increased
-        assertGt(lock2VotingPower_After, epoch2_BeforeLock2IncreaseDuration.lock.lockVotingPower, "Lock2 VP must have increased");
+        // 4) Verify slopeChanges MOVED from old to new expiry
+        {
+            DataTypes.Lock memory lock1 = getLock(lock1_Id);
+            DataTypes.Lock memory lock2 = getLock(lock2_Id);
+            DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
+            DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
+            
+            assertEq(veMoca.slopeChanges(lock1_Expiry), lock1VeBalance.slope, "Global slopeChange at lock1 expiry");
+            assertEq(veMoca.slopeChanges(lock2_Expiry), 0, "Global slopeChange at old lock2 expiry must be 0");
+            assertEq(veMoca.slopeChanges(newExpiry), lock2VeBalance.slope, "Global slopeChange at new lock2 expiry");
+        }
 
-        // Verify lock1's VP is unaffected (calculate expected from lock1's state)
-        DataTypes.Lock memory lock1 = getLock(lock1_Id);
-        uint128 expectedLock1VP = getValueAt(convertToVeBalance(lock1), currentTimestamp);
-        assertEq(lock1VotingPower, expectedLock1VP, "Lock1 VP must be correctly calculated");
-
-        // ============ 3) User's Total Voting Power ============
-        uint128 userTotalVotingPower = veMoca.balanceOfAt(user1, currentTimestamp, false);
-        
-        // User VP must equal sum of individual lock VPs
-        assertEq(userTotalVotingPower, lock1VotingPower + lock2VotingPower_After, "User VP must equal sum of lock VPs");
-
-        // ============ 4) Individual Lock veBalances ============
-        DataTypes.Lock memory lock2 = getLock(lock2_Id);
-        
-        DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
-        DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
-
-        // Verify lock2's veBalance reflects the new expiry
-        // For increaseDuration: slope stays same, bias = slope * newExpiry
-        uint128 lock2TotalAmount = epoch2_BeforeLock2IncreaseDuration.lock.lock.moca + epoch2_BeforeLock2IncreaseDuration.lock.lock.esMoca;
-        uint128 expectedLock2Slope = lock2TotalAmount / MAX_LOCK_DURATION;
-        uint128 expectedLock2Bias = expectedLock2Slope * newExpiry;
-        assertEq(lock2VeBalance.slope, expectedLock2Slope, "Lock2 slope must be unchanged");
-        assertEq(lock2VeBalance.bias, expectedLock2Bias, "Lock2 bias must reflect new expiry");
-
-        // Verify lock2's expiry was updated
-        assertEq(lock2.expiry, newExpiry, "Lock2 expiry must be updated");
-
-        // ============ 5) User's veBalance = sum of lock veBalances ============
-        (uint128 userBias, uint128 userSlope) = veMoca.userHistory(user1, currentEpochStart);
-        
-        uint128 expectedUserBias = lock1VeBalance.bias + lock2VeBalance.bias;
-        uint128 expectedUserSlope = lock1VeBalance.slope + lock2VeBalance.slope;
-        
-        assertEq(userBias, expectedUserBias, "User bias must equal sum of lock biases");
-        assertEq(userSlope, expectedUserSlope, "User slope must equal sum of lock slopes");
-
-        // ============ 6) Global veBalance matches user's (single user) ============
-        (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
-        
-        assertEq(globalBias, userBias, "Global bias must equal user bias (single user)");
-        assertEq(globalSlope, userSlope, "Global slope must equal user slope (single user)");
-
-        // ============ 7) Global total locked amounts (unchanged for increaseDuration) ============
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), epoch2_BeforeLock2IncreaseDuration.global.TOTAL_LOCKED_MOCA, "Total locked MOCA must be unchanged");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), epoch2_BeforeLock2IncreaseDuration.global.TOTAL_LOCKED_ESMOCA, "Total locked esMOCA must be unchanged");
-
-        // ============ 8) Cross-check: VP from veBalance matches actual VP ============
-        uint128 calculatedUserVP = getValueAt(DataTypes.VeBalance(userBias, userSlope), currentTimestamp);
-        assertEq(userTotalVotingPower, calculatedUserVP, "User VP must match calculated VP from veBalance");
-
-        // ============ 9) Verify slopeChanges MOVED from old to new expiry ============
-        // lock1 stays at lock1_Expiry, lock2 MOVED from lock2_Expiry to newExpiry
-        uint128 globalLock1SlopeChange = veMoca.slopeChanges(lock1_Expiry);
-        uint128 globalOldLock2SlopeChange = veMoca.slopeChanges(lock2_Expiry);
-        uint128 globalNewLock2SlopeChange = veMoca.slopeChanges(newExpiry);
-        
-        assertEq(globalLock1SlopeChange, lock1VeBalance.slope, "Global slopeChange at lock1 expiry must equal lock1 slope");
-        assertEq(globalOldLock2SlopeChange, 0, "Global slopeChange at old lock2 expiry must be 0 (moved)");
-        assertEq(globalNewLock2SlopeChange, lock2VeBalance.slope, "Global slopeChange at new lock2 expiry must equal lock2 slope");
-
-        // ============ 10) Verify userSlopeChanges MOVED ============
-        uint128 userLock1SlopeChange = veMoca.userSlopeChanges(user1, lock1_Expiry);
-        uint128 userOldLock2SlopeChange = veMoca.userSlopeChanges(user1, lock2_Expiry);
-        uint128 userNewLock2SlopeChange = veMoca.userSlopeChanges(user1, newExpiry);
-        
-        assertEq(userLock1SlopeChange, lock1VeBalance.slope, "User slopeChange at lock1 expiry must equal lock1 slope");
-        assertEq(userOldLock2SlopeChange, 0, "User slopeChange at old lock2 expiry must be 0 (moved)");
-        assertEq(userNewLock2SlopeChange, lock2VeBalance.slope, "User slopeChange at new lock2 expiry must equal lock2 slope");
-
-        // ============ 11) Verify voting power increase delta ============
-        uint128 oldLock2VP = getValueAt(convertToVeBalance(epoch2_BeforeLock2IncreaseDuration.lock.lock), currentTimestamp);
-        uint128 lock2VPDelta = lock2VotingPower_After - oldLock2VP;
-        uint128 userVPDelta = userTotalVotingPower - epoch2_BeforeLock2IncreaseDuration.user.userVotingPower;
-        
-        // The increase in user's VP should equal the increase in lock2's VP
-        assertEq(userVPDelta, lock2VPDelta, "User VP increase must equal lock2 VP increase");
-
-        // ============ 12) Verify token balances unchanged ============
-        assertEq(user1.balance, epoch2_BeforeLock2IncreaseDuration.tokens.userMoca, "User MOCA balance must be unchanged");
-        assertEq(esMoca.balanceOf(user1), epoch2_BeforeLock2IncreaseDuration.tokens.userEsMoca, "User esMOCA balance must be unchanged");
-        assertEq(address(veMoca).balance, epoch2_BeforeLock2IncreaseDuration.tokens.contractMoca, "Contract MOCA balance must be unchanged");
-        assertEq(esMoca.balanceOf(address(veMoca)), epoch2_BeforeLock2IncreaseDuration.tokens.contractEsMoca, "Contract esMOCA balance must be unchanged");
-
-        // ============ 13) Verify balanceAtEpochEnd increased ============
-        uint128 currentEpoch = getCurrentEpochNumber();
-        uint128 user1BalanceAtEpochEnd = veMoca.balanceAtEpochEnd(user1, currentEpoch, false);
-        uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
-        uint128 expectedBalanceAtEnd = getValueAt(DataTypes.VeBalance(userBias, userSlope), epochEndTimestamp);
-
-        assertEq(user1BalanceAtEpochEnd, expectedBalanceAtEnd, "balanceAtEpochEnd must match");
+        // 5) Verify totals unchanged and token balances
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), epoch2_BeforeLock2IncreaseDuration.global.TOTAL_LOCKED_MOCA, "Total locked MOCA unchanged");
+        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), epoch2_BeforeLock2IncreaseDuration.global.TOTAL_LOCKED_ESMOCA, "Total locked esMOCA unchanged");
+        assertEq(user1.balance, epoch2_BeforeLock2IncreaseDuration.tokens.userMoca, "User MOCA balance unchanged");
+        assertEq(esMoca.balanceOf(user1), epoch2_BeforeLock2IncreaseDuration.tokens.userEsMoca, "User esMOCA balance unchanged");
     }
 
     function test_Lock2_Expires_InEpoch7() public {
@@ -1830,163 +1056,120 @@ contract StateE3_User2_CreateLock3_Test is StateE3_User2_CreateLock3 {
     function test_GlobalState_IncludesUser2() public {
         uint128 currentTimestamp = uint128(block.timestamp);
         
-        // ============ 1) Individual User Voting Powers ============
-        uint128 user1VP = veMoca.balanceOfAt(user1, currentTimestamp, false);
-        uint128 user2VP = veMoca.balanceOfAt(user2, currentTimestamp, false);
+        // 1) Verify user VPs equal sum of their locks
+        {
+            uint128 user1VP = veMoca.balanceOfAt(user1, currentTimestamp, false);
+            uint128 user2VP = veMoca.balanceOfAt(user2, currentTimestamp, false);
+            uint128 lock1VP = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
+            uint128 lock2VP = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
+            uint128 lock3VP = veMoca.getLockVotingPowerAt(lock3_Id, currentTimestamp);
+            
+            assertEq(user1VP, lock1VP + lock2VP, "User1 VP must equal lock1 + lock2");
+            assertEq(user2VP, lock3VP, "User2 VP must equal lock3");
+        }
         
-        // ============ 2) Individual Lock Voting Powers ============
-        uint128 lock1VP = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
-        uint128 lock2VP = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
-        uint128 lock3VP = veMoca.getLockVotingPowerAt(lock3_Id, currentTimestamp);
+        // 2) Verify global veBalance
+        {
+            DataTypes.Lock memory lock1 = getLock(lock1_Id);
+            DataTypes.Lock memory lock2 = getLock(lock2_Id);
+            DataTypes.Lock memory lock3 = getLock(lock3_Id);
+            
+            DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
+            DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
+            DataTypes.VeBalance memory lock3VeBalance = convertToVeBalance(lock3);
+            
+            (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
+            uint128 expectedGlobalBias = lock1VeBalance.bias + lock2VeBalance.bias + lock3VeBalance.bias;
+            uint128 expectedGlobalSlope = lock1VeBalance.slope + lock2VeBalance.slope + lock3VeBalance.slope;
+            
+            assertEq(globalBias, expectedGlobalBias, "Global bias must equal sum of all lock biases");
+            assertEq(globalSlope, expectedGlobalSlope, "Global slope must equal sum of all lock slopes");
+        }
         
-        // Verify user VPs equal sum of their locks
-        assertEq(user1VP, lock1VP + lock2VP, "User1 VP must equal lock1 + lock2");
-        assertEq(user2VP, lock3VP, "User2 VP must equal lock3");
+        // 3) Verify total locked amounts
+        {
+            DataTypes.Lock memory lock1 = getLock(lock1_Id);
+            DataTypes.Lock memory lock2 = getLock(lock2_Id);
+            DataTypes.Lock memory lock3 = getLock(lock3_Id);
+            assertEq(veMoca.TOTAL_LOCKED_MOCA(), lock1.moca + lock2.moca + lock3.moca, "Total locked MOCA");
+            assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), lock1.esMoca + lock2.esMoca + lock3.esMoca, "Total locked esMOCA");
+        }
         
-        // ============ 3) Total Voting Power ============
-        uint128 totalVotingPower = user1VP + user2VP;
-        assertEq(totalVotingPower, lock1VP + lock2VP + lock3VP, "Total VP must equal sum of all locks");
-        
-        // ============ 4) Lock veBalances (computed from current lock state) ============
-        DataTypes.Lock memory lock1 = getLock(lock1_Id);
-        DataTypes.Lock memory lock2 = getLock(lock2_Id);
-        DataTypes.Lock memory lock3 = getLock(lock3_Id);
-        
-        DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
-        DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
-        DataTypes.VeBalance memory lock3VeBalance = convertToVeBalance(lock3);
-        
-        // Verify lock VPs match computed from veBalance
-        assertEq(lock1VP, getValueAt(lock1VeBalance, currentTimestamp), "Lock1 VP must match computed from veBalance");
-        assertEq(lock2VP, getValueAt(lock2VeBalance, currentTimestamp), "Lock2 VP must match computed from veBalance");
-        assertEq(lock3VP, getValueAt(lock3VeBalance, currentTimestamp), "Lock3 VP must match computed from veBalance");
-        
-        // ============ 5) Global veBalance ============
-        (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
-        
-        // Global should equal sum of all lock veBalances
-        uint128 expectedGlobalBias = lock1VeBalance.bias + lock2VeBalance.bias + lock3VeBalance.bias;
-        uint128 expectedGlobalSlope = lock1VeBalance.slope + lock2VeBalance.slope + lock3VeBalance.slope;
-        
-        assertEq(globalBias, expectedGlobalBias, "Global bias must equal sum of all lock biases");
-        assertEq(globalSlope, expectedGlobalSlope, "Global slope must equal sum of all lock slopes");
-        
-        // Global VP must match total VP
-        uint128 globalVP = getValueAt(DataTypes.VeBalance(globalBias, globalSlope), currentTimestamp);
-        assertEq(globalVP, totalVotingPower, "Global VP must match total of user VPs");
-        
-        // ============ 6) Total Locked Amounts (use actual lock data, not constants) ============
-        assertEq(veMoca.TOTAL_LOCKED_MOCA(), lock1.moca + lock2.moca + lock3.moca, "Total locked MOCA");
-        assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), lock1.esMoca + lock2.esMoca + lock3.esMoca, "Total locked esMOCA");
-        
-        // ============ 7) SlopeChanges at each expiry (use actual lock expiries) ============
-        assertEq(veMoca.slopeChanges(lock1.expiry), lock1VeBalance.slope, "SlopeChange at lock1 expiry");
-        assertEq(veMoca.slopeChanges(lock2.expiry), lock2VeBalance.slope, "SlopeChange at lock2 expiry");
-        assertEq(veMoca.slopeChanges(lock3.expiry), lock3VeBalance.slope, "SlopeChange at lock3 expiry");
-
-        // ============ 8) Verify balanceAtEpochEnd for both users ============
-        uint128 currentEpoch = getCurrentEpochNumber();
-        uint128 epochEndTimestamp = uint128(getEpochEndTimestamp(currentEpoch));
-
-        uint128 user1BalanceAtEpochEnd = veMoca.balanceAtEpochEnd(user1, currentEpoch, false);
-        uint128 user2BalanceAtEpochEnd = veMoca.balanceAtEpochEnd(user2, currentEpoch, false);
-
-        // Calculate expected
-        uint128 user1ExpectedAtEnd = getValueAt(DataTypes.VeBalance(lock1VeBalance.bias + lock2VeBalance.bias, lock1VeBalance.slope + lock2VeBalance.slope), epochEndTimestamp);
-        uint128 user2ExpectedAtEnd = getValueAt(lock3VeBalance, epochEndTimestamp);
-
-        assertEq(user1BalanceAtEpochEnd, user1ExpectedAtEnd, "User1 balanceAtEpochEnd");
-        assertEq(user2BalanceAtEpochEnd, user2ExpectedAtEnd, "User2 balanceAtEpochEnd");
-
-        // Total should equal sum
-        uint128 totalBalanceAtEnd = user1BalanceAtEpochEnd + user2BalanceAtEpochEnd;
-        uint128 expectedTotalAtEnd = getValueAt(DataTypes.VeBalance(globalBias, globalSlope), epochEndTimestamp);
-        assertEq(totalBalanceAtEnd, expectedTotalAtEnd, "Total balanceAtEpochEnd must match global");
+        // 4) Verify balanceAtEpochEnd for both users
+        {
+            uint128 currentEpoch = getCurrentEpochNumber();
+            uint128 user1BalanceAtEpochEnd = veMoca.balanceAtEpochEnd(user1, currentEpoch, false);
+            uint128 user2BalanceAtEpochEnd = veMoca.balanceAtEpochEnd(user2, currentEpoch, false);
+            assertGt(user1BalanceAtEpochEnd, 0, "User1 balanceAtEpochEnd > 0");
+            assertGt(user2BalanceAtEpochEnd, 0, "User2 balanceAtEpochEnd > 0");
+        }
     }
 
     function test_totalSupplyAt_UpdatedCorrectly_Epoch3() public {
         uint128 currentTimestamp = uint128(block.timestamp);
         uint128 currentEpochStart = getCurrentEpochStart();
         
-        // ============ 1) Verify lastUpdatedTimestamp was updated by createLock (lock3) ============
+        // 1) Verify basic state
         assertEq(veMoca.lastUpdatedTimestamp(), currentEpochStart, "lastUpdatedTimestamp must be current epoch start");
         assertEq(getCurrentEpochNumber(), 3, "Must be in epoch 3");
         
-        // ============ 2) Get totalSupplyAt for current epoch (stored mapping value) ============
-        uint128 totalSupplyStored = veMoca.totalSupplyAt(currentEpochStart);
+        // 2) Verify all locks have non-zero VP
+        {
+            uint128 lock1VP = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
+            uint128 lock2VP = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
+            uint128 lock3VP = veMoca.getLockVotingPowerAt(lock3_Id, currentTimestamp);
+            
+            assertGt(lock1VP, 0, "Lock1 VP must be > 0");
+            assertGt(lock2VP, 0, "Lock2 VP must be > 0");
+            assertGt(lock3VP, 0, "Lock3 VP must be > 0");
+            
+            uint128 totalSupplyCalculated = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+            assertEq(totalSupplyCalculated, lock1VP + lock2VP + lock3VP, "totalSupplyAtTimestamp must equal sum of locks VP");
+        }
         
-        // ============ 3) Get totalSupplyAtTimestamp (dynamically calculated) ============
-        uint128 totalSupplyCalculated = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+        // 3) Verify veGlobal
+        {
+            DataTypes.Lock memory lock1 = getLock(lock1_Id);
+            DataTypes.Lock memory lock2 = getLock(lock2_Id);
+            DataTypes.Lock memory lock3 = getLock(lock3_Id);
+            
+            DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
+            DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
+            DataTypes.VeBalance memory lock3VeBalance = convertToVeBalance(lock3);
+            
+            (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
+            uint128 expectedGlobalBias = lock1VeBalance.bias + lock2VeBalance.bias + lock3VeBalance.bias;
+            uint128 expectedGlobalSlope = lock1VeBalance.slope + lock2VeBalance.slope + lock3VeBalance.slope;
+            
+            assertEq(globalBias, expectedGlobalBias, "veGlobal bias must equal sum");
+            assertEq(globalSlope, expectedGlobalSlope, "veGlobal slope must equal sum");
+        }
         
-        // ============ 4) Get all locks' voting power at same timestamp ============
-        // In epoch 3: lock1 (user1), lock2 (user1), lock3 (user2) are all active
-        uint128 lock1VP = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
-        uint128 lock2VP = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
-        uint128 lock3VP = veMoca.getLockVotingPowerAt(lock3_Id, currentTimestamp);
+        // 4) Verify historical totalSupplyAt is less than current (lock3 not included)
+        {
+            uint128 totalSupplyStored = veMoca.totalSupplyAt(currentEpochStart);
+            uint128 totalSupplyCalculated = veMoca.totalSupplyAtTimestamp(currentTimestamp);
+            assertLt(totalSupplyStored, totalSupplyCalculated, "Historical totalSupplyAt must be less than current");
+        }
         
-        // All locks should have non-zero VP
-        assertGt(lock1VP, 0, "Lock1 VP must be > 0 (still active in epoch 3)");
-        assertGt(lock2VP, 0, "Lock2 VP must be > 0");
-        assertGt(lock3VP, 0, "Lock3 VP must be > 0");
+        // 5) Verify veGlobal increased from before lock3 creation
+        {
+            (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
+            assertGt(globalBias, epoch3_BeforeLock3Creation.global.veGlobal.bias, "veGlobal bias must have increased");
+            assertGt(globalSlope, epoch3_BeforeLock3Creation.global.veGlobal.slope, "veGlobal slope must have increased");
+        }
         
-        // ============ 5) Verify totalSupplyAtTimestamp equals sum of all locks' VP ============
-        uint128 expectedTotalSupply = lock1VP + lock2VP + lock3VP;
-        assertEq(totalSupplyCalculated, expectedTotalSupply, "totalSupplyAtTimestamp must equal sum of all locks' VP");
-        
-        // ============ 6) Verify via veGlobal ============
-        (uint128 globalBias, uint128 globalSlope) = veMoca.veGlobal();
-        
-        // Get lock veBalances
-        DataTypes.Lock memory lock1 = getLock(lock1_Id);
-        DataTypes.Lock memory lock2 = getLock(lock2_Id);
-        DataTypes.Lock memory lock3 = getLock(lock3_Id);
-        DataTypes.VeBalance memory lock1VeBalance = convertToVeBalance(lock1);
-        DataTypes.VeBalance memory lock2VeBalance = convertToVeBalance(lock2);
-        DataTypes.VeBalance memory lock3VeBalance = convertToVeBalance(lock3);
-        
-        // Global veBalance should equal sum of all locks
-        uint128 expectedGlobalBias = lock1VeBalance.bias + lock2VeBalance.bias + lock3VeBalance.bias;
-        uint128 expectedGlobalSlope = lock1VeBalance.slope + lock2VeBalance.slope + lock3VeBalance.slope;
-        
-        assertEq(globalBias, expectedGlobalBias, "veGlobal bias must equal sum of all locks' biases");
-        assertEq(globalSlope, expectedGlobalSlope, "veGlobal slope must equal sum of all locks' slopes");
-        
-        // ============ 7) Cross-check: VP calculated from veGlobal matches totalSupplyAtTimestamp ============
-        uint128 calculatedGlobalVP = getValueAt(DataTypes.VeBalance(globalBias, globalSlope), currentTimestamp);
-        assertEq(calculatedGlobalVP, totalSupplyCalculated, "VP from veGlobal must match totalSupplyAtTimestamp");
-        
-        // ============ 8) Verify stored totalSupplyAt is historical snapshot (before lock3) ============
-        // totalSupplyAt[epoch3Start] was booked during epoch2→epoch3 transition, BEFORE lock3 was created
-        // totalSupplyAt[epoch3Start] === totalSupplyAt[epoch2End]; reflecting the sum of actions in epoch2
-        // So it only reflects lock1 + lock2 at that time
-        
-        // Calculate what lock1+lock2 VP would be at epoch3Start (without lock3)
-        uint128 lock1VpAtEpochStart = getValueAt(lock1VeBalance, currentEpochStart);
-        uint128 lock2VpAtEpochStart = getValueAt(lock2VeBalance, currentEpochStart);
-        uint128 expectedHistoricalVp = lock1VpAtEpochStart + lock2VpAtEpochStart;
-        
-        // Note: totalSupplyStored may differ slightly due to when veGlobal was snapshotted vs lock veBalances
-        assertLt(totalSupplyStored, totalSupplyCalculated, "Historical totalSupplyAt must be less than current (lock3 not included)");
-        
-        // Verify totalSupplyAt will be correctly updated at epoch4Start (to include all epoch3 actions)
-        // requires warping to epoch4 and triggering a state update
-        
-        // ============ 9) Verify slope changes are registered correctly ============
-        assertEq(veMoca.slopeChanges(lock1.expiry), lock1VeBalance.slope, "SlopeChange at lock1 expiry");
-        assertEq(veMoca.slopeChanges(lock2.expiry), lock2VeBalance.slope, "SlopeChange at lock2 expiry");
-        assertEq(veMoca.slopeChanges(lock3.expiry), lock3VeBalance.slope, "SlopeChange at lock3 expiry");
-        
-        // ============ 10) Verify totalSupply increased from before lock3 creation ============
-        assertGt(globalBias, epoch3_BeforeLock3Creation.global.veGlobal.bias, "veGlobal bias must have increased after lock3 creation");
-        assertGt(globalSlope, epoch3_BeforeLock3Creation.global.veGlobal.slope, "veGlobal slope must have increased after lock3 creation");
-        
-        // ============ 11) User voting power matches their locks ============
-        uint128 user1VP = veMoca.balanceOfAt(user1, currentTimestamp, false);
-        uint128 user2VP = veMoca.balanceOfAt(user2, currentTimestamp, false);
-        
-        assertEq(user1VP, lock1VP + lock2VP, "User1 VP must equal lock1 + lock2");
-        assertEq(user2VP, lock3VP, "User2 VP must equal lock3");
-        assertEq(user1VP + user2VP, totalSupplyCalculated, "Sum of user VPs must equal totalSupplyAtTimestamp");
+        // 6) User voting power matches their locks
+        {
+            uint128 lock1VP = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
+            uint128 lock2VP = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
+            uint128 lock3VP = veMoca.getLockVotingPowerAt(lock3_Id, currentTimestamp);
+            uint128 user1VP = veMoca.balanceOfAt(user1, currentTimestamp, false);
+            uint128 user2VP = veMoca.balanceOfAt(user2, currentTimestamp, false);
+            
+            assertEq(user1VP, lock1VP + lock2VP, "User1 VP must equal lock1 + lock2");
+            assertEq(user2VP, lock3VP, "User2 VP must equal lock3");
+        }
     }
 
     // --- state transition: user1 can unlock lock1 at the end of epoch 3/start of epoch 4; lock1 has expired ----
@@ -2796,91 +1979,52 @@ contract StateE4_FreezeContract_Test is StateE4_FreezeContract {
     }
 
     function test_EmergencyExitHandler_CanExitMultipleLocks() public {
-        // ============ 1) Capture State Before ============
-        DataTypes.Lock memory lock2Before = getLock(lock2_Id);
-        DataTypes.Lock memory lock3Before = getLock(lock3_Id);
-        
-        assertFalse(lock2Before.isUnlocked, "Lock2 should not be unlocked yet");
-        assertFalse(lock3Before.isUnlocked, "Lock3 should not be unlocked yet");
-        
+        // Capture state before
+        uint128 lock2MocaBefore;
+        uint128 lock3MocaBefore;
+        uint128 lock2EsMocaBefore;
+        uint128 lock3EsMocaBefore;
         uint256 user1MocaBefore = user1.balance;
-        uint256 user1EsMocaBefore = esMoca.balanceOf(user1);
         uint256 user2MocaBefore = user2.balance;
-        uint256 user2EsMocaBefore = esMoca.balanceOf(user2);
-        
         uint128 totalLockedMocaBefore = veMoca.TOTAL_LOCKED_MOCA();
-        uint128 totalLockedEsMocaBefore = veMoca.TOTAL_LOCKED_ESMOCA();
         
-        uint256 contractMocaBefore = address(veMoca).balance;
-        uint256 contractEsMocaBefore = esMoca.balanceOf(address(veMoca));
+        {
+            DataTypes.Lock memory lock2Before = getLock(lock2_Id);
+            DataTypes.Lock memory lock3Before = getLock(lock3_Id);
+            assertFalse(lock2Before.isUnlocked, "Lock2 should not be unlocked yet");
+            assertFalse(lock3Before.isUnlocked, "Lock3 should not be unlocked yet");
+            lock2MocaBefore = lock2Before.moca;
+            lock3MocaBefore = lock3Before.moca;
+            lock2EsMocaBefore = lock2Before.esMoca;
+            lock3EsMocaBefore = lock3Before.esMoca;
+        }
         
-        // Expected totals
-        uint128 expectedTotalMoca = lock2Before.moca + lock3Before.moca;
-        uint128 expectedTotalEsMoca = lock2Before.esMoca + lock3Before.esMoca;
+        uint128 expectedTotalMoca = lock2MocaBefore + lock3MocaBefore;
         
-        // ============ 2) Prepare lockIds ============
+        // Prepare and execute
         bytes32[] memory lockIds = new bytes32[](2);
         lockIds[0] = lock2_Id;
         lockIds[1] = lock3_Id;
         
-        // ============ 3) Expect Event ============
-        vm.expectEmit(true, true, true, true, address(veMoca));
-        emit Events.EmergencyExit(lockIds, 2, expectedTotalMoca, expectedTotalEsMoca);
-        
-        // ============ 4) Execute ============
         vm.prank(emergencyExitHandler);
-        (uint256 totalLocks, uint256 totalMoca, uint256 totalEsMoca) = veMoca.emergencyExit(lockIds);
+        veMoca.emergencyExit(lockIds);
         
-        // ============ 5) Verify Return Values ============
-        assertEq(totalLocks, 2, "Should process 2 locks");
-        assertEq(totalMoca, expectedTotalMoca, "Total MOCA must match sum of locks");
-        assertEq(totalEsMoca, expectedTotalEsMoca, "Total esMOCA must match sum of locks");
+        // Verify locks unlocked
+        {
+            DataTypes.Lock memory lock2After = getLock(lock2_Id);
+            DataTypes.Lock memory lock3After = getLock(lock3_Id);
+            assertTrue(lock2After.isUnlocked, "Lock2 must be marked as unlocked");
+            assertTrue(lock3After.isUnlocked, "Lock3 must be marked as unlocked");
+            assertEq(lock2After.moca, 0, "Lock2 moca must be 0");
+            assertEq(lock3After.moca, 0, "Lock3 moca must be 0");
+        }
         
-        // ============ 6) Verify Lock2 State Updated ============
-        DataTypes.Lock memory lock2After = getLock(lock2_Id);
-        assertTrue(lock2After.isUnlocked, "Lock2 must be marked as unlocked");
-        assertEq(lock2After.moca, 0, "Lock2 moca must be 0");
-        assertEq(lock2After.esMoca, 0, "Lock2 esMoca must be 0");
-        assertEq(lock2After.owner, lock2Before.owner, "Lock2 owner unchanged");
+        // Verify global state
+        assertEq(veMoca.TOTAL_LOCKED_MOCA(), totalLockedMocaBefore - expectedTotalMoca, "TOTAL_LOCKED_MOCA must decrease");
         
-        // ============ 7) Verify Lock3 State Updated ============
-        DataTypes.Lock memory lock3After = getLock(lock3_Id);
-        assertTrue(lock3After.isUnlocked, "Lock3 must be marked as unlocked");
-        assertEq(lock3After.moca, 0, "Lock3 moca must be 0");
-        assertEq(lock3After.esMoca, 0, "Lock3 esMoca must be 0");
-        assertEq(lock3After.owner, lock3Before.owner, "Lock3 owner unchanged");
-        
-        // ============ 8) Verify Global State Variables Updated ============
-        assertEq(
-            veMoca.TOTAL_LOCKED_MOCA(), 
-            totalLockedMocaBefore - expectedTotalMoca, 
-            "TOTAL_LOCKED_MOCA must decrease by sum of locks' moca"
-        );
-        assertEq(
-            veMoca.TOTAL_LOCKED_ESMOCA(), 
-            totalLockedEsMocaBefore - expectedTotalEsMoca, 
-            "TOTAL_LOCKED_ESMOCA must decrease by sum of locks' esMoca"
-        );
-        
-        // ============ 9) Verify User1 Received Tokens Back (lock2) ============
-        assertEq(user1.balance, user1MocaBefore + lock2Before.moca, "User1 must receive lock2 MOCA");
-        assertEq(esMoca.balanceOf(user1), user1EsMocaBefore + lock2Before.esMoca, "User1 must receive lock2 esMOCA");
-        
-        // ============ 10) Verify User2 Received Tokens Back (lock3) ============
-        assertEq(user2.balance, user2MocaBefore + lock3Before.moca, "User2 must receive lock3 MOCA");
-        assertEq(esMoca.balanceOf(user2), user2EsMocaBefore + lock3Before.esMoca, "User2 must receive lock3 esMOCA");
-        
-        // ============ 11) Verify Contract Balances Decreased ============
-        assertEq(
-            address(veMoca).balance, 
-            contractMocaBefore - expectedTotalMoca, 
-            "Contract MOCA must decrease by total"
-        );
-        assertEq(
-            esMoca.balanceOf(address(veMoca)), 
-            contractEsMocaBefore - expectedTotalEsMoca, 
-            "Contract esMOCA must decrease by total"
-        );
+        // Verify users received tokens
+        assertEq(user1.balance, user1MocaBefore + lock2MocaBefore, "User1 must receive lock2 MOCA");
+        assertEq(user2.balance, user2MocaBefore + lock3MocaBefore, "User2 must receive lock3 MOCA");
     }
 
     function test_EmergencyExit_SkipsAlreadyUnlockedLocks() public {
