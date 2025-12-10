@@ -463,7 +463,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param verifier The address of the verifier to unstake MOCA for.
      * @param amount The amount of MOCA to unstake.
      */
-    function unstakeMoca(address verifier, uint128 amount) external payable whenNotPaused {
+    function unstakeMoca(address verifier, uint128 amount) external whenNotPaused {
         require(amount > 0, Errors.InvalidAmount());
 
         // cache pointer
@@ -1144,7 +1144,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      *      Skips verifiers with zero balance.
      * @param verifiers Array of verifier addresses whose balances will be exfil'd.
      */
-    function emergencyExitVerifiers(address[] calldata verifiers) external payable {
+    function emergencyExitVerifiers(address[] calldata verifiers) external {
         require(isFrozen == 1, Errors.NotFrozen());
         require(verifiers.length > 0, Errors.InvalidArray());
    

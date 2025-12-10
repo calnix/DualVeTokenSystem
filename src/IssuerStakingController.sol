@@ -166,7 +166,7 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
      *      Wraps to wMoca if transfer fails within gas limit.
      * @param timestamps Array of timestamps at which the unstaked MOCA tokens are claimable.
      */
-    function claimUnstake(uint256[] calldata timestamps) external payable whenNotPaused {
+    function claimUnstake(uint256[] calldata timestamps) external whenNotPaused {
         uint256 length = timestamps.length;
         require(length > 0, Errors.InvalidArray());
         require(totalPendingUnstakedMoca[msg.sender] > 0, Errors.NothingToClaim());
