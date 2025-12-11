@@ -21,6 +21,18 @@ contract Handler is Test {
     // Delegation Ghost State
     mapping(bytes32 => uint256) public ghost_delegationEffectEpoch;
     mapping(bytes32 => address) public ghost_previousDelegate; // Who held it before current state?
+    // Track pending delegation transitions
+    mapping(bytes32 lockId => bool) public ghost_hasPendingDelegation;
+    mapping(bytes32 lockId => address) public ghost_expectedCurrentHolder;
+    mapping(bytes32 lockId => address) public ghost_expectedFutureDelegate;
+    mapping(bytes32 lockId => uint128) public ghost_delegationEffectiveEpoch;
+    // Track pending deltas
+    mapping(address account => mapping(uint128 epoch => int256)) public ghost_pendingDeltaBias;
+    mapping(address account => mapping(uint128 epoch => int256)) public ghost_pendingDeltaSlope;
+    // Track user-delegate pair aggregations
+    mapping(address user => mapping(address delegate => uint256)) public ghost_userDelegatedToDelegate;
+    // Track delegate action counts
+    mapping(bytes32 lockId => mapping(uint128 epoch => uint8)) public ghost_delegateActionCount;
 
     // State Tracking
     bytes32[] public activeLockIds;
@@ -101,7 +113,7 @@ contract Handler is Test {
     function increaseAmount(uint256 lockIndexSeed, uint128 mocaAdd, uint128 esMocaAdd) external {
         if (activeLockIds.length == 0) return;
         bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
-        (, address owner, , , , uint128 expiry, bool isUnlocked) = ve.locks(lockId);
+        (address owner,,,,,uint128 expiry, bool isUnlocked) = _getLockData(lockId);
         
         if (owner == address(0) || isUnlocked) return;
         if (expiry < EpochMath.getCurrentEpochStart() + (3 * EpochMath.EPOCH_DURATION)) return;
@@ -122,7 +134,7 @@ contract Handler is Test {
     function increaseDuration(uint256 lockIndexSeed, uint128 epochsToAdd) external {
         if (activeLockIds.length == 0) return;
         bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
-        (, address owner, , , , uint128 expiry, bool isUnlocked) = ve.locks(lockId);
+        (address owner,,,,,uint128 expiry, bool isUnlocked) = _getLockData(lockId);
 
         if (isUnlocked) return;
         epochsToAdd = uint128(bound(epochsToAdd, 1, 52)); 
@@ -139,7 +151,7 @@ contract Handler is Test {
         if (activeLockIds.length == 0) return;
         uint256 idx = bound(lockIndexSeed, 0, activeLockIds.length - 1);
         bytes32 lockId = activeLockIds[idx];
-        (, address owner, , uint128 mocaAmt, uint128 esMocaAmt, uint128 expiry, bool isUnlocked) = ve.locks(lockId);
+        (address owner,,, uint128 mocaAmt, uint128 esMocaAmt, uint128 expiry, bool isUnlocked) = _getLockData(lockId);
 
         if (isUnlocked || block.timestamp < expiry) return;
 
@@ -156,18 +168,39 @@ contract Handler is Test {
     function delegateLock(uint256 lockIndexSeed, uint256 delegateIndexSeed) external {
         if (activeLockIds.length == 0) return;
         bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
-        (, address owner, , , , , bool isUnlocked) = ve.locks(lockId);
+        
+        // Get lock data including new fields
+        (address owner, address currentDelegate,,,,uint128 expiry, bool isUnlocked) = _getLockData(lockId);
         
         if (owner == address(0) || isUnlocked) return;
+        if (currentDelegate != address(0)) return; // Already delegated
+        
         address target = actors[bound(delegateIndexSeed, 0, actors.length - 1)];
         if (target == owner) return;
 
         _ensureDelegateRegistered(target);
 
+        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
+        
         vm.startPrank(owner);
-        // Current delegate is 0 (required for delegateLock)
-        try ve.delegateLock(lockId, target) {
-            _updateGhostDelegation(lockId, address(0)); 
+        try ve.delegationAction(lockId, target, DataTypes.DelegationType.Delegate) {
+            // Update ghost state
+            uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+            ghost_hasPendingDelegation[lockId] = true;
+            ghost_expectedCurrentHolder[lockId] = owner;
+            ghost_expectedFutureDelegate[lockId] = target;
+            ghost_delegationEffectiveEpoch[lockId] = nextEpochStart;
+            
+            // Track delegate action
+            ghost_delegateActionCount[lockId][currentEpochStart]++;
+            
+            // Track pending deltas (veBalance moves from user to delegate next epoch)
+            DataTypes.VeBalance memory lockVe = ve.getLockVeBalance(lockId);
+            ghost_pendingDeltaBias[owner][nextEpochStart] -= int128(lockVe.bias);
+            ghost_pendingDeltaSlope[owner][nextEpochStart] -= int128(lockVe.slope);
+            ghost_pendingDeltaBias[target][nextEpochStart] += int128(lockVe.bias);
+            ghost_pendingDeltaSlope[target][nextEpochStart] += int128(lockVe.slope);
+            
         } catch {}
         vm.stopPrank();
     }
@@ -175,17 +208,37 @@ contract Handler is Test {
     function switchDelegate(uint256 lockIndexSeed, uint256 newDelegateSeed) external {
         if (activeLockIds.length == 0) return;
         bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
-        (, address owner, address currentDelegate, , , , bool isUnlocked) = ve.locks(lockId);
+        
+        (address owner, address currentDelegate,,,,, bool isUnlocked) = _getLockData(lockId);
         
         if (owner == address(0) || isUnlocked || currentDelegate == address(0)) return;
-        address target = actors[bound(newDelegateSeed, 0, actors.length - 1)];
-        if (target == currentDelegate) return;
+        
+        address newTarget = actors[bound(newDelegateSeed, 0, actors.length - 1)];
+        if (newTarget == currentDelegate || newTarget == owner) return;
 
-        _ensureDelegateRegistered(target);
+        _ensureDelegateRegistered(newTarget);
 
+        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
+        
         vm.startPrank(owner);
-        try ve.switchDelegate(lockId, target) {
-            _updateGhostDelegation(lockId, currentDelegate);
+        try ve.delegationAction(lockId, newTarget, DataTypes.DelegationType.Switch) {
+            uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+            
+            // Update ghost state - current holder is the old delegate
+            ghost_hasPendingDelegation[lockId] = true;
+            ghost_expectedCurrentHolder[lockId] = currentDelegate;
+            ghost_expectedFutureDelegate[lockId] = newTarget;
+            ghost_delegationEffectiveEpoch[lockId] = nextEpochStart;
+            
+            ghost_delegateActionCount[lockId][currentEpochStart]++;
+            
+            // Track pending deltas (veBalance moves from oldDelegate to newDelegate)
+            DataTypes.VeBalance memory lockVe = ve.getLockVeBalance(lockId);
+            ghost_pendingDeltaBias[currentDelegate][nextEpochStart] -= int128(lockVe.bias);
+            ghost_pendingDeltaSlope[currentDelegate][nextEpochStart] -= int128(lockVe.slope);
+            ghost_pendingDeltaBias[newTarget][nextEpochStart] += int128(lockVe.bias);
+            ghost_pendingDeltaSlope[newTarget][nextEpochStart] += int128(lockVe.slope);
+            
         } catch {}
         vm.stopPrank();
     }
@@ -193,17 +246,76 @@ contract Handler is Test {
     function undelegateLock(uint256 lockIndexSeed) external {
         if (activeLockIds.length == 0) return;
         bytes32 lockId = activeLockIds[bound(lockIndexSeed, 0, activeLockIds.length - 1)];
-        (, address owner, address currentDelegate, , , , bool isUnlocked) = ve.locks(lockId);
+        
+        (address owner, address currentDelegate,,,,, bool isUnlocked) = _getLockData(lockId);
         
         if (owner == address(0) || isUnlocked || currentDelegate == address(0)) return;
 
+        uint128 currentEpochStart = EpochMath.getCurrentEpochStart();
+        
         vm.startPrank(owner);
-        try ve.undelegateLock(lockId) {
-            _updateGhostDelegation(lockId, currentDelegate);
+        try ve.delegationAction(lockId, address(0), DataTypes.DelegationType.Undelegate) {
+            uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
+            
+            ghost_hasPendingDelegation[lockId] = true;
+            ghost_expectedCurrentHolder[lockId] = currentDelegate;
+            ghost_expectedFutureDelegate[lockId] = address(0); // Back to owner
+            ghost_delegationEffectiveEpoch[lockId] = nextEpochStart;
+            
+            ghost_delegateActionCount[lockId][currentEpochStart]++;
+            
+            // Track pending deltas (veBalance moves from delegate back to owner)
+            DataTypes.VeBalance memory lockVe = ve.getLockVeBalance(lockId);
+            ghost_pendingDeltaBias[currentDelegate][nextEpochStart] -= int128(lockVe.bias);
+            ghost_pendingDeltaSlope[currentDelegate][nextEpochStart] -= int128(lockVe.slope);
+            ghost_pendingDeltaBias[owner][nextEpochStart] += int128(lockVe.bias);
+            ghost_pendingDeltaSlope[owner][nextEpochStart] += int128(lockVe.slope);
+            
         } catch {}
         vm.stopPrank();
     }
 
+
+    // Helper to clear pending state when epoch advances past delegationEpoch
+    function warp(uint256 jump) external {
+        jump = bound(jump, 1 days, 4 weeks);
+        uint128 oldEpoch = EpochMath.getCurrentEpochStart();
+        
+        vm.warp(block.timestamp + jump);
+        
+        uint128 newEpoch = EpochMath.getCurrentEpochStart();
+        
+        // If epoch advanced, clear pending delegations that are now active
+        if (newEpoch > oldEpoch) {
+            _clearActivatedDelegations(newEpoch);
+        }
+    }
+
+
+    function _clearActivatedDelegations(uint128 currentEpochStart) internal {
+        for (uint256 i; i < activeLockIds.length; ++i) {
+            bytes32 lockId = activeLockIds[i];
+            if (ghost_delegationEffectiveEpoch[lockId] <= currentEpochStart && ghost_delegationEffectiveEpoch[lockId] > 0) {
+                ghost_hasPendingDelegation[lockId] = false;
+                delete ghost_expectedCurrentHolder[lockId];
+                delete ghost_expectedFutureDelegate[lockId];
+                delete ghost_delegationEffectiveEpoch[lockId];
+            }
+        }
+    }
+
+
+    // Helper to get full lock data using tuple unpacking
+    // Lock struct order: owner, expiry, moca, esMoca, isUnlocked, delegate, currentHolder, delegationEpoch
+    function _getLockData(bytes32 lockId) internal view returns (
+        address owner, address delegate, address currentHolder, 
+        uint128 moca, uint128 esMocaAmt, uint128 expiry, bool isUnlocked
+    ) {
+        (address _owner, uint128 _expiry, uint128 _moca, uint128 _esMoca, bool _isUnlocked, address _delegate, address _currentHolder,) = ve.locks(lockId);
+        return (_owner, _delegate, _currentHolder, _moca, _esMoca, _expiry, _isUnlocked);
+    }
+
+    
     // ------------------- ADMIN/CRON ACTIONS -------------------
 
     function createLockFor(uint256 amountSeed, uint256 durationSeed) external {
@@ -253,7 +365,7 @@ contract Handler is Test {
         if (ve.isFrozen() == 0) return;
         uint256 idx = bound(lockIndexSeed, 0, activeLockIds.length - 1);
         bytes32 lockId = activeLockIds[idx];
-        (,,, uint128 mocaAmt, uint128 esMocaAmt,, bool isUnlocked) = ve.locks(lockId);
+        (,,, uint128 mocaAmt, uint128 esMocaAmt,, bool isUnlocked) = _getLockData(lockId);
         if (isUnlocked) return;
 
         bytes32[] memory ids = new bytes32[](1);
@@ -270,10 +382,6 @@ contract Handler is Test {
 
     // ------------------- HELPERS -------------------
 
-    function warp(uint256 jump) external {
-        jump = bound(jump, 1 days, 4 weeks); 
-        vm.warp(block.timestamp + jump);
-    }
 
     function _ensureDelegateRegistered(address delegate) internal {
         address vc = ve.VOTING_CONTROLLER();
