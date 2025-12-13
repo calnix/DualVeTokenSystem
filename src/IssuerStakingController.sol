@@ -23,6 +23,12 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
  *      Works with Native Moca - not ERC20 MOCA.
  */
 
+/**
+    NOTE:
+    - For issuers that are using contracts to stake, they should be mindful of the possibility of receiving wMoca instead of native moca,
+    when calling claimUnstake() or emergencyExit().
+    - They should ensure that their contract has the necessary logic to handle wMoca.
+ */
 
 contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumerable {
     
