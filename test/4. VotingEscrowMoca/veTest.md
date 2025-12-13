@@ -36,26 +36,24 @@ StateE1_Deploy
 ```
 
 
-# veDelegation Test Sequence (V1 - Legacy)
+# veDelegation Test Sequence (veDelegateTestV2.t.sol)
 
 
 ```
-StateD1_Deploy
-  └── StateD1_SetupDelegate1 [Register delegates, create lock1]
-        └── StateD2_User1_DelegatesLock1_ToDelegate1 [Delegation initiated]
-              └── StateD3_DelegationTakesEffect [Warp to next epoch]
-                    └── StateD3_User1_IncreaseAmountOnDelegatedLock
-                          └── StateD4_User1_SwitchDelegate_ToDelegate2
-                                └── StateD5_SwitchTakesEffect
-                                      └── StateD6_User1_Undelegate
-                                            └── StateD7_UndelegateTakesEffect
-                                                  └── StateD8_MultipleUsersToSameDelegate
-                                                        └── StateD9_UnlockDelegatedLock
+StateE1_Deploy
+  └── StateE1_User1_CreateLock1 [lock1: 100 MOCA + 100 esMOCA, expires E3]
+        └── StateE1_RegisterDelegate_User3 [Register user3 as delegate]
+              └── StateE1_User1_DelegateLock1_ToUser3 [lock1 → PENDING DELEGATION]
+                    └── StateE2_Lock1DelegationTakesEffect [Warp E2 + cronjob → ACTIVE]
+                          └── StateE2_User1_CreatesLock2 [lock2: 200+200, expires E10, delegate to user3]
+                                └── StateE2_User1_IncreaseDuration_Lock2 [E10 → E12]
+                                      └── StateE2_User1_IncreaseAmount_Lock2 [+50 MOCA, +50 esMOCA]
+                                            └── StateE2_User1_SwitchDelegate_Lock2 [user3 → user2]
+                                                  └── StateE2_User1_Undelegates_Lock2 [user2 → none]
+                                                        └── StateE4_User1_Unlocks_Lock1 [lock1 expired, unlock]
+                                                              └── StateE4_User3_DelegateLock3_ToUser2 [multi-user scenarios]
+                                                                    └── StateEmergencyExit [freeze + emergency exit]
 ```
-
----
-
-# veDelegation Test Sequence V2 (veDelegateTestV2.t.sol)
 
 ## Three Lock Delegation States
 
@@ -387,3 +385,44 @@ Tests (`StateEmergencyExit_Test`):
 - Cannot switch to same delegate
 - Cannot undelegate non-delegated lock
 - Delegation action counter per epoch
+
+
+--- 
+
+# veCreateFor 
+
+## 1. StateE1_Setup - Base setup with 4 initial locks:
+
+- lock1_Id: user1 self-lock
+- lock2_Id: user1 → user2 (delegated)
+- lock3_Id: user2 self-lock
+- lock4_Id: user2 → user1 (delegated)
+- Helper functions _verifyLock() and _verifyEventsEmitted() moved here for reuse
+
+## 2. StateE2_AdvanceEpoch 
+
+- Advances to E2 with cronjob updates
+
+## 3. StateE2_AdvanceEpoch_Test 
+
+- Tests initial state after E2
+
+## 4. StateE2_CreateLockFor_SameAmounts - Abstract setup:
+
+- Captures beforeStateUser1 and beforeStateUser2 using captureAllStatesPlusDelegates
+- Executes createLockFor with same amounts (50 ether each)
+- Captures afterStateUser1 and afterStateUser2 with new lock IDs
+
+## 5. StateE2_CreateLockFor_SameAmounts_Test 
+
+- 5 verification tests
+
+## 6. StateE2_CreateLockFor_DifferentAmounts - Abstract setup:
+
+- Captures before states using lock5/lock6 from previous phase
+- Executes createLockFor with different amounts (10/20 for user1, 30/40 for user2)
+- Captures after states with new lock7/lock8 IDs
+
+## 7. StateE2_CreateLockFor_DifferentAmounts_Test 
+
+- 6 verification tests

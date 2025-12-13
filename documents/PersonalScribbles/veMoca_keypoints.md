@@ -57,5 +57,4 @@ function deletegateLock(bytes32 lockId, address delegate) external {
     //book pending: add lock to delegate's aggregate
     delegatePendingDeltas[user][nextEpoch].veAdditions = veLock;
 }
-
 ```
