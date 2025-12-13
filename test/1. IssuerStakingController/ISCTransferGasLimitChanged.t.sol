@@ -3,7 +3,9 @@ pragma solidity 0.8.27;
 
 import {Test, console2, stdStorage, StdStorage} from "forge-std/Test.sol";
 
+import {LowLevelWMoca} from "../../src/LowLevelWMoca.sol";
 import "./IssuerStakingController.t.sol";
+import "../utils/TestingHarness.sol"; // For GasGuzzler
 
 abstract contract StateT2_TransferGasLimitChanged is StateT2_InitiateUnstake_Full {
 
@@ -52,6 +54,11 @@ contract StateT2_TransferGasLimitChanged_Test is StateT2_TransferGasLimitChanged
 
         uint256 contractNativeBefore = address(issuerStakingController).balance;
         uint256 contractWMocaBefore = mockWMoca.balanceOf(issuer1Asset);
+
+        // Expect fallback event from LowLevelWMoca (inherited by issuerStakingController)
+        // MocaWrappedAndTransferred(address indexed wMoca, address indexed to, uint256 amount)
+        vm.expectEmit(true, true, false, true, address(issuerStakingController));
+        emit LowLevelWMoca.MocaWrappedAndTransferred(address(mockWMoca), issuer1Asset, claimableAmount);
 
         // Expect event unchanged
         vm.expectEmit(true, true, true, true);

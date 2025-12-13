@@ -294,14 +294,15 @@ contract IssuerStakingController is LowLevelWMoca, Pausable, AccessControlEnumer
         uint256 totalMocaStaked;
         uint256 totalMocaPendingUnstake;
 
+        // check: if NOT emergency exit handler, issuer can only exit themselves
+        if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
+            // check: caller can only exit themselves
+            require(msg.sender == issuerAddresses[0] && issuerAddresses.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrIssuer());
+        }
+
+
         for(uint256 i; i < issuerAddresses.length; ++i) { 
             address issuerAddress = issuerAddresses[i];
-            
-            // check: if NOT emergency exit handler, issuer can only exit themselves
-            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
-                // check: issuer can only exit themselves
-                require(msg.sender == issuerAddress && issuerAddresses.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrIssuer());
-            }
 
             // get issuer's total moca: staked and pending unstake
             uint256 mocaStaked = issuers[issuerAddress]; 

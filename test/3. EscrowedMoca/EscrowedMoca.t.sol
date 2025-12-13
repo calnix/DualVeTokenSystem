@@ -878,20 +878,20 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
         function testRevert_UserCannot_ReleaseEscrowedMoca() public {
             vm.startPrank(user1);
             vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user1, esMoca.ASSET_MANAGER_ROLE()));
-            esMoca.releaseEscrowedMoca{value: 0}(1);
+            esMoca.releaseEscrowedMoca(1);
             vm.stopPrank();
         }
 
         function testRevert_AssetManagerCannot_ReleaseEscrowedMoca_WhenZero() public {
             vm.prank(assetManager);
             vm.expectRevert(Errors.InvalidAmount.selector);
-            esMoca.releaseEscrowedMoca{value: 0}(0);
+            esMoca.releaseEscrowedMoca(0);
         }
 
         function testRevert_AssetManagerCannot_ReleaseEscrowedMoca_WhenInsufficientBalance() public {
             vm.prank(assetManager);
             vm.expectRevert(Errors.InsufficientBalance.selector);
-            esMoca.releaseEscrowedMoca{value: 0}(1);
+            esMoca.releaseEscrowedMoca(1);
         }
 
         function test_AssetManagerCan_ReleaseEscrowedMoca() public {
@@ -1803,7 +1803,7 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
 
             // claim penalties
             vm.startPrank(cronJob);
-            esMoca.claimPenalties{value: 0}();
+            esMoca.claimPenalties();
             vm.stopPrank();
 
             // Verify after-state
@@ -1865,7 +1865,7 @@ contract StateT60Days_Paused_Test is StateT60Days_Paused {
         function testRevert_AssetManagerCannot_ReleaseEscrowedMoca_WhenPaused() public {
             vm.startPrank(assetManager);
             vm.expectRevert(Pausable.EnforcedPause.selector);
-            esMoca.releaseEscrowedMoca{value: 0}(50 ether);
+            esMoca.releaseEscrowedMoca(50 ether);
             vm.stopPrank();
         }
 

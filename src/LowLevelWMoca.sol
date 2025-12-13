@@ -9,6 +9,9 @@ import {IWMoca} from "./interfaces/IWMoca.sol";
  *         If the Moca transfer fails within a gas limit, the amount in Moca is wrapped to wMoca and then transferred.
  */
 contract LowLevelWMoca {
+
+    event MocaWrappedAndTransferred(address indexed wMoca, address indexed to, uint256 amount);
+
     /**
      * @notice It transfers Moca to a recipient with a specified gas limit.
      *         If the original transfers fails, it wraps to wMoca and transfers the wMoca to recipient.
@@ -32,6 +35,7 @@ contract LowLevelWMoca {
         if (!status) {
             IWMoca(wMoca).deposit{value: _amount}();
             IWMoca(wMoca).transfer(_to, _amount);
+            emit MocaWrappedAndTransferred(wMoca, _to, _amount);
         }
     }
 }
