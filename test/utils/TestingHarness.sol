@@ -114,7 +114,7 @@ abstract contract TestingHarness is Test {
     // PaymentsController parameters
     uint256 public protocolFeePercentage = 500;      // 5%
     uint256 public voterFeePercentage = 1000;        // 10%
-    uint256 public feeIncreaseDelayPeriod = 14 days; // 14 days
+    uint128 public feeIncreaseDelayPeriod = 14 days; // 14 days
 
     // VotingController parameters
     uint256 public registrationFee = 1000;       // 1000 MOCA
@@ -198,8 +198,8 @@ abstract contract TestingHarness is Test {
     /**
      * @notice Generates an EIP-712 signature for deductBalance()
      * @param signerPrivateKey The private key of the verifier's signer
-     * @param issuerId The unique identifier of the issuer
-     * @param verifierId The unique identifier of the verifier
+     * @param issuerId The address of the issuer
+     * @param verifierId The address of the verifier
      * @param schemaId The unique identifier of the schema
      * @param userAddress The address of the user for verification
      * @param amount The fee amount to deduct
@@ -209,8 +209,8 @@ abstract contract TestingHarness is Test {
      */
     function generateDeductBalanceSignature(
         uint256 signerPrivateKey,
-        bytes32 issuerId,
-        bytes32 verifierId,
+        address issuerId,       
+        address verifierId,     
         bytes32 schemaId,
         address userAddress,
         uint128 amount,
@@ -253,8 +253,8 @@ abstract contract TestingHarness is Test {
     /**
      * @notice Generates an EIP-712 signature for deductBalanceZeroFee()
      * @param signerPrivateKey The private key of the verifier's signer
-     * @param issuerId The unique identifier of the issuer
-     * @param verifierId The unique identifier of the verifier
+     * @param issuerId The address of the issuer
+     * @param verifierId The address of the verifier
      * @param schemaId The unique identifier of the schema
      * @param userAddress The address of the user for verification
      * @param expiry The signature expiry timestamp
@@ -263,8 +263,8 @@ abstract contract TestingHarness is Test {
      */
     function generateDeductBalanceZeroFeeSignature(
         uint256 signerPrivateKey,
-        bytes32 issuerId,
-        bytes32 verifierId,
+        address issuerId,
+        address verifierId,
         bytes32 schemaId,
         address userAddress,
         uint256 expiry,

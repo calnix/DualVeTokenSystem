@@ -1149,18 +1149,18 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         require(verifiers.length > 0, Errors.InvalidArray());
    
         uint256 totalAssets;
+
+        // check: if NOT emergency exit handler, verifier can only exit themselves
+        if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
+            // check: caller can only exit themselves
+            require(msg.sender == verifiers[0] && verifiers.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrVerifier());
+        }
         
         // if anything other than a valid verifier address is given, will retrieve either empty struct and skip
         for(uint256 i; i < verifiers.length; ++i) {
             
             address verifier = verifiers[i];
             
-            // check: if NOT emergency exit handler, verifier can only exit themselves
-            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
-                // check: verifier can only exit themselves
-                require(msg.sender == verifier && verifiers.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrVerifier());
-            }
-
             // cache verifier pointer
             DataTypes.Verifier storage verifierPtr = _verifiers[verifier];
 
@@ -1213,16 +1213,16 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
         uint256 totalAssets;
 
+        // check: if NOT emergency exit handler, issuer can only exit themselves
+        if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
+            // check: caller can only exit themselves
+            require(msg.sender == issuers[0] && issuers.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrIssuer());
+        }
+
         // if anything other than a valid issuer address is given, will retrieve either empty struct and skip
         for(uint256 i; i < issuers.length; ++i) {
 
             address issuer = issuers[i];
-
-            // check: if NOT emergency exit handler, issuer can only exit themselves
-            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
-                // check: issuer can only exit themselves
-                require(msg.sender == issuer && issuers.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrIssuer());
-            }
 
             // cache pointer
             DataTypes.Issuer storage issuerPtr = _issuers[issuer];
@@ -1291,6 +1291,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         require(caller == _verifiers[verifierAddress].assetManagerAddress, Errors.InvalidCaller());
         return (_epochPoolVerifierSubsidies[epoch][poolId][verifierAddress], _epochPoolSubsidies[epoch][poolId]);
     }
+    
     /**
      * @notice Returns the Issuer struct for a given issuer address.
      * @param issuer The address of the issuer.

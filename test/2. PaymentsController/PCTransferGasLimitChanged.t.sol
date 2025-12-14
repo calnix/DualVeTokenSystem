@@ -42,7 +42,7 @@ contract StateT11_TransferGasLimitChanged_Test is StateT11_TransferGasLimitChang
         uint128 amount = 10 ether;
 
         // Record state before
-        uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1_Id).mocaStaked;
+        uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1).mocaStaked;
         uint256 totalMocaStakedBefore = paymentsController.TOTAL_MOCA_STAKED();
         // wrapped moca balances before
         uint256 verifier1WMocaBalanceBefore = mockWMoca.balanceOf(verifier1Asset);
@@ -53,15 +53,15 @@ contract StateT11_TransferGasLimitChanged_Test is StateT11_TransferGasLimitChang
 
         // Expect event emission
         vm.expectEmit(true, true, false, true, address(paymentsController));
-        emit Events.VerifierMocaUnstaked(verifier1_Id, verifier1Asset, amount);
+        emit Events.VerifierMocaUnstaked(verifier1, verifier1Asset, amount);
 
         // -- Unstake: should fallback to sending wMoca --
         vm.prank(verifier1Asset);
-        paymentsController.unstakeMoca(verifier1_Id, amount);
+        paymentsController.unstakeMoca(verifier1, amount);
 
 
         // Check storage state after
-        DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier1_Id);
+        DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier1);
         assertEq(verifier.mocaStaked, verifier1MocaStakedBefore - amount, "VerifierAssetAddress unstaked MOCA");
         assertEq(paymentsController.TOTAL_MOCA_STAKED(), totalMocaStakedBefore - amount, "TOTAL_MOCA_STAKED not updated correctly");
 
