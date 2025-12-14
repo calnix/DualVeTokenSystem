@@ -95,13 +95,13 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
 
     // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
-    mapping(uint256 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) internal _epochPoolSubsidies;                                                               // totalSubsidiesPerPoolPerEpoch
-    mapping(uint256 epoch => mapping(bytes32 poolId => mapping(address verifierAdminAddress => uint256 verifierTotalSubsidies))) internal _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
+    mapping(uint128 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) internal _epochPoolSubsidies;                                                               // totalSubsidiesPerPoolPerEpoch
+    mapping(uint128 epoch => mapping(bytes32 poolId => mapping(address verifierAdminAddress => uint256 verifierTotalSubsidies))) internal _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
     
     // To track fees accrued to each pool, per epoch | for voting rewards tracking
-    mapping(uint256 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) internal _epochPoolFeesAccrued;
+    mapping(uint128 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) internal _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
-    mapping(uint256 epoch => DataTypes.FeesAccrued feesAccrued) internal _epochFeesAccrued;    
+    mapping(uint128 epoch => DataTypes.FeesAccrued feesAccrued) internal _epochFeesAccrued;    
     
     // whitelist of pools [pseudo verification that poolId actually exists in VotingController]
     mapping(bytes32 poolId => bool isWhitelisted) internal _votingPools;
@@ -565,7 +565,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         emit Events.BalanceDeducted(verifier, schemaId, issuer, amount);
 
         // ----- Book fees: pool-specific and epoch-level -----
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
 
         {
             bytes32 poolId = schemaStorage.poolId;
@@ -657,7 +657,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
     // Finds the highest tier the verifier qualifies for (closest largest) and applies that subsidy.
     // expects subsidy tier array to be orders in ascending fashion (from smallest to largest)
-    function _bookSubsidy(address verifier, bytes32 poolId, bytes32 schemaId, uint128 amount, uint256 currentEpoch) internal {
+    function _bookSubsidy(address verifier, bytes32 poolId, bytes32 schemaId, uint128 amount, uint128 currentEpoch) internal {
         // get verifier's moca staked
         uint256 verifierMocaStaked = _verifiers[verifier].mocaStaked;
         
@@ -842,7 +842,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      */
     function _bookFees(
         address verifier, bytes32 poolId, bytes32 schemaId, uint128 amount, 
-        uint256 currentEpoch, uint128 protocolFee, uint128 votingFee
+        uint128 currentEpoch, uint128 protocolFee, uint128 votingFee
     ) internal {
 
         // Pool-specific updates [for VotingController]
@@ -1030,7 +1030,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      *      Assets are sent to payments controller treasury.
      * @param epoch The epoch number for which to withdraw protocol fees.
      */
-    function withdrawProtocolFees(uint256 epoch) external onlyRole(CRON_JOB_ROLE) whenNotPaused {
+    function withdrawProtocolFees(uint128 epoch) external onlyRole(CRON_JOB_ROLE) whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
 
         // get payments controller treasury address
@@ -1062,7 +1062,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      *      Assets are sent to payments controller treasury.
      * @param epoch The epoch number for which to withdraw voters fees.
      */
-    function withdrawVotersFees(uint256 epoch) external onlyRole(CRON_JOB_ROLE) whenNotPaused {
+    function withdrawVotersFees(uint128 epoch) external onlyRole(CRON_JOB_ROLE) whenNotPaused {
         require(epoch < EpochMath.getCurrentEpochNumber(), Errors.InvalidEpoch());
 
         // get payments controller treasury address
@@ -1363,7 +1363,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param poolId The pool id.
      * @return totalSubsidies The total subsidies for the pool and epoch.
      */
-    function getEpochPoolSubsidies(uint256 epoch, bytes32 poolId) external view returns (uint256) {
+    function getEpochPoolSubsidies(uint128 epoch, bytes32 poolId) external view returns (uint256) {
         return _epochPoolSubsidies[epoch][poolId];
     }
 
@@ -1374,7 +1374,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param verifier The verifier address.
      * @return totalSubsidies The total subsidies for the pool and verifier and epoch.
      */
-    function getEpochPoolVerifierSubsidies(uint256 epoch, bytes32 poolId, address verifier) external view returns (uint256) {
+    function getEpochPoolVerifierSubsidies(uint128 epoch, bytes32 poolId, address verifier) external view returns (uint256) {
         return _epochPoolVerifierSubsidies[epoch][poolId][verifier];
     }
 
@@ -1385,7 +1385,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param poolId The pool id.
      * @return feesAccrued The fees accrued for the pool and epoch.
      */
-    function getEpochPoolFeesAccrued(uint256 epoch, bytes32 poolId) external view returns (DataTypes.FeesAccrued memory) {
+    function getEpochPoolFeesAccrued(uint128 epoch, bytes32 poolId) external view returns (DataTypes.FeesAccrued memory) {
         return _epochPoolFeesAccrued[epoch][poolId];
     }
 
@@ -1394,7 +1394,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param epoch The epoch.
      * @return feesAccrued The fees accrued for the epoch.
      */
-    function getEpochFeesAccrued(uint256 epoch) external view returns (DataTypes.FeesAccrued memory) {
+    function getEpochFeesAccrued(uint128 epoch) external view returns (DataTypes.FeesAccrued memory) {
         return _epochFeesAccrued[epoch];
     }
 

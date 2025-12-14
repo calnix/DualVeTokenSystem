@@ -47,7 +47,7 @@ library EpochMath {
 
 
     ///@dev returns epoch start time for a given epoch number
-    function getEpochStartTimestamp(uint256 epoch) internal pure returns (uint128) {
+    function getEpochStartTimestamp(uint128 epoch) internal pure returns (uint128) {
         return uint128(epoch * EPOCH_DURATION);
     }
 

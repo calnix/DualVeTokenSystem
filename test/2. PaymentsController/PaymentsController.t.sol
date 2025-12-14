@@ -988,7 +988,7 @@ contract StateT5_VerifierChangesSignerAddress_Test is StateT5_VerifierChangesSig
         uint256 schemaTotalVerifiedBefore = paymentsController.getSchema(schemaId1).totalVerified;
 
         // Record epoch fees before deduction
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
         uint256 protocolFeesBefore = epochFeesBefore.feesAccruedToProtocol;
         uint256 votersFeesBefore = epochFeesBefore.feesAccruedToVoters;
@@ -1098,7 +1098,7 @@ contract StateT6_IssuerDecreasesFee_Test is StateT6_IssuerDecreasesFee {
         uint256 schemaTotalVerifiedBefore = paymentsController.getSchema(schemaId1).totalVerified;
 
         // Record epoch fees before deduction
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
         uint256 protocolFeesBefore = epochFeesBefore.feesAccruedToProtocol;
         uint256 votersFeesBefore = epochFeesBefore.feesAccruedToVoters;
@@ -1349,7 +1349,7 @@ contract StateT8_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT8_IssuerInc
         uint256 schemaTotalVerifiedBefore = paymentsController.getSchema(schemaId1).totalVerified;
        
         // Record epoch fees before deduction
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
         uint256 protocolFeesBefore = epochFeesBefore.feesAccruedToProtocol;
         uint256 votersFeesBefore = epochFeesBefore.feesAccruedToVoters;
@@ -1460,7 +1460,7 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
         
         
         // Record epoch fees before deduction
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
         uint256 protocolFeesBefore = epochFeesBefore.feesAccruedToProtocol;
         uint256 votersFeesBefore = epochFeesBefore.feesAccruedToVoters;
@@ -1880,7 +1880,7 @@ contract StateT11_AllVerifiersStakedMOCA_Test is StateT11_AllVerifiersStakedMOCA
         uint256 schemaTotalVerifiedBefore = paymentsController.getSchema(schemaId2).totalVerified;
        
         // Record epoch fees before deduction
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         DataTypes.FeesAccrued memory epochFeesBefore = paymentsController.getEpochFeesAccrued(currentEpoch);
         uint256 protocolFeesBefore = epochFeesBefore.feesAccruedToProtocol;
         uint256 votersFeesBefore = epochFeesBefore.feesAccruedToVoters;
@@ -2712,7 +2712,7 @@ contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test
         // Note: verifier1 has 10 MOCA staked (tier1) which now gives 11% subsidy instead of 10%
         // verifier1 has 100 USD8 deposited, schemaId1 fee is 10 USD8, poolId1 associated
         
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         
         // Cache initial subsidy states
         uint256 poolSubsidiesBefore = paymentsController.getEpochPoolSubsidies(currentEpoch, poolId1);
@@ -2789,7 +2789,7 @@ contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test
         assertEq(subsidyPct, 1100, "Subsidy percentage should match 10 MOCA tier (11%)");
         
         // Record initial states
-        uint256 currentEpoch = EpochMath.getCurrentEpochNumber();
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         uint256 poolSubsidiesBefore = paymentsController.getEpochPoolSubsidies(currentEpoch, poolId1);
         uint256 verifierSubsidiesBefore = paymentsController.getEpochPoolVerifierSubsidies(currentEpoch, poolId1, verifier4);
         assertEq(verifierSubsidiesBefore, 0, "Verifier should have no subsidies initially");
