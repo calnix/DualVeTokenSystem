@@ -112,7 +112,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         address votingEscrowMoca_, address escrowedMoca_, address votingControllerTreasury_, address paymentsController_,
         address globalAdmin, address votingControllerAdmin, address monitorAdmin, address cronJobAdmin,
         address monitorBot, address emergencyExitHandler
-        ) {
+    ) {
 
         // check: voting controller treasury is set
         require(votingControllerTreasury_ != address(0), Errors.InvalidAddress());

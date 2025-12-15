@@ -715,7 +715,6 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         uint256 protocolFeeCalc = (uint256(amount) * PROTOCOL_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
         uint256 votingFeeCalc = (uint256(amount) * VOTING_FEE_PERCENTAGE) / Constants.PRECISION_BASE;
 
-        //@audit should these require safecast? USD8 is 6 dp precision [calnix]
         protocolFee = uint128(protocolFeeCalc); 
         votingFee = uint128(votingFeeCalc);
         netFee = uint128(amount - protocolFee - votingFee);
