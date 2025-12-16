@@ -52,7 +52,7 @@ library DataTypes {
         uint128 totalGrossFeesAccrued;            // disregards protocol and voting fees
 
         // for VotingController
-        bytes32 poolId;
+        uint128 poolId;
     }
 
     struct SubsidyTier {
@@ -73,35 +73,38 @@ library DataTypes {
 
     struct Epoch {
         uint128 totalVotes;
+        uint128 totalActivePools;                // set in depositEpochSubsidies()   
 
         // rewards + subsidies
-        uint128 totalRewardsAllocated;           // set+deposited in finalizeEpochRewardsSubsidies()
-        uint128 totalSubsidiesDeposited;         // deposited subsidies; set in depositEpochSubsidies()
+        uint128 totalSubsidiesAllocated;         // set & deposited in depositEpochSubsidies()
+        uint128 totalRewardsAllocated;           // set in finalizeEpochRewardsSubsidies() & deposited in depositRewards()
 
         // claimed: esMOCA 
         uint128 totalRewardsClaimed;   
-        uint128 totalSubsidiesClaimed;      
+        uint128 totalSubsidiesClaimed;    
+
+        // unclaimed: withdrawn to treasury
+        uint128 totalRewardsUnclaimed;   
+        uint128 totalSubsidiesUnclaimed;     
 
         // epochEnd: flags
-        uint128 poolsFinalized;         // incremented in finalizeEpochRewardsSubsidies()
         bool isSubsidiesSet;            // set in depositEpochSubsidies()
-        bool isFullyFinalized;          // set in finalizeEpochRewardsSubsidies()
-        bool residualsWithdrawn;        // set in withdrawResidualSubsidies()
+        bool isFullyProcessed;          // set in processEpochRewardsSubsidies()
+        bool isEpochFinalized;          // set in depositRewards()
+        uint128 poolsProcessed;         // incremented in processEpochRewardsSubsidies()
+
+        bool isRewardsWithdrawn;        // set in withdrawUnclaimedRewards()
+        bool isSubsidiesWithdrawn;      // set in withdrawUnclaimedSubsidies()
     }
     
     // Pool data [global]
     struct Pool {
-        bytes32 poolId;         // poolId = credentialId  
-        bool isRemoved;         // flag: indicates pool has been removed permanently
+        //bytes32 poolId;         // poolId -> as a flag for pool existence
+        bool isActive;            // flag: indicates pool has been removed permanently
 
-        // global metrics TODO: review
-        uint128 totalVotes;             // total votes pool accrued throughout all epochs
+        uint128 totalVotes;                      // total votes pool accrued throughout all epochs
         uint128 totalRewardsAllocated;           // set in finalizeEpochRewardsSubsidies()
         uint128 totalSubsidiesAllocated;         // set in finalizeEpochRewardsSubsidies()
-
-        // claimed: esMOCA 
-        uint128 totalSubsidiesClaimed;  
-        uint128 totalRewardsClaimed;    
     }
 
     // pool data [epoch]
@@ -110,10 +113,6 @@ library DataTypes {
         uint128 totalRewardsAllocated;           // set in finalizeEpochRewardsSubsidies()
         uint128 totalSubsidiesAllocated;         // set in finalizeEpochRewardsSubsidies()
 
-        // claimed: esMOCA 
-        uint128 totalRewardsClaimed;    
-        uint128 totalSubsidiesClaimed;  
-        
         // flag for finalization
         bool isProcessed;
     }
@@ -124,25 +123,37 @@ library DataTypes {
         
         uint128 currentFeePct;    // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
         uint128 nextFeePct;         
-        uint256 nextFeePctEpoch;            
+        uint128 nextFeePctEpoch;            
 
         uint128 totalRewardsCaptured;      // total gross rewards accrued by delegate [from delegated votes]
-        uint128 totalFees;               // total fees accrued by delegate
-        uint128 totalFeesClaimed;        // total fees claimed by delegate
+        uint128 totalFeesAccrued;          // total fees accrued by delegate
+        uint128 totalFeesClaimed;          // total fees claimed by delegate
     }
 
 
-    // user/delegate data     | perEpoch | perPoolPerEpoch
+    // user/delegate data    [perEpoch][perPoolPerEpoch]
     struct Account {
         uint128 totalVotesSpent;      // total votes spent by user [personal] || total votes spent by delegatee [delegated]
-        uint128 totalRewards;         // user: total rewards || delegate: total gross rewards accrued [from delegated votes]
-        // the delegate cannot claim totalRewards; they can only claim by applying their fee
+        uint128 totalRewards;          // Total gross rewards earned [user get's everything, delegate's fee is based on this]
     }
 
-    struct OmnibusDelegateAccount {
-        uint128 totalNetRewards;    // claimed by user
-        mapping(bytes32 poolId => uint128 grossRewards) userPoolGrossRewards; // flag: 0 = not claimed, non-zero = claimed
+
+    struct UserDelegateAccount {
+        // Aggregate totals (accumulated during processing)
+        uint128 totalGrossRewards;              // Sum of gross rewards across processed pools
+        uint128 totalDelegateFees;              // Sum of delegate fees
+        uint128 totalNetRewards;                // totalGrossRewards - totalDelegateFees
+        
+        // Aggregate claimed (updated during actual transfers)
+        uint128 userClaimed;                    // Total NET claimed by user
+        uint128 delegateClaimed;                // Total FEES claimed by delegate
+        
+        // Per-pool tracking (for processing only)
+        mapping(uint128 poolId => uint128 grossRewards) userPoolGrossRewards;
+        mapping(uint128 poolId => bool) poolProcessed;
     }
+
+
 
 // --------- VotingEscrowMoca.sol -------
     struct Lock {

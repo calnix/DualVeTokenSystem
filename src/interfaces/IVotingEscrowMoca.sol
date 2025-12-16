@@ -184,7 +184,7 @@ interface IVotingEscrowMoca {
      * @param forDelegated If true: delegated veBalance; if false: personal veBalance.
      * @return The user's voting power at the end of the specified epoch.
      */
-    function balanceAtEpochEnd(address user, uint256 epoch, bool forDelegated) external view returns (uint256);
+    function balanceAtEpochEnd(address user, uint128 epoch, bool forDelegated) external view returns (uint128);
 
     /**
      * @notice Returns the specific delegated balance of a user to a delegate at the end of an epoch.
@@ -193,7 +193,7 @@ interface IVotingEscrowMoca {
      * @param epoch The epoch number for which the delegated balance is requested.
      * @return The user's specific delegated balance to the delegate at the end of the specified epoch.
      */
-    function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint256 epoch) external view returns (uint128);
+    function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint128 epoch) external view returns (uint128);
 
     // =============================== Lock View Functions ===============================
 

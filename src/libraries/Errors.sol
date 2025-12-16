@@ -77,30 +77,32 @@ library Errors {
     error EpochNotFinalized();
     error NoAvailableVotes();
     error ZeroVotes();
-    error PoolDoesNotExist();
+    error PoolNotActive();
     error PoolRemoved();
     error InsufficientVotes();
     error InvalidPoolPair();
-
+    error PoolHasNoRewards();
+    
     // delegation
     error DelegateAlreadyRegistered();
-    error DelegateNotRegistered();
+    error NotRegisteredAsDelegate();
     error CannotUnregisterWithActiveVotes();
+
     //voterClaimRewards
-    error AlreadyClaimed();
+    error NoRewardsToClaim();
+    error AlreadyClaimedOrNoRewardsToClaim();
+    
     //claimSubsidies
     error NoSubsidiesToClaim();
     error FutureEpoch();
     error NoVotesInPool();
     error NoSubsidiesForPool(); 
     error SubsidyAlreadyClaimed();
-    error RebaseOverflow();
     // depositSubsidies
-    error CannotSetSubsidiesForFutureEpochs();
     error SubsidiesAlreadySet();
     error InsufficientSubsidies();
     //depositRewards
-    error RewardsAlreadySet();
+    error RewardsAlreadyDeposited();
     // finalizeEpochRewardsSubsidies
     error SubsidyPerVoteZero();
     error SubsidiesNotSet();
@@ -109,6 +111,8 @@ library Errors {
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards
     error NoUnclaimedRewardsToWithdraw();
     error CanOnlyWithdrawUnclaimedAfterDelay();
+    error RewardsAlreadyWithdrawn();
+    error SubsidiesAlreadyWithdrawn();
     // withdrawRegistrationFees
     error NoRegistrationFeesToWithdraw();
 

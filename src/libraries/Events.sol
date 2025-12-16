@@ -82,54 +82,67 @@ library Events {
 
 
 // --------- VotingController.sol ---------
+    
     // createPool(), removePool()
-    event PoolCreated(bytes32 indexed poolId);
-    event PoolRemoved(bytes32 indexed poolId);
+    event PoolCreated(uint128 indexed poolId);
+    event PoolRemoved(uint128 indexed poolId);
 
     // vote(), migrateVotes()
-    event Voted(uint256 indexed epoch, address indexed caller, bytes32[] poolIds, uint128[] votes, bool isDelegated);
-    event VotesMigrated(uint256 indexed epoch, address indexed caller, bytes32[] srcPoolIds, bytes32[] dstPoolIds, uint128[] votes, bool isDelegated);
+    event Voted(uint128 indexed epoch, address indexed caller, uint128[] poolIds, uint128[] votes, bool isDelegated);
+    event VotesMigrated(uint128 indexed epoch, address indexed caller, uint128[] srcPoolIds, uint128[] dstPoolIds, uint128[] votes, bool isDelegated);
+    
     // delegate
     event DelegateRegistered(address indexed delegate, uint256 feePct);
-    event DelegateFeeDecreased(address indexed delegate, uint256 currentFeePct, uint256 feePct);
-    event DelegateFeeIncreased(address indexed delegate, uint256 currentFeePct, uint256 feePct, uint256 nextFeePctEpoch);
-    event ClaimDelegateFees(address indexed delegate, uint256 feesClaimed);
+    event DelegateUnregistered(address indexed delegate);
+    event DelegateFeeDecreased(address indexed delegate, uint128 currentFeePct, uint128 newFeePct);
+    event DelegateFeeIncreased(address indexed delegate, uint128 currentFeePct, uint128 newFeePct, uint128 nextFeePctEpoch);
+
+    
     // voterClaimRewards
-    event RewardsClaimed(address indexed caller, uint256 epoch, bytes32[] poolIds, uint256 totalClaimableRewards);
+    event RewardsClaimed(address indexed caller, uint128 epoch, uint128[] poolIds, uint128 totalClaimableRewards);
     // claimDelegateFees
-    event RewardsClaimedFromDelegate(uint256 indexed epoch, address indexed caller, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
+    event RewardsClaimedFromDelegate(uint128 indexed epoch, address indexed caller, address indexed delegate, uint128[] poolIds, uint128 totalClaimableRewards);
     // claimRewardsFromDelegate
-    event RewardsClaimedFromDelegateBatch(uint256 indexed epoch, address indexed caller, address[] delegateList, bytes32[][] poolIdsPerDelegate, uint256 userTotalNetRewards);
-    event DelegateFeesClaimed(address indexed delegate, uint256 feesClaimed);
+    event RewardsClaimedFromDelegateBatch(uint128 indexed epoch, address indexed caller, address[] delegateList, uint128[][] poolIdsPerDelegate, uint128 userTotalNetRewards);
+    event DelegateFeesClaimed(uint128 indexed epoch, address indexed delegate, uint128 feesClaimed);
     // delegateClaimFeesFromDelegators
-    event RewardsForceClaimedByDelegate(uint256 indexed epoch, address indexed delegator, address indexed delegate, bytes32[] poolIds, uint256 totalClaimableRewards);
+    event RewardsForceClaimedByDelegate(uint128 indexed epoch, address indexed delegator, address indexed delegate, uint128[] poolIds, uint128 totalClaimableRewards);
 
     // claimSubsidies
-    event SubsidiesClaimed(address indexed verifier, uint256 epoch, bytes32[] poolIds, uint256 totalSubsidiesClaimed);
+    event SubsidiesClaimed(address indexed verifier, uint128 epoch, uint128[] poolIds, uint128 totalSubsidiesClaimed);
 
 
     // depositSubsidies
     event SubsidiesDeposited(address indexed depositor, uint256 epoch, uint256 totalSubsidies);
-    event SubsidiesSet(uint256 indexed epoch, uint256 totalSubsidies);
+    event SubsidiesSet(uint128 indexed epoch, uint128 totalSubsidies);
+    // finalizeEpoch
+    event PoolsProcessed(uint128 indexed epoch, uint128[] poolIds);
+    event EpochFullyProcessed(uint128 indexed epoch);
+    // depositRewards
+    event RewardsSetForEpoch(uint128 indexed epoch, uint128 totalRewards);
+    event RewardsDeposited(address indexed treasury, uint128 indexed epoch, uint128 totalRewards);
+
 
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards & withdrawRegistrationFees
-    event UnclaimedRewardsWithdrawn(address indexed treasury, uint256 indexed epoch, uint256 unclaimedRewards);
-    event UnclaimedSubsidiesWithdrawn(address indexed treasury, uint256 indexed epoch, uint256 unclaimedSubsidies);
+    event UnclaimedRewardsWithdrawn(address indexed treasury, uint128 indexed epoch, uint128 unclaimedRewards);
+    event UnclaimedSubsidiesWithdrawn(address indexed treasury, uint128 indexed epoch, uint256 unclaimedSubsidies);
     event RegistrationFeesWithdrawn(address indexed treasury, uint256 claimableRegistrationFees);
-
-    // setMaxDelegateFeePct
-    event MaxDelegateFeePctUpdated(uint256 maxDelegateFeePct);
-    // setFeeIncreaseDelayEpochs
-    event FeeIncreaseDelayEpochsUpdated(uint256 delayEpochs);
-    // setUnclaimedDelay
-    event UnclaimedDelayUpdated(uint256 indexed oldDelay, uint256 indexed newDelay);
+    
+    // setEsMoca
+    event EsMocaUpdated(address oldEsMoca, address newEsMoca);
+    // setPaymentController
+    event PaymentControllerUpdated(address oldPaymentController, address newPaymentController);
+    // setVotingControllerTreasury
+    event VotingControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
     // setDelegateRegistrationFee
-    event DelegateRegistrationFeeUpdated(uint256 oldRegistrationFee, uint256 newRegistrationFee);
+    event DelegateRegistrationFeeUpdated(uint128 newRegistrationFee);
+    // setMaxDelegateFeePct
+    event MaxDelegateFeePctUpdated(uint128 maxDelegateFeePct);
+    // setFeeIncreaseDelayEpochs
+    event FeeIncreaseDelayEpochsUpdated(uint128 delayEpochs);
+    // setUnclaimedDelay
+    event UnclaimedDelayUpdated(uint128 indexed oldDelay, uint128 indexed newDelay);
 
-    // finalizeEpoch
-    event EpochSubsidyPerVoteSet(uint256 indexed epoch, uint256 subsidyPerVote);
-    event EpochPartiallyFinalized(uint256 indexed epoch, bytes32[] poolIds);
-    event EpochFullyFinalized(uint256 indexed epoch);
 
     // emergencyExit
     event EmergencyExit(address indexed treasury);
@@ -156,16 +169,16 @@ library Events {
     event AssetManagerAddressUpdated(address indexed verifierOrIssuer, address newAssetAddress);
 
     // deductBalance()
-    event SubsidyBooked(address indexed verifier, bytes32 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
+    event SubsidyBooked(address indexed verifier, uint128 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
     event BalanceDeducted(address indexed verifier, bytes32 indexed schemaId, address indexed issuer, uint256 amount);
     event SchemaVerified(bytes32 indexed schemaId);
     event SchemaVerifiedZeroFee(bytes32 indexed schemaId);
 
     // --- admin update fns ---
     // update poolId for schema
-    event PoolIdUpdated(bytes32 indexed schemaId, bytes32 indexed poolId);
+    event PoolIdUpdated(bytes32 indexed schemaId, uint128 indexed poolId);
     // whitelist pool
-    event PoolWhitelistedUpdated(bytes32 indexed poolId, bool isWhitelisted);
+    event PoolWhitelistedUpdated(uint128 indexed poolId, bool isWhitelisted);
     // update fee increase delay period
     event FeeIncreaseDelayPeriodUpdated(uint256 newDelayPeriod);
     // update protocol fee percentage
@@ -193,7 +206,6 @@ library Events {
 
 // --------- AccessController.sol ---------
     // Treasury
-    event VotingControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
     event EsMocaTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
     // Monitor admin functions
     event MonitorAdminRemoved(address indexed admin, address indexed removedBy);

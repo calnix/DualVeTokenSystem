@@ -95,16 +95,16 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
 
     // for VotingController.claimSubsidies(): track subsidies for each verifier, and pool, per epoch | getVerifierAndPoolAccruedSubsidies()
-    mapping(uint128 epoch => mapping(bytes32 poolId => uint256 totalSubsidies)) internal _epochPoolSubsidies;                                                               // totalSubsidiesPerPoolPerEpoch
-    mapping(uint128 epoch => mapping(bytes32 poolId => mapping(address verifierAdminAddress => uint256 verifierTotalSubsidies))) internal _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
+    mapping(uint128 epoch => mapping(uint128 poolId => uint256 totalSubsidies)) internal _epochPoolSubsidies;                                                               // totalSubsidiesPerPoolPerEpoch
+    mapping(uint128 epoch => mapping(uint128 poolId => mapping(address verifierAdminAddress => uint256 verifierTotalSubsidies))) internal _epochPoolVerifierSubsidies;      // totalSubsidiesPerPoolPerEpochPerVerifier
     
     // To track fees accrued to each pool, per epoch | for voting rewards tracking
-    mapping(uint128 epoch => mapping(bytes32 poolId => DataTypes.FeesAccrued feesAccrued)) internal _epochPoolFeesAccrued;
+    mapping(uint128 epoch => mapping(uint128 poolId => DataTypes.FeesAccrued feesAccrued)) internal _epochPoolFeesAccrued;
     // for correct withdrawal of fees and rewards
     mapping(uint128 epoch => DataTypes.FeesAccrued feesAccrued) internal _epochFeesAccrued;    
     
     // whitelist of pools [pseudo verification that poolId actually exists in VotingController]
-    mapping(bytes32 poolId => bool isWhitelisted) internal _votingPools;
+    mapping(uint128 poolId => bool isWhitelisted) internal _votingPools;
 
 //------------------------------- Constructor---------------------------------------------------------------------
 
@@ -568,7 +568,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
 
         {
-            bytes32 poolId = schemaStorage.poolId;
+            uint128 poolId = schemaStorage.poolId;
             // book fees: pool-specific and epoch-level
             _bookFees(verifier, poolId, schemaId, amount, currentEpoch, protocolFee, votingFee);
         }        
@@ -657,7 +657,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
     // Finds the highest tier the verifier qualifies for (closest largest) and applies that subsidy.
     // expects subsidy tier array to be orders in ascending fashion (from smallest to largest)
-    function _bookSubsidy(address verifier, bytes32 poolId, bytes32 schemaId, uint128 amount, uint128 currentEpoch) internal {
+    function _bookSubsidy(address verifier, uint128 poolId, bytes32 schemaId, uint128 amount, uint128 currentEpoch) internal {
         // get verifier's moca staked
         uint256 verifierMocaStaked = _verifiers[verifier].mocaStaked;
         
@@ -840,7 +840,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param votingFee The voting fee amount.
      */
     function _bookFees(
-        address verifier, bytes32 poolId, bytes32 schemaId, uint128 amount, 
+        address verifier, uint128 poolId, bytes32 schemaId, uint128 amount, 
         uint128 currentEpoch, uint128 protocolFee, uint128 votingFee
     ) internal {
 
@@ -874,7 +874,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param schemaId The unique id of the schema to update.
      * @param poolId The new poolId to associate with the schema (can be zero to remove).
      */
-    function updatePoolId(bytes32 schemaId, bytes32 poolId) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
+    function updatePoolId(bytes32 schemaId, uint128 poolId) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
 
         // sanity check: schema must exist
@@ -895,7 +895,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param poolId The poolId to whitelist or un-whitelist.
      * @param isWhitelisted The new whitelist status.
      */
-    function whitelistPool(bytes32 poolId, bool isWhitelisted) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
+    function whitelistPool(uint128 poolId, bool isWhitelisted) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         require(_votingPools[poolId] != isWhitelisted, Errors.PoolWhitelistedStatusUnchanged());
 
         _votingPools[poolId] = isWhitelisted;
@@ -1280,15 +1280,15 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Returns the total subsidies per epoch, for a pool and {verifier, pool}.
      * @param epoch The epoch number.   
      * @param poolId The pool id.
-     * @param verifierAddress The verifier address.
+     * @param verifier The verifier. 
      * @param caller Expected to be the verifier's asset manager address. [Called through VotingController.claimSubsidies()].
      * @return verifierAccruedSubsidies The total subsidies for the {verifier, pool}, for the epoch.
      * @return poolAccruedSubsidies The total subsidies for the pool, for the epoch.
      */
-    function getVerifierAndPoolAccruedSubsidies(uint128 epoch, bytes32 poolId, address verifierAddress, address caller) external view returns (uint256, uint256) {
+    function getVerifierAndPoolAccruedSubsidies(uint128 epoch, uint128 poolId, address verifier, address caller) external view returns (uint256, uint256) {
         // verifiers's asset manager address must be the caller of VotingController.claimSubsidies
-        require(caller == _verifiers[verifierAddress].assetManagerAddress, Errors.InvalidCaller());
-        return (_epochPoolVerifierSubsidies[epoch][poolId][verifierAddress], _epochPoolSubsidies[epoch][poolId]);
+        require(caller == _verifiers[verifier].assetManagerAddress, Errors.InvalidCaller());
+        return (_epochPoolVerifierSubsidies[epoch][poolId][verifier], _epochPoolSubsidies[epoch][poolId]);
     }
     
     /**
@@ -1362,7 +1362,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param poolId The pool id.
      * @return totalSubsidies The total subsidies for the pool and epoch.
      */
-    function getEpochPoolSubsidies(uint128 epoch, bytes32 poolId) external view returns (uint256) {
+    function getEpochPoolSubsidies(uint128 epoch, uint128 poolId) external view returns (uint256) {
         return _epochPoolSubsidies[epoch][poolId];
     }
 
@@ -1373,7 +1373,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param verifier The verifier address.
      * @return totalSubsidies The total subsidies for the pool and verifier and epoch.
      */
-    function getEpochPoolVerifierSubsidies(uint128 epoch, bytes32 poolId, address verifier) external view returns (uint256) {
+    function getEpochPoolVerifierSubsidies(uint128 epoch, uint128 poolId, address verifier) external view returns (uint256) {
         return _epochPoolVerifierSubsidies[epoch][poolId][verifier];
     }
 
@@ -1384,7 +1384,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param poolId The pool id.
      * @return feesAccrued The fees accrued for the pool and epoch.
      */
-    function getEpochPoolFeesAccrued(uint128 epoch, bytes32 poolId) external view returns (DataTypes.FeesAccrued memory) {
+    function getEpochPoolFeesAccrued(uint128 epoch, uint128 poolId) external view returns (DataTypes.FeesAccrued memory) {
         return _epochPoolFeesAccrued[epoch][poolId];
     }
 
@@ -1411,7 +1411,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param poolId The pool id.
      * @return isWhitelisted True if the pool is whitelisted, false otherwise.
      */
-    function checkIfPoolIsWhitelisted(bytes32 poolId) external view returns (bool) {
+    function checkIfPoolIsWhitelisted(uint128 poolId) external view returns (bool) {
         return _votingPools[poolId];
     }
 
