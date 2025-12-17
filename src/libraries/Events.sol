@@ -84,62 +84,61 @@ library Events {
 // --------- VotingController.sol ---------
     
     // createPool(), removePool()
-    event PoolCreated(uint128 indexed poolId);
-    event PoolRemoved(uint128 indexed poolId);
+    event PoolsCreated(uint128 indexed startPoolId, uint128 indexed endPoolId, uint128 count);
+    event PoolsRemoved(uint128[] poolIds, uint128 votesToRemove);
 
     // vote(), migrateVotes()
-    event Voted(uint128 indexed epoch, address indexed caller, uint128[] poolIds, uint128[] votes, bool isDelegated);
-    event VotesMigrated(uint128 indexed epoch, address indexed caller, uint128[] srcPoolIds, uint128[] dstPoolIds, uint128[] votes, bool isDelegated);
+    event Voted(uint128 indexed epoch, address indexed account, uint128[] poolIds, uint128[] votes, bool isDelegated);
+    event VotesMigrated(uint128 indexed epoch, address indexed account, uint128[] srcPoolIds, uint128[] dstPoolIds, uint128[] votes, bool isDelegated);
     
     // delegate
-    event DelegateRegistered(address indexed delegate, uint256 feePct);
+    event DelegateRegistered(address indexed delegate, uint128 feePct);
     event DelegateUnregistered(address indexed delegate);
     event DelegateFeeDecreased(address indexed delegate, uint128 currentFeePct, uint128 newFeePct);
     event DelegateFeeIncreased(address indexed delegate, uint128 currentFeePct, uint128 newFeePct, uint128 nextFeePctEpoch);
+    event DelegateFeeApplied(address indexed delegate, uint128 oldFeePct, uint128 newFeePct, uint128 currentEpoch);
 
     
-    // voterClaimRewards
-    event RewardsClaimed(address indexed caller, uint128 epoch, uint128[] poolIds, uint128 totalClaimableRewards);
-    // claimDelegateFees
-    event RewardsClaimedFromDelegate(uint128 indexed epoch, address indexed caller, address indexed delegate, uint128[] poolIds, uint128 totalClaimableRewards);
-    // claimRewardsFromDelegate
-    event RewardsClaimedFromDelegateBatch(uint128 indexed epoch, address indexed caller, address[] delegateList, uint128[][] poolIdsPerDelegate, uint128 userTotalNetRewards);
-    event DelegateFeesClaimed(uint128 indexed epoch, address indexed delegate, uint128 feesClaimed);
-    // delegateClaimFeesFromDelegators
-    event RewardsForceClaimedByDelegate(uint128 indexed epoch, address indexed delegator, address indexed delegate, uint128[] poolIds, uint128 totalClaimableRewards);
+    // claimPersonalRewards()
+    event RewardsClaimed(address indexed user, uint128 indexed epoch, uint128[] poolIds, uint128 totalClaimableRewards);
+    // claimRewardsFromDelegates()
+    event RewardsClaimedFromDelegates(uint128 indexed epoch, address indexed user, address[] delegateList, uint128[][] poolIds, uint128 totalClaimableRewards);
+
+    // claimDelegateFees()
+    event DelegateFeesClaimed(uint128 indexed epoch, address indexed delegate, address[] delegators, uint128[][] poolIds, uint128 totalClaimableDelegateFees);
 
     // claimSubsidies
     event SubsidiesClaimed(address indexed verifier, uint128 epoch, uint128[] poolIds, uint128 totalSubsidiesClaimed);
 
 
     // depositSubsidies
-    event SubsidiesDeposited(address indexed depositor, uint256 epoch, uint256 totalSubsidies);
     event SubsidiesSet(uint128 indexed epoch, uint128 totalSubsidies);
+    event SubsidiesDeposited(address indexed treasury, uint128 indexed epoch, uint128 totalSubsidies);
     // finalizeEpoch
     event PoolsProcessed(uint128 indexed epoch, uint128[] poolIds);
     event EpochFullyProcessed(uint128 indexed epoch);
     // depositRewards
     event RewardsSetForEpoch(uint128 indexed epoch, uint128 totalRewards);
     event RewardsDeposited(address indexed treasury, uint128 indexed epoch, uint128 totalRewards);
-
+    event EpochFinalized(uint128 indexed epoch);
 
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards & withdrawRegistrationFees
     event UnclaimedRewardsWithdrawn(address indexed treasury, uint128 indexed epoch, uint128 unclaimedRewards);
-    event UnclaimedSubsidiesWithdrawn(address indexed treasury, uint128 indexed epoch, uint256 unclaimedSubsidies);
-    event RegistrationFeesWithdrawn(address indexed treasury, uint256 claimableRegistrationFees);
+    event UnclaimedSubsidiesWithdrawn(address indexed treasury, uint128 indexed epoch, uint128 unclaimedSubsidies);
+    event RegistrationFeesWithdrawn(address indexed treasury, uint128 claimableRegistrationFees);
     
     // setEsMoca
-    event EsMocaUpdated(address oldEsMoca, address newEsMoca);
+    event EsMocaUpdated(address indexed oldEsMoca, address indexed newEsMoca);
     // setPaymentController
-    event PaymentControllerUpdated(address oldPaymentController, address newPaymentController);
+    event PaymentControllerUpdated(address indexed oldPaymentController, address indexed newPaymentController);
     // setVotingControllerTreasury
-    event VotingControllerTreasuryUpdated(address oldTreasuryAddress, address newTreasuryAddress);
+    event VotingControllerTreasuryUpdated(address indexed oldTreasuryAddress, address indexed newTreasuryAddress);
     // setDelegateRegistrationFee
-    event DelegateRegistrationFeeUpdated(uint128 newRegistrationFee);
+    event DelegateRegistrationFeeUpdated(uint128 indexed newRegistrationFee);
     // setMaxDelegateFeePct
-    event MaxDelegateFeePctUpdated(uint128 maxDelegateFeePct);
+    event MaxDelegateFeePctUpdated(uint128 indexed maxDelegateFeePct);
     // setFeeIncreaseDelayEpochs
-    event FeeIncreaseDelayEpochsUpdated(uint128 delayEpochs);
+    event FeeIncreaseDelayEpochsUpdated(uint128 indexed delayEpochs);
     // setUnclaimedDelay
     event UnclaimedDelayUpdated(uint128 indexed oldDelay, uint128 indexed newDelay);
 

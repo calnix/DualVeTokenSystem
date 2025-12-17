@@ -73,8 +73,9 @@ library Errors {
 
 // --------- VotingController.sol ---------
     error EpochNotEnded();
-    error EpochFinalized();
     error EpochNotFinalized();
+    error EpochFinalized();
+    error EpochNotProcessed();
     error NoAvailableVotes();
     error ZeroVotes();
     error PoolNotActive();
@@ -99,6 +100,7 @@ library Errors {
     error NoSubsidiesForPool(); 
     error SubsidyAlreadyClaimed();
     // depositSubsidies
+    error PreviousEpochNotFinalized();
     error SubsidiesAlreadySet();
     error InsufficientSubsidies();
     //depositRewards

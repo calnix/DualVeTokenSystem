@@ -72,25 +72,25 @@ library DataTypes {
 
 
     struct Epoch {
-        uint128 totalVotes;
+        uint128 totalVotes;                      // votes in active pools only (for subsidy/rewards calculation)
         uint128 totalActivePools;                // set in depositEpochSubsidies()   
 
         // rewards + subsidies
         uint128 totalSubsidiesAllocated;         // set & deposited in depositEpochSubsidies()
-        uint128 totalRewardsAllocated;           // set in finalizeEpochRewardsSubsidies() & deposited in depositRewards()
+        uint128 totalRewardsAllocated;           // set in processEpochRewardsSubsidies() & deposited in finalizeEpoch()
 
         // claimed: esMOCA 
         uint128 totalRewardsClaimed;   
         uint128 totalSubsidiesClaimed;    
 
-        // unclaimed: withdrawn to treasury
+        // unclaimed: withdrawn to treasury [for record-keeping purposes]
         uint128 totalRewardsUnclaimed;   
         uint128 totalSubsidiesUnclaimed;     
 
         // epochEnd: flags
         bool isSubsidiesSet;            // set in depositEpochSubsidies()
         bool isFullyProcessed;          // set in processEpochRewardsSubsidies()
-        bool isEpochFinalized;          // set in depositRewards()
+        bool isEpochFinalized;          // set in finalizeEpoch()
         uint128 poolsProcessed;         // incremented in processEpochRewardsSubsidies()
 
         bool isRewardsWithdrawn;        // set in withdrawUnclaimedRewards()
@@ -99,22 +99,20 @@ library DataTypes {
     
     // Pool data [global]
     struct Pool {
-        //bytes32 poolId;         // poolId -> as a flag for pool existence
-        bool isActive;            // flag: indicates pool has been removed permanently
+        bool isActive;                        // flag: indicates pool is active
 
-        uint128 totalVotes;                      // total votes pool accrued throughout all epochs
-        uint128 totalRewardsAllocated;           // set in finalizeEpochRewardsSubsidies()
-        uint128 totalSubsidiesAllocated;         // set in finalizeEpochRewardsSubsidies()
+        uint128 totalVotes;                   // total votes pool accrued throughout all epochs
+        uint128 totalRewardsAllocated;        // set in processEpochRewardsSubsidies()
+        uint128 totalSubsidiesAllocated;      // set in processEpochRewardsSubsidies()
     }
 
     // pool data [epoch]
     struct PoolEpoch {
         uint128 totalVotes;
-        uint128 totalRewardsAllocated;           // set in finalizeEpochRewardsSubsidies()
-        uint128 totalSubsidiesAllocated;         // set in finalizeEpochRewardsSubsidies()
+        uint128 totalRewardsAllocated;           // set in processEpochRewardsSubsidies()
+        uint128 totalSubsidiesAllocated;         // set in processEpochRewardsSubsidies()
 
-        // flag for finalization
-        bool isProcessed;
+        bool isProcessed;                        // flag for finalization of pool
     }
 
     // global delegate data
@@ -127,7 +125,6 @@ library DataTypes {
 
         uint128 totalRewardsCaptured;      // total gross rewards accrued by delegate [from delegated votes]
         uint128 totalFeesAccrued;          // total fees accrued by delegate
-        uint128 totalFeesClaimed;          // total fees claimed by delegate
     }
 
 
