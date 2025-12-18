@@ -469,11 +469,8 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // cache epoch pointer
         DataTypes.Epoch storage epochPtr = epochs[epoch];
 
-        // epoch must be finalized
-        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
-
-        // rewards must not have been withdrawn for this epoch
-        require(!epochPtr.isRewardsWithdrawn, Errors.RewardsAlreadyWithdrawn());
+        // assert: epoch is finalized and rewards not withdrawn
+        _assertRewardsClaimWindow(epochPtr);
 
 
         uint128 userTotalRewards;
@@ -540,11 +537,8 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // cache epoch pointer
         DataTypes.Epoch storage epochPtr = epochs[epoch];
 
-        // check: epoch is finalized
-        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
-        
-        // check: rewards have not been withdrawn for this epoch
-        require(!epochPtr.isRewardsWithdrawn, Errors.RewardsAlreadyWithdrawn());
+        // assert: epoch is finalized and rewards not withdrawn
+        _assertRewardsClaimWindow(epochPtr);
 
         
         uint128 totalClaimable;
@@ -595,11 +589,8 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // cache epoch pointer
         DataTypes.Epoch storage epochPtr = epochs[epoch];
 
-        // check: epoch is finalized
-        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
-
-        // check: rewards have not been withdrawn for this epoch
-        require(!epochPtr.isRewardsWithdrawn, Errors.RewardsAlreadyWithdrawn());
+        // assert: epoch is finalized and rewards not withdrawn
+        _assertRewardsClaimWindow(epochPtr);
         
         // delegate must have voted in this epoch to claim fees
         require(delegateEpochData[epoch][msg.sender].totalVotesSpent > 0, Errors.NoFeesToClaim());
@@ -653,12 +644,10 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
         require(numOfPools > 0, Errors.InvalidArray());
         require(verifier != address(0), Errors.InvalidAddress());
 
-        // Epoch must be finalized
-        require(epochs[epoch].isEpochFinalized, Errors.EpochNotFinalized());
+        DataTypes.Epoch storage epochPtr = epochs[epoch];
 
-        // Subsidies must not have been withdrawn for this epoch
-        require(!epochs[epoch].isSubsidiesWithdrawn, Errors.SubsidiesAlreadyWithdrawn());
-
+        // assert: epoch is finalized and subsidies not withdrawn
+        _assertSubsidyClaimWindow(epochPtr);
 
         uint128 totalSubsidiesClaimed; 
         for (uint256 i; i < numOfPools; ++i) {
@@ -679,8 +668,13 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
             // skip if poolAccruedSubsidies == 0 [also implies that verifierAccruedSubsidies == 0]
             if(poolAccruedSubsidies == 0) continue;
             
+            // safety check: verifierAccruedSubsidies <= poolAccruedSubsidies [in case PC misbehaves]
+            require(verifierAccruedSubsidies <= poolAccruedSubsidies, Errors.VerifierAccruedSubsidiesGreaterThanPool());
+            
+
             // calculate ratio and rebase it to 18dp in single step [ratio is in 18dp precision]
             uint256 ratio = (verifierAccruedSubsidies * 1E18) / poolAccruedSubsidies; 
+            
 
             // Safe downcast: ratio ∈ [0, 1e18] since verifierAccrued ≤ poolAccrued by definition.
             // therefore: (ratio * poolAllocatedSubsidies) / 1e18 ≤ poolAllocatedSubsidies (uint128)
@@ -704,7 +698,7 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
         // update global & epoch total claimed
         TOTAL_SUBSIDIES_CLAIMED += totalSubsidiesClaimed;
-        epochs[epoch].totalSubsidiesClaimed += totalSubsidiesClaimed;
+        epochPtr.totalSubsidiesClaimed += totalSubsidiesClaimed;
         
         emit Events.SubsidiesClaimed(verifier, epoch, poolIds, totalSubsidiesClaimed);
 
@@ -987,11 +981,15 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
     // force finalize an epoch in case of any unexpected conditions
     function forceFinalizeEpoch(uint128 epoch) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        // block claiming
+        epochs[epoch].isRewardsWithdrawn = true;
+        epochs[epoch].isSubsidiesWithdrawn = true;
 
+        // force finalize epoch: to allow next epoch to continue normally        
         epochs[epoch].isSubsidiesSet = true;
         epochs[epoch].isFullyProcessed = true;
         epochs[epoch].isEpochFinalized = true;
-        emit Events.EpochFinalized(epoch); 
+        emit Events.EpochForceFinalized(epoch); 
     }
 
 //------------------------------- AssetManager Role: withdrawUnclaimedRewards, withdrawUnclaimedSubsidies -----------------------------------------
@@ -1351,6 +1349,135 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
         return totalClaimable;
     }
 
+    // calc. in uint256 space to avoid overflow, then downcasted to uint128
+    function _mulDiv(uint128 multiplicand, uint128 multiplier, uint128 divisor) internal pure returns (uint128) {
+        if (multiplicand == 0 || multiplier == 0 || divisor == 0) return 0;
+        return uint128((uint256(multiplicand) * multiplier) / divisor);
+    }
+
+    function _assertRewardsClaimWindow(DataTypes.Epoch storage epochPtr) internal view {
+        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
+        require(!epochPtr.isRewardsWithdrawn, Errors.RewardsAlreadyWithdrawn());
+    }
+
+    function _assertSubsidyClaimWindow(DataTypes.Epoch storage epochPtr) internal view {
+        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
+        require(!epochPtr.isSubsidiesWithdrawn, Errors.SubsidiesAlreadyWithdrawn());
+    }
+
+    function _previewPersonalRewards(uint128 epoch, address user, uint128[] calldata poolIds) internal view returns (uint128, uint128[] memory) {
+        uint256 numOfPools = poolIds.length;
+        
+        // counters
+        uint128 totalClaimable;
+        uint128[] memory perPoolClaimable = new uint128[](numOfPools);
+
+        for (uint256 i; i < numOfPools; ++i) {
+            uint128 poolId = poolIds[i];
+            DataTypes.Account storage accountPtr = usersEpochPoolData[epoch][poolId][user];
+
+            if (accountPtr.totalRewards != 0) continue; // skip: already claimed 
+
+            DataTypes.PoolEpoch storage poolEpochPtr = epochPools[epoch][poolId];
+            uint128 claimable = _mulDiv(
+                accountPtr.totalVotesSpent,
+                poolEpochPtr.totalRewardsAllocated,
+                poolEpochPtr.totalVotes
+            );
+
+            if (claimable == 0) continue; // skip: no rewards
+
+            perPoolClaimable[i] = claimable;
+            totalClaimable += claimable;
+        }
+        
+        return (totalClaimable, perPoolClaimable);
+    }
+
+    function _previewDelegationRewards(uint128 epoch, address user, address delegate, uint128[] calldata poolIds) internal view returns (uint128, uint128) {
+        DataTypes.UserDelegateAccount storage pairAccountPtr = userDelegateAccounting[epoch][user][delegate];
+        uint128 totalNet = pairAccountPtr.totalNetRewards;
+        uint128 totalFees = pairAccountPtr.totalDelegateFees;
+        
+        // counters
+        uint128 netClaimable; 
+        uint128 feeClaimable;
+
+        if (poolIds.length > 0) {
+            uint128 userDelegatedVP = VEMOCA.getSpecificDelegatedBalanceAtEpochEnd(user, delegate, epoch);
+            uint128 delegateTotalVP = VEMOCA.balanceAtEpochEnd(delegate, epoch, true);
+
+            if (userDelegatedVP > 0 && delegateTotalVP > 0) {
+                (uint128 grossDelta, uint128 feeDelta) = _simulateDelegationProcessing(
+                    epoch,
+                    delegate,
+                    poolIds,
+                    pairAccountPtr,
+                    userDelegatedVP,
+                    delegateTotalVP
+                );
+
+                if (grossDelta > 0) {
+                    totalNet += (grossDelta - feeDelta);
+                    totalFees += feeDelta;
+                }
+            }
+        }
+
+        if (totalNet > pairAccountPtr.userClaimed) {
+            netClaimable = totalNet - pairAccountPtr.userClaimed;
+        }
+
+        if (totalFees > pairAccountPtr.delegateClaimed) {
+            feeClaimable = totalFees - pairAccountPtr.delegateClaimed;
+        }
+
+        return (netClaimable, feeClaimable);
+    }
+
+    function _simulateDelegationProcessing(
+        uint128 epoch, address delegate, uint128[] calldata poolIds, 
+        DataTypes.UserDelegateAccount storage pairAccountPtr, 
+        uint128 userDelegatedVP, uint128 delegateTotalVP
+    ) internal view returns (uint128, uint128) {
+
+        uint256 numOfPools = poolIds.length;
+        uint128 delegateFeePct = delegateHistoricalFeePcts[delegate][epoch];
+
+        // counters
+        uint128 grossDelta;
+        uint128 feeDelta;
+
+        for (uint256 i; i < numOfPools; ++i) {
+            uint128 poolId = poolIds[i];
+
+            if (pairAccountPtr.poolProcessed[poolId]) continue;
+
+            DataTypes.Account storage delegatePoolAccountPtr = delegatesEpochPoolData[epoch][poolId][delegate];
+            uint128 delegatePoolVotes = delegatePoolAccountPtr.totalVotesSpent;
+            if (delegatePoolVotes == 0) continue;
+
+            DataTypes.PoolEpoch storage poolEpochPtr = epochPools[epoch][poolId];
+            uint128 totalPoolVotes = poolEpochPtr.totalVotes;
+            uint128 totalPoolRewards = poolEpochPtr.totalRewardsAllocated;
+            if (totalPoolVotes == 0 || totalPoolRewards == 0) continue;
+
+            uint128 delegatePoolRewards = delegatePoolAccountPtr.totalRewards;
+            if (delegatePoolRewards == 0) {
+                delegatePoolRewards = _mulDiv(delegatePoolVotes, totalPoolRewards, totalPoolVotes);
+                if (delegatePoolRewards == 0) continue;
+            }
+
+            uint128 userGrossRewardsForPool = _mulDiv(userDelegatedVP, delegatePoolRewards, delegateTotalVP);
+            if (userGrossRewardsForPool == 0) continue;
+
+            grossDelta += userGrossRewardsForPool;
+            feeDelta += _mulDiv(userGrossRewardsForPool, delegateFeePct, uint128(Constants.PRECISION_BASE));
+        }
+
+        return (grossDelta, feeDelta);
+    }
+
 //------------------------------- Risk functions----------------------------------------------------------
 
     /**
@@ -1407,291 +1534,90 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
 //------------------------------- View functions ----------------------------------------------------------
     
-    /**
-     * @notice Returns the claimable personal rewards for a user across multiple pools.
-     * @dev Returns 0 for pools already claimed or with no rewards.
-     * @param epoch The epoch to query.
-     * @param poolIds Array of pool IDs to check.
-     * @param user The user address.
-     * @return totalClaimable Total claimable rewards across all pools.
-     * @return perPoolClaimable Array of claimable amounts per pool (same order as poolIds).
-    */
     function viewClaimablePersonalRewards(uint128 epoch, address user, uint128[] calldata poolIds) external view returns (uint128, uint128[] memory) {
         uint256 numOfPools = poolIds.length;
         require(numOfPools > 0, Errors.InvalidArray());
+        require(user != address(0), Errors.InvalidAddress());
 
-        // counters
-        uint128 totalClaimable;
-        uint128[] memory perPoolClaimable = new uint128[](numOfPools);      
+        DataTypes.Epoch storage epochPtr = epochs[epoch];
+        _assertRewardsClaimWindow(epochPtr);
 
-        // sanity check: epoch must be finalized and rewards not withdrawn
-        if (!epochs[epoch].isEpochFinalized || epochs[epoch].isRewardsWithdrawn) return (0, perPoolClaimable);
-       
-        // calculate claimable rewards for each pool
-        for (uint256 i; i < numOfPools; ++i) {
-            uint128 poolId = poolIds[i];
-            
-            // Skip if already claimed
-            if (usersEpochPoolData[epoch][poolId][user].totalRewards > 0) continue;
-            
-            uint128 poolRewards = epochPools[epoch][poolId].totalRewardsAllocated;
-            uint128 userVotes = usersEpochPoolData[epoch][poolId][user].totalVotesSpent;
-            
-            if (poolRewards == 0 || userVotes == 0) continue;
-            
-            uint128 poolTotalVotes = epochPools[epoch][poolId].totalVotes;
-            uint128 userRewards = uint128((uint256(userVotes) * poolRewards) / poolTotalVotes);
-            
-            perPoolClaimable[i] = userRewards;
-            totalClaimable += userRewards;
-        }
-
-        return (totalClaimable, perPoolClaimable);
+        return _previewPersonalRewards(epoch, user, poolIds);
     }
 
-    /**
-     * @notice Returns the claimable delegated rewards for a user from a specific delegate.
-     * @dev Mirrors the calculation logic in _claimRewardsInternal.
-     * @param epoch The epoch to query.
-     * @param user The delegator address.
-     * @param delegate The delegate address.
-     * @param poolIds Array of pool IDs to check.
-     * @return netClaimable Total net rewards claimable by user (after delegate fees).
-     * @return feeClaimable Total fees claimable by delegate.
-    */
-    function viewClaimableDelegatedRewards(uint128 epoch, address user, address delegate, uint128[] calldata poolIds) external view returns (uint128, uint128) {
-        
-        // sanity check: epoch must be finalized and rewards not withdrawn
-        if (!epochs[epoch].isEpochFinalized || epochs[epoch].isRewardsWithdrawn) return (0, 0);
-        
-        // sanity check: delegate must have voted in this epoch
-        if (delegateEpochData[epoch][delegate].totalVotesSpent == 0) return (0, 0);
-        
-        // get delegate fee percentage [0: if delegate did not vote this epoch, or has 0 feePct]
-        uint128 delegateFeePct = delegateHistoricalFeePcts[delegate][epoch];
-        // get user-delegate pair accounting
-        DataTypes.UserDelegateAccount storage pairAccount = userDelegateAccounting[epoch][user][delegate];
-        
-        // get delegate's total voting power
-        uint128 delegateTotalVP = VEMOCA.balanceAtEpochEnd(delegate, epoch, true);
-        if (delegateTotalVP == 0) return (0, 0);
-        
-        // get user's delegated voting power
-        uint128 userDelegatedVP = VEMOCA.getSpecificDelegatedBalanceAtEpochEnd(user, delegate, epoch);
-        if (userDelegatedVP == 0) return (0, 0);
-        
-        uint128 newGross;
-        uint128 newFees;
-        
-        for (uint256 i; i < poolIds.length; ++i) {
-            uint128 poolId = poolIds[i];
-            
-            // Skip if already processed for this user-delegate pair
-            if (pairAccount.poolProcessed[poolId]) continue;
-            
-            uint128 totalPoolRewards = epochPools[epoch][poolId].totalRewardsAllocated;
-            uint128 totalPoolVotes = epochPools[epoch][poolId].totalVotes;
-            if (totalPoolRewards == 0 || totalPoolVotes == 0) continue;
-            
-            // Get or calculate delegate's pool rewards (use cached if available)
-            DataTypes.Account storage delegatePoolAccountPtr = delegatesEpochPoolData[epoch][poolId][delegate];
-            uint128 delegatePoolRewards = delegatePoolAccountPtr.totalRewards;
-            
-            if (delegatePoolRewards == 0) {
-                // Not yet cached - calculate
-                uint128 delegatePoolVotes = delegatePoolAccountPtr.totalVotesSpent;
-                if (delegatePoolVotes == 0) continue;
-                
-                delegatePoolRewards = uint128((uint256(delegatePoolVotes) * totalPoolRewards) / totalPoolVotes);
-                if (delegatePoolRewards == 0) continue;
-            }
-            
-            uint128 userGross = uint128((uint256(userDelegatedVP) * delegatePoolRewards) / delegateTotalVP);
-            if (userGross == 0) continue;
-            
-            uint128 delegateFee = uint128((uint256(userGross) * delegateFeePct) / Constants.PRECISION_BASE);
-            
-            newGross += userGross;
-            newFees += delegateFee;
-        }
-        
-        // Add already-processed but unclaimed amounts
-        uint128 totalNet = pairAccount.totalNetRewards + (newGross - newFees);
-        uint128 totalFees = pairAccount.totalDelegateFees + newFees;
-        
-        uint128 netClaimable = totalNet - pairAccount.userClaimed;
-        uint128 feeClaimable = totalFees - pairAccount.delegateClaimed;
+    function viewClaimableDelegatedRewards(uint128 epoch, address user, address delegate, uint128[] calldata poolIds) external view returns (uint128 netClaimable, uint128 feeClaimable) {
+        require(user != address(0) && delegate != address(0), Errors.InvalidAddress());
 
-        return (netClaimable, feeClaimable);
+        DataTypes.Epoch storage epochPtr = epochs[epoch];
+        _assertRewardsClaimWindow(epochPtr);
+
+        if (delegateEpochData[epoch][delegate].totalVotesSpent == 0) {
+            return (0, 0);
+        }
+
+        (netClaimable, feeClaimable) = _previewDelegationRewards(epoch, user, delegate, poolIds);
     }
 
-    /**
-    * @notice Returns the claimable delegation fees for a delegate from multiple delegators.
-    */
-    function viewClaimableDelegationFees(uint128 epoch, address[] calldata delegators, uint128[][] calldata poolIds) external view returns (uint128 totalFeeClaimable, uint128[] memory perDelegatorFees) {
+    function viewClaimableDelegationFees(uint128 epoch, address[] calldata delegators, uint128[][] calldata poolIds) external view returns (uint128, uint128[] memory) {
         uint256 numOfDelegators = delegators.length;
         require(numOfDelegators > 0, Errors.InvalidArray());
         require(numOfDelegators == poolIds.length, Errors.MismatchedArrayLengths());
 
-        perDelegatorFees = new uint128[](numOfDelegators);
+        DataTypes.Epoch storage epochPtr = epochs[epoch];
+        _assertRewardsClaimWindow(epochPtr);
 
-        // sanity check: epoch must be finalized and rewards not withdrawn
-        if (!epochs[epoch].isEpochFinalized || epochs[epoch].isRewardsWithdrawn) {
-            return (0, perDelegatorFees);
-        }
+        require(delegateEpochData[epoch][msg.sender].totalVotesSpent > 0, Errors.NoFeesToClaim());
 
-        address delegate = msg.sender;
-
-        // delegate must have voted in this epoch
-        if (delegateEpochData[epoch][delegate].totalVotesSpent == 0) {
-            return (0, perDelegatorFees);
-        }
-
-        // get delegate's fee percentage and total voting power
-        uint128 delegateFeePct = delegateHistoricalFeePcts[delegate][epoch];
-        uint128 delegateTotalVP = VEMOCA.balanceAtEpochEnd(delegate, epoch, true);
-
-        if (delegateTotalVP == 0) return (0, perDelegatorFees);
+        // counters
+        uint128 totalFeeClaimable;
+        uint128[] memory perDelegatorFees = new uint128[](numOfDelegators);
 
         for (uint256 i; i < numOfDelegators; ++i) {
-            uint128 claimable = _calcDelegatorFeeClaimable(
-                epoch,
-                delegators[i],
-                delegate,
-                poolIds[i],
-                delegateFeePct,
-                delegateTotalVP
-            );
-            
-            perDelegatorFees[i] = claimable;
-            totalFeeClaimable += claimable;
+            address delegator = delegators[i];
+            require(delegator != address(0), Errors.InvalidAddress());
+
+            uint128[] calldata poolIdsForDelegator = poolIds[i];
+            if (poolIdsForDelegator.length == 0) continue;
+
+            (, uint128 feeClaimable) = _previewDelegationRewards(epoch, delegator, msg.sender, poolIdsForDelegator);
+            if (feeClaimable == 0) continue;
+
+            perDelegatorFees[i] = feeClaimable;
+            totalFeeClaimable += feeClaimable;
         }
 
         return (totalFeeClaimable, perDelegatorFees);
     }
 
-    /**
-    * @notice Calculates claimable fees for a single delegator-delegate pair
-    * @dev Internal helper to reduce stack depth in viewClaimableDelegationFees
-    */
-    function _calcDelegatorFeeClaimable(
-        uint128 epoch,
-        address delegator,
-        address delegate,
-        uint128[] calldata poolIdsForDelegator,
-        uint128 delegateFeePct,
-        uint128 delegateTotalVP
-    ) internal view returns (uint128) {
-        if (delegator == address(0)) return 0;
-        if (poolIdsForDelegator.length == 0) return 0;
 
-        // get delegator's delegated VP to this delegate
-        uint128 delegatorVP = VEMOCA.getSpecificDelegatedBalanceAtEpochEnd(delegator, delegate, epoch);
-        if (delegatorVP == 0) return 0;
-
-        // get user-delegate pair accounting
-        DataTypes.UserDelegateAccount storage pairAccount = userDelegateAccounting[epoch][delegator][delegate];
-
-        uint128 newFeesForDelegator;
-
-        for (uint256 j; j < poolIdsForDelegator.length; ++j) {
-            uint128 poolId = poolIdsForDelegator[j];
-
-            // Skip if already processed for this user-delegate pair
-            if (pairAccount.poolProcessed[poolId]) continue;
-
-            uint128 totalPoolRewards = epochPools[epoch][poolId].totalRewardsAllocated;
-            uint128 totalPoolVotes = epochPools[epoch][poolId].totalVotes;
-            if (totalPoolRewards == 0 || totalPoolVotes == 0) continue;
-
-            // Get or calculate delegate's pool rewards
-            uint128 delegatePoolRewards = _getDelegatePoolRewards(epoch, poolId, delegate, totalPoolRewards, totalPoolVotes);
-            if (delegatePoolRewards == 0) continue;
-
-            uint128 delegatorGross = uint128((uint256(delegatorVP) * delegatePoolRewards) / delegateTotalVP);
-            if (delegatorGross == 0) continue;
-
-            uint128 delegateFee = uint128((uint256(delegatorGross) * delegateFeePct) / Constants.PRECISION_BASE);
-            newFeesForDelegator += delegateFee;
-        }
-
-        // Add already-processed but unclaimed fees
-        uint128 totalFeesFromDelegator = pairAccount.totalDelegateFees + newFeesForDelegator;
-        return totalFeesFromDelegator - pairAccount.delegateClaimed;
-    }
-
-    /**
-    * @notice Gets delegate's rewards for a pool (cached or calculated)
-    */
-    function _getDelegatePoolRewards(
-        uint128 epoch,
-        uint128 poolId,
-        address delegate,
-        uint128 totalPoolRewards,
-        uint128 totalPoolVotes
-    ) internal view returns (uint128) {
-        DataTypes.Account storage delegatePoolAccountPtr = delegatesEpochPoolData[epoch][poolId][delegate];
-        uint128 delegatePoolRewards = delegatePoolAccountPtr.totalRewards;
-
-        if (delegatePoolRewards == 0) {
-            uint128 delegatePoolVotes = delegatePoolAccountPtr.totalVotesSpent;
-            if (delegatePoolVotes == 0) return 0;
-
-            delegatePoolRewards = uint128((uint256(delegatePoolVotes) * totalPoolRewards) / totalPoolVotes);
-        }
-
-        return delegatePoolRewards;
-    }
-
-    /**
-     * @notice Returns the claimable subsidies for a verifier across multiple pools.
-     * @dev Mirrors the calculation logic in claimSubsidies().
-     * @param epoch The epoch to query.
-     * @param poolIds Array of pool IDs to check.
-     * @param verifier The verifier address.
-     * @return totalClaimable Total claimable subsidies across all pools.
-     * @return perPoolClaimable Array of claimable amounts per pool (same order as poolIds).
-    */
-    function viewClaimableSubsidies(uint128 epoch, uint128[] calldata poolIds, address verifier) external view returns (uint128 totalClaimable, uint128[] memory perPoolClaimable) {
+    function viewClaimableSubsidies(uint128 epoch, uint128[] calldata poolIds, address verifier) external view returns (uint128, uint128[] memory) {
         uint256 numOfPools = poolIds.length;
         require(numOfPools > 0, Errors.InvalidArray());
+        require(verifier != address(0), Errors.InvalidAddress());
 
-        perPoolClaimable = new uint128[](numOfPools);
+        DataTypes.Epoch storage epochPtr = epochs[epoch];
+        _assertSubsidyClaimWindow(epochPtr);
 
-        // sanity check: verifier address is valid
-        if (verifier == address(0)) return (0, perPoolClaimable);
-
-        // epoch must be finalized
-        if (!epochs[epoch].isEpochFinalized) return (0, perPoolClaimable);
-
-        // subsidies must not have been withdrawn for this epoch
-        if (epochs[epoch].isSubsidiesWithdrawn) return (0, perPoolClaimable);
+        // counters
+        uint128 totalClaimable;
+        uint128[] memory perPoolClaimable = new uint128[](numOfPools);
 
         for (uint256 i; i < numOfPools; ++i) {
             uint128 poolId = poolIds[i];
 
-            // pool must have subsidies allocated
+            if (verifierEpochPoolSubsidies[epoch][poolId][verifier] != 0) continue;
+
             uint128 poolAllocatedSubsidies = epochPools[epoch][poolId].totalSubsidiesAllocated;
             if (poolAllocatedSubsidies == 0) continue;
 
-            // verifier must not have already claimed subsidies for this pool
-            if (verifierEpochPoolSubsidies[epoch][poolId][verifier] > 0) continue;
+            (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) =
+                PAYMENTS_CONTROLLER.getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifier, msg.sender);
 
-            // get verifier's accrued subsidies for {pool, epoch} & pool's accrued subsidies
-            // Note: This is a view function, so we can't verify msg.sender is asset manager
-            // We just show what WOULD be claimable if the correct caller invoked claimSubsidies
-            (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) = 
-                _getVerifierAndPoolSubsidiesView(epoch, poolId, verifier);
+            if (poolAccruedSubsidies == 0 || verifierAccruedSubsidies == 0) continue;
+            require(verifierAccruedSubsidies <= poolAccruedSubsidies, Errors.VerifierAccruedSubsidiesGreaterThanPool());
 
-            // skip if poolAccruedSubsidies == 0
-            if (poolAccruedSubsidies == 0) continue;
-
-            // calculate ratio and rebase it to 18dp in single step
             uint256 ratio = (verifierAccruedSubsidies * 1E18) / poolAccruedSubsidies;
-
-            // Calculate esMoca subsidy receivable
             uint128 subsidyReceivable = uint128((ratio * poolAllocatedSubsidies) / 1E18);
-
             if (subsidyReceivable == 0) continue;
 
             perPoolClaimable[i] = subsidyReceivable;
@@ -1701,19 +1627,4 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
         return (totalClaimable, perPoolClaimable);
     }
 
-    /**
-     * @notice Internal view helper to get verifier and pool subsidies without caller validation.
-     * @dev Used by viewClaimableSubsidies to avoid revert on caller check.
-     * @param epoch The epoch number.
-     * @param poolId The pool ID.
-     * @param verifier The verifier address.
-     * @return verifierAccruedSubsidies The verifier's accrued subsidies.
-     * @return poolAccruedSubsidies The pool's total accrued subsidies.
-    */
-    function _getVerifierAndPoolSubsidiesView(uint128 epoch, uint128 poolId, address verifier) internal view returns (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) {
-        // Direct call to PaymentsController's internal view data
-        // Note: This bypasses the caller check in getVerifierAndPoolAccruedSubsidies
-        verifierAccruedSubsidies = PAYMENTS_CONTROLLER.getEpochPoolVerifierSubsidies(epoch, poolId, verifier);
-        poolAccruedSubsidies = PAYMENTS_CONTROLLER.getEpochPoolSubsidies(epoch, poolId);
-    }
 }

@@ -103,10 +103,8 @@ library Events {
     event RewardsClaimed(address indexed user, uint128 indexed epoch, uint128[] poolIds, uint128 totalClaimableRewards);
     // claimRewardsFromDelegates()
     event RewardsClaimedFromDelegates(uint128 indexed epoch, address indexed user, address[] delegateList, uint128[][] poolIds, uint128 totalClaimableRewards);
-
     // claimDelegateFees()
     event DelegateFeesClaimed(uint128 indexed epoch, address indexed delegate, address[] delegators, uint128[][] poolIds, uint128 totalClaimableDelegateFees);
-
     // claimSubsidies
     event SubsidiesClaimed(address indexed verifier, uint128 epoch, uint128[] poolIds, uint128 totalSubsidiesClaimed);
 
@@ -121,6 +119,8 @@ library Events {
     event RewardsSetForEpoch(uint128 indexed epoch, uint128 totalRewards);
     event RewardsDeposited(address indexed treasury, uint128 indexed epoch, uint128 totalRewards);
     event EpochFinalized(uint128 indexed epoch);
+    // forceFinalizeEpoch
+    event EpochForceFinalized(uint128 indexed epoch);
 
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards & withdrawRegistrationFees
     event UnclaimedRewardsWithdrawn(address indexed treasury, uint128 indexed epoch, uint128 unclaimedRewards);

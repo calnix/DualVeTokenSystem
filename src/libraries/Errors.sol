@@ -99,6 +99,7 @@ library Errors {
     error NoVotesInPool();
     error NoSubsidiesForPool(); 
     error SubsidyAlreadyClaimed();
+    error VerifierAccruedSubsidiesGreaterThanPool();
     // depositSubsidies
     error PreviousEpochNotFinalized();
     error SubsidiesAlreadySet();
