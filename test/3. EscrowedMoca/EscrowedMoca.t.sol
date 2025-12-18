@@ -14,7 +14,7 @@ abstract contract StateT0_Deploy is TestingHarness {
 
 contract StateT0_Deploy_Test is StateT0_Deploy {
 
-    function test_Constructor() public {
+    function test_Constructor() public view {
         // Check treasury address
         assertEq(esMoca.ESCROWED_MOCA_TREASURY(), esMocaTreasury, "ESCROWED_MOCA_TREASURY not set correctly");
         // Check evenwMoca address
@@ -858,7 +858,7 @@ contract StateT30Days_UserOneHasRedemptionScheduled_Test is StateT30Days_UserOne
 
     // --------- tests: claimPenalties() ---------
 
-        function test_CronJobHas_ClaimedPenalties_AssetsWithTreasury() public {
+        function test_CronJobHas_ClaimedPenalties_AssetsWithTreasury() public view {
             uint256 totalClaimable = esMoca.ACCRUED_PENALTY_TO_VOTERS() + esMoca.ACCRUED_PENALTY_TO_TREASURY();
 
             assertEq(esMoca.ACCRUED_PENALTY_TO_VOTERS(), esMoca.CLAIMED_PENALTY_FROM_VOTERS());

@@ -16,7 +16,7 @@ abstract contract StateT0_Deploy is TestingHarness {
 
 contract StateT0_DeployAndCreateSubsidyTiers_Test is StateT0_Deploy {
     
-    function test_Deploy() public {
+    function test_Deploy() public view {
         // Check all initialized addresses
         assertEq(address(paymentsController.USD8()), address(mockUSD8), "USD8 not set correctly");
         assertEq(address(paymentsController.WMOCA()), address(mockWMoca), "WMoca not set correctly");
@@ -553,7 +553,7 @@ contract StateT1_CreateIssuerVerifiers_Test is StateT1_CreateIssuerVerifiers {
         assertEq(schema.nextFeeTimestamp, 0, "Next fee timestamp should be 0 for new schema");
         assertEq(schema.totalVerified, 0, "totalVerified should be 0");
         assertEq(schema.totalGrossFeesAccrued, 0, "totalGrossFeesAccrued should be 0");
-        assertEq(schema.poolId, bytes32(0), "poolId should be 0");
+        assertEq(schema.poolId, uint128(0), "poolId should be 0");
 
         // totalSchemas incremented for issuer
         DataTypes.Issuer memory issuer = paymentsController.getIssuer(issuer1);
@@ -592,14 +592,14 @@ abstract contract StateT2_CreateSchemas is StateT1_CreateIssuerVerifiers {
 
 contract StateT2_CreateSchemas_Test is StateT2_CreateSchemas {
 
-    function test_VerifyCreatedSchemas() public {
+    function test_VerifyCreatedSchemas() public view {
         // verify issuer storage state: totalSchemas should be 1
         assertEq(paymentsController.getIssuer(issuer1).totalSchemas, 1, "totalSchemas should be 1");
         assertEq(paymentsController.getIssuer(issuer2).totalSchemas, 1, "totalSchemas should be 1");
         assertEq(paymentsController.getIssuer(issuer3).totalSchemas, 1, "totalSchemas should be 1");
     }
 
-    function testSchema1_StorageState() public {
+    function testSchema1_StorageState() public view {
         DataTypes.Schema memory schema = paymentsController.getSchema(schemaId1);
      
         assertEq(schema.issuer, issuer1, "Issuer ID not stored correctly");
@@ -608,7 +608,7 @@ contract StateT2_CreateSchemas_Test is StateT2_CreateSchemas {
         assertEq(schema.nextFeeTimestamp, 0, "Next fee timestamp should be 0 for new schema");
     }
 
-    function testSchema2_StorageState() public {
+    function testSchema2_StorageState() public view {
         DataTypes.Schema memory schema = paymentsController.getSchema(schemaId2);
         assertEq(schema.issuer, issuer2, "Issuer ID not stored correctly");
         assertEq(schema.currentFee, issuer2SchemaFee, "Current fee not stored correctly");
@@ -616,7 +616,7 @@ contract StateT2_CreateSchemas_Test is StateT2_CreateSchemas {
         assertEq(schema.nextFeeTimestamp, 0, "Next fee timestamp should be 0 for new schema");
     }
     
-    function testSchema3_StorageState() public {
+    function testSchema3_StorageState() public view {
         DataTypes.Schema memory schema = paymentsController.getSchema(schemaId3);
         assertEq(schema.issuer, issuer3, "Issuer ID not stored correctly");
         assertEq(schema.currentFee, issuer3SchemaFeeIsZero, "Current fee not stored correctly");
@@ -1542,15 +1542,15 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
     }
 
     function testRevert_PaymentsControllerAdmin_CannotUpdatePoolId_SchemaDoesNotExist() public {
-        bytes32 poolId1 = bytes32("123");
+        uint128 poolId1 = uint128(123);
         
         vm.expectRevert(Errors.InvalidSchema.selector);
         vm.prank(paymentsControllerAdmin);
-        paymentsController.updatePoolId(bytes32(0), poolId1);
+        paymentsController.updatePoolId(bytes32("999"), poolId1);
     }
 
     function testRevert_PaymentsControllerAdmin_CannotUpdatePoolId_PoolNotWhitelisted() public {
-        bytes32 poolId1 = bytes32("123");
+        uint128 poolId1 = uint128(123);
         
         vm.expectRevert(Errors.PoolNotWhitelisted.selector);
         vm.prank(paymentsControllerAdmin);
@@ -1558,7 +1558,7 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
     }
 
     function test_PaymentsControllerAdmin_CanUpdatePoolId_PoolWhitelisted() public {
-        bytes32 poolId1 = bytes32("123");
+        uint128 poolId1 = uint128(123);
 
         // ---- whitelist pool -----
         // event
@@ -1588,7 +1588,7 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
 
 // note: verifier1 stakes MOCA for subsidies & schema 1 is associated with pool1 [whitelisted]
 abstract contract StateT10_Verifier1StakeMOCA is StateT9_Issuer3CreatesSchemaWith0Fees {
-    bytes32 public poolId1 = bytes32("123");
+    uint128 public poolId1 = uint128(123);
         
     function setUp() public virtual override {
         super.setUp();
@@ -1720,13 +1720,13 @@ contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
         function testCannot_UpdatePoolId_WhenSchemaDoesNotExist() public {
             vm.expectRevert(Errors.InvalidSchema.selector);
             vm.prank(paymentsControllerAdmin);
-            paymentsController.updatePoolId(bytes32("456"), bytes32("123"));
+            paymentsController.updatePoolId(bytes32("456"), uint128(456));
         }
         
         function testCannot_UpdatePoolId_WhenCallerIsNotPaymentsControllerAdmin() public {
             vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, verifier1, paymentsController.PAYMENTS_CONTROLLER_ADMIN_ROLE()));
             vm.prank(verifier1);
-            paymentsController.updatePoolId(schemaId1, bytes32("123"));
+            paymentsController.updatePoolId(schemaId1, uint128(123));
         }
 
     //------------------------------ deductBalance should book subsidies for verifier ------------------------------
@@ -1832,8 +1832,8 @@ contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
 // note: verifier2 stakes MOCA for subsidies & schema 2 is associated with pool2 [whitelisted]
 // note: verifier3 stakes MOCA for subsidies & schema 3 is associated with pool3 [whitelisted]
 abstract contract StateT11_AllVerifiersStakedMOCA is StateT10_Verifier1StakeMOCA {
-    bytes32 public poolId2 = bytes32("234");
-    bytes32 public poolId3 = bytes32("345");
+    uint128 public poolId2 = uint128(234);
+    uint128 public poolId3 = uint128(345);
 
     function setUp() public virtual override {
         super.setUp();
@@ -2339,7 +2339,7 @@ abstract contract StateT15_PaymentsControllerAdminIncreasesProtocolFee is StateT
 
 contract StateT15_PaymentsControllerAdminIncreasesProtocolFee_Test is StateT15_PaymentsControllerAdminIncreasesProtocolFee {
     
-    function testCan_PaymentsControllerAdmin_UpdateProtocolFee() public {
+    function testCan_PaymentsControllerAdmin_UpdateProtocolFee() public view {
         uint256 updatedProtocolFee = paymentsController.PROTOCOL_FEE_PERCENTAGE();
         assertEq(updatedProtocolFee, newProtocolFee, "Protocol fee should be updated to new value"); 
     }
@@ -2507,7 +2507,7 @@ abstract contract StateT16_PaymentsControllerAdminIncreasesVotingFee is StateT15
 
 contract StateT16_PaymentsControllerAdminIncreasesVotingFee_Test is StateT16_PaymentsControllerAdminIncreasesVotingFee {
     
-    function testCan_PaymentsControllerAdmin_UpdateVotingFee() public {
+    function testCan_PaymentsControllerAdmin_UpdateVotingFee() public view {
         uint256 updatedVotingFee = paymentsController.VOTING_FEE_PERCENTAGE();
         assertEq(updatedVotingFee, newVotingFee, "Voting fee should be updated to new value");
     }
@@ -2703,7 +2703,7 @@ abstract contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercen
 
 contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test is StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage {
 
-    function testCan_PaymentsControllerAdmin_UpdateVerifierSubsidyPercentages() public {
+    function testCan_PaymentsControllerAdmin_UpdateVerifierSubsidyPercentages() public view {
         assertEq(paymentsController.getEligibleSubsidyPercentage(10 ether), newSubsidyPct, "Verifier subsidy percentage not updated correctly");    
     }
 
@@ -3004,7 +3004,7 @@ abstract contract StateT18_PaymentsControllerAdminIncreasesFeeIncreaseDelayPerio
 
 contract StateT18_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod_Test is StateT18_PaymentsControllerAdminIncreasesFeeIncreaseDelayPeriod {
 
-    function testCan_PaymentsControllerAdmin_UpdateFeeIncreaseDelayPeriod() public {
+    function testCan_PaymentsControllerAdmin_UpdateFeeIncreaseDelayPeriod() public view {
         assertEq(paymentsController.FEE_INCREASE_DELAY_PERIOD(), newDelayPeriod, "Fee increase delay period not updated correctly");
     }
 
@@ -3104,7 +3104,7 @@ abstract contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDe
 contract StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay_Test is StateT19_DeductBalanceCalledForSchema1AfterFeeIncreaseAndNewDelay {
     using stdStorage for StdStorage;
 
-    function testCan_Schema1_StorageState_AfterNewDelayPeriodAndFeeIncrease_BeforeDeductBalance() public {
+    function testCan_Schema1_StorageState_AfterNewDelayPeriodAndFeeIncrease_BeforeDeductBalance() public view {
         //record schema state - the new fee should not be active yet, as deductBalance has not been called
         DataTypes.Schema memory schemaBefore = paymentsController.getSchema(schemaId1);
         assertEq(schemaBefore.currentFee, issuer1IncreasedSchemaFee, "Current fee unchanged");
@@ -3505,7 +3505,7 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
             function test_updatePoolId_revertsWhenPaused() public {
                 vm.expectRevert(Pausable.EnforcedPause.selector);
                 vm.prank(paymentsControllerAdmin);
-                paymentsController.updatePoolId(schemaId1, bytes32("pool1"));
+                paymentsController.updatePoolId(schemaId1, uint128(123));
             }
 
             function test_updateFeeIncreaseDelayPeriod_revertsWhenPaused() public {

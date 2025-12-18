@@ -13,7 +13,6 @@ library DataTypes {
 // --------- PaymentsController.sol -------
 
     struct Issuer {
-        //address adminAddress;              // for interacting w/ contract 
         address assetManagerAddress;       // for claiming fees 
                 
         // credentials
@@ -27,7 +26,6 @@ library DataTypes {
     }
 
     struct Verifier {
-        //address adminAddress;           // msg.sender   
         address assetManagerAddress;    // used for both deposit/withdrawing fees + staking Moca
         address signerAddress;
 
@@ -59,6 +57,7 @@ library DataTypes {
         uint128 mocaStaked;           // minimum MOCA required for this tier
         uint128 subsidyPercentage;    // subsidy percentage for this tier
     }
+
     // epoch accounting: treasury + voters
     struct FeesAccrued {
         uint128 feesAccruedToProtocol;
@@ -69,7 +68,6 @@ library DataTypes {
     }
 
 // --------- VotingController.sol -------
-
 
     struct Epoch {
         uint128 totalVotes;                      // votes in active pools only (for subsidy/rewards calculation)
@@ -130,7 +128,7 @@ library DataTypes {
 
     // user/delegate data    [perEpoch][perPoolPerEpoch]
     struct Account {
-        uint128 totalVotesSpent;      // total votes spent by user [personal] || total votes spent by delegatee [delegated]
+        uint128 totalVotesSpent;       // total votes spent by user [personal] || total votes spent by delegatee [delegated]
         uint128 totalRewards;          // Total gross rewards earned [user get's everything, delegate's fee is based on this]
     }
 
@@ -153,6 +151,7 @@ library DataTypes {
 
 
 // --------- VotingEscrowMoca.sol -------
+
     struct Lock {
         address owner;              
         uint128 expiry;        // timestamp when lock ends

@@ -269,7 +269,7 @@ abstract contract StateT1_UpdateUnstakeDelay is StateT1_InitiateUnstake_Partial 
 
 contract StateT1_UpdateUnstakeDelay_Test is StateT1_UpdateUnstakeDelay {
 
-    function testVerifyState_UnstakeDelayUpdated() public {
+    function testVerifyState_UnstakeDelayUpdated() public view {
         assertEq(issuerStakingController.UNSTAKE_DELAY(), 1 days, "unstake delay not set correctly");
     }
 
@@ -355,7 +355,7 @@ abstract contract StateT2_InitiateUnstake_Full is StateT1_UpdateUnstakeDelay {
 
 contract StateT2_InitiateUnstake_Full_Test is StateT2_InitiateUnstake_Full {
 
-    function testVerifyState_Issuer1FullUnstaked() public {
+    function testVerifyState_Issuer1FullUnstaked() public view {
 
         // Check contract state
         assertEq(issuerStakingController.issuers(issuer1Asset), 0, "issuer's moca staked not zero after full unstake");
@@ -680,7 +680,7 @@ abstract contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmou
 
 contract StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount_Test is StateT604801_SetMaxSingleStakeAmount_ReducedMaxSingleStakeAmount {
  
-    function testVerifyState_ReducedMaxStakeAmount() public {
+    function testVerifyState_ReducedMaxStakeAmount() public view {
         assertEq(issuerStakingController.MAX_SINGLE_STAKE_AMOUNT(), 10 ether, "max single stake amount not set correctly after setMaxSingleStakeAmount");
     }
 
@@ -768,7 +768,7 @@ abstract contract StateT604801_Paused is StateT604801_SetMaxSingleStakeAmount_Re
 
 contract StateT604801_Paused_Test is StateT604801_Paused {
     
-    function testVerifyState_Paused() public {
+    function testVerifyState_Paused() public view {
         assertTrue(issuerStakingController.paused() == true, "contract should be paused after pause");
     }
 
@@ -855,7 +855,7 @@ abstract contract StateT604801_Unpaused is StateT604801_Paused {
 
 contract StateT604801_Unpaused_Test is StateT604801_Unpaused {
 
-    function testVerifyState_Unpaused() public {
+    function testVerifyState_Unpaused() public view {
         assertEq(issuerStakingController.paused(), false, "contract should be unpaused after unpause");
     }
 
@@ -916,7 +916,7 @@ abstract contract StateT604801_Paused_Again is StateT604801_Unpaused {
 
 contract StateT604801_Paused_Again_Test is StateT604801_Paused_Again {
 
-    function testVerifyState_Paused_Again() public {
+    function testVerifyState_Paused_Again() public view {
         assertEq(issuerStakingController.paused(), true, "contract should be paused after pause");
     }
 
@@ -974,7 +974,7 @@ abstract contract StateT604801_Frozen is StateT604801_Paused_Again {
 
 contract StateT604801_Frozen_Test is StateT604801_Frozen {
 
-    function testVerifyState_Frozen() public {
+    function testVerifyState_Frozen() public view {
         assertEq(issuerStakingController.paused(), true, "contract should be frozen after freeze");
         assertEq(issuerStakingController.isFrozen(), 1, "contract should be frozen after freeze");
     }

@@ -65,6 +65,7 @@ library Errors {
     error LockAlreadyDelegated();
     error InvalidEpochTime();
     error InvalidDelegate();
+    error DelegateNotRegistered();
     error LockNotDelegated();
     error LockExpiresTooSoon();
     error PrincipalsAlreadyReturned();

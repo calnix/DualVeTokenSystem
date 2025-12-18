@@ -120,7 +120,7 @@ library Events {
     event RewardsDeposited(address indexed treasury, uint128 indexed epoch, uint128 totalRewards);
     event EpochFinalized(uint128 indexed epoch);
     // forceFinalizeEpoch
-    event EpochForceFinalized(uint128 indexed epoch);
+    event EpochForceFinalized(uint128 indexed epoch, bool blockClaims);
 
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards & withdrawRegistrationFees
     event UnclaimedRewardsWithdrawn(address indexed treasury, uint128 indexed epoch, uint128 unclaimedRewards);

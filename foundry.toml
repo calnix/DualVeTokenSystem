@@ -16,7 +16,9 @@ ignored_warnings_from = ["test/**"]  # Suppress Solidity warnings from test file
 #depth = 15
 #fail_on_revert = false
 
-
+[profile.test]
+  ignored_error_codes = ["func-mutability"]
+  
 [lint]
     exclude_lints = ["mixed-case-function", "unwrapped-modifier-logic", "unsafe-typecast"]
     ignore = ['*.t.sol']

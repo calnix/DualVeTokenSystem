@@ -234,7 +234,7 @@ abstract contract DelegateHelper is Test, TestingHarness {
 
 // ================= CAPTURE FUNCTIONS =================
 
-    function captureTokensState(address user) internal returns (TokensSnapshot memory) {
+    function captureTokensState(address user) internal view returns (TokensSnapshot memory) {
         TokensSnapshot memory state;
         // user
         state.userMoca = uint128(user.balance);
@@ -1534,9 +1534,8 @@ abstract contract DelegateHelper is Test, TestingHarness {
     /// @notice Verifies state after cronjob applies pending deltas (E1->E2 transition)
     function verifyCronjobAppliedDelegation(
         UnifiedStateSnapshot memory beforeState,
-        UnifiedStateSnapshot memory afterState,
-        address user, address delegate
-    ) internal {
+        UnifiedStateSnapshot memory afterState
+    ) internal pure {
         // Verify pending deltas were cleared
         assertFalse(afterState.userState.userPendingDelta.hasSubtraction, "User pending cleared");
         assertFalse(afterState.targetDelegateState.delegatePendingDelta.hasAddition, "Delegate pending cleared");
@@ -1556,7 +1555,7 @@ abstract contract DelegateHelper is Test, TestingHarness {
         UnifiedStateSnapshot memory afterState,
         uint128 expectedBiasDelta,
         uint128 expectedSlopeDelta
-    ) internal {
+    ) internal pure {
         // ============ 1. User State (UNCHANGED) ============
         // Owner VP unchanged (still 0 for delegated lock)
         assertEq(afterState.userState.userCurrentVotingPower, 0, "Owner VP still 0");
@@ -1626,7 +1625,7 @@ abstract contract DelegateHelper is Test, TestingHarness {
         UnifiedStateSnapshot memory afterState,
         uint128 expectedBiasDelta,
         uint128 expectedSlopeDelta
-    ) internal {
+    ) internal pure {
         // ============ 1. User State (IMMEDIATE) ============
         // Owner gets immediate VP
         assertEq(

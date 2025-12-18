@@ -400,16 +400,16 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
             = _preDelegationChecksAndUpdates(lockId, action, delegate);
 
         if (action == DataTypes.DelegationType.Delegate) {
-            VeDelegationLib.executeDelegateLock(lockId, currentEpochStart, delegate, locks, userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges, userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate);
+            VeDelegationLib.executeDelegateLock(lockId, currentEpochStart, delegate, lock, locks, userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges, userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate);
         } 
 
         // delegate is new delegate
         if (action == DataTypes.DelegationType.Switch) {
-            VeDelegationLib.executeSwitchDelegateLock(lockId, currentEpochStart, delegate, locks, delegateSlopeChanges, delegatePendingDeltas, userDelegatedSlopeChanges, userPendingDeltasForDelegate);
+            VeDelegationLib.executeSwitchDelegateLock(lockId, currentEpochStart, delegate, lock, locks, delegateSlopeChanges, delegatePendingDeltas, userDelegatedSlopeChanges, userPendingDeltasForDelegate);
         } 
 
         if (action == DataTypes.DelegationType.Undelegate) {
-            VeDelegationLib.executeUndelegateLock(lockId, currentEpochStart, locks, userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges, userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate);
+            VeDelegationLib.executeUndelegateLock(lockId, currentEpochStart, lock, locks, userSlopeChanges, delegateSlopeChanges, userDelegatedSlopeChanges, userPendingDeltas, delegatePendingDeltas, userPendingDeltasForDelegate);
         }
     }
 
@@ -773,8 +773,6 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 
 //------------------------------ VotingController.sol functions------------------------------------------
     
-    // note combine to 1 -> update Voting Controller
-
     // require(delegate != address(0) not needed since external contract call
     // registration status is already checked in VotingController.sol
     function delegateRegistrationStatus(address delegate, bool toRegister) external whenNotPaused {

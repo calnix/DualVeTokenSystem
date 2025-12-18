@@ -123,7 +123,7 @@ contract StateE1_RegisterDelegate_User3_Test is StateE1_RegisterDelegate_User3 {
         veMoca.delegateRegistrationStatus(user1, true);
     }
 
-    function test_RegisterDelegate_Success() public {
+    function test_RegisterDelegate_Success() public view {
         assertTrue(veMoca.isRegisteredDelegate(user3), "User3 registered");
     }
 
@@ -908,7 +908,7 @@ contract StateE2_User1_Undelegates_Lock2_Test is StateE2_User1_Undelegates_Lock2
         verifyUndelegateLock(epoch2_BeforeUndelegate);
     }
 
-    function test_GlobalState() public {
+    function test_GlobalState() public view {
         // ============ Total Locked Amounts ============
         assertEq(veMoca.TOTAL_LOCKED_MOCA(), lock1_MocaAmount + lock2_MocaAmount, "Total MOCA = Lock1 + Lock2");
         assertEq(veMoca.TOTAL_LOCKED_ESMOCA(), lock1_EsMocaAmount + lock2_EsMocaAmount, "Total esMOCA = Lock1 + Lock2");
@@ -1123,7 +1123,7 @@ contract StateE2_User1_Undelegates_Lock2_Test is StateE2_User1_Undelegates_Lock2
         assertEq(pair13VPActual, lock1VPAtEpochEnd, "User1-User3 VP at E2 end = Lock1 VP");
     }
 
-    function test_VotingPowerConservation() public {
+    function test_VotingPowerConservation() public view {
         uint128 currentTimestamp = uint128(block.timestamp);
         
         // ============ Individual VP Checks ============
@@ -1282,7 +1282,7 @@ abstract contract StateE4_User1_Unlocks_Lock1 is StateE2_User1_Undelegates_Lock2
 
 contract StateE4_User1_Unlocks_Lock1_Test is StateE4_User1_Unlocks_Lock1 {
 
-    function test_GlobalState_MatchesLock2Only() public {
+    function test_GlobalState_MatchesLock2Only() public view {
         // ============ Total Locked Amounts ============
         // Only Lock2 remains in the system
         assertEq(veMoca.TOTAL_LOCKED_MOCA(), lock2_MocaAmount, "Total MOCA = Lock2 only");
@@ -1319,7 +1319,7 @@ contract StateE4_User1_Unlocks_Lock1_Test is StateE4_User1_Unlocks_Lock1 {
         assertTrue(lastUpdated < currentTimestamp, "veGlobal is stale");
     }
 
-    function test_Lock1_RemovedFromSystem() public {
+    function test_Lock1_RemovedFromSystem() public view {
         // ============ Lock1 State ============
         DataTypes.Lock memory lock1 = getLock(lock1_Id);
         
@@ -1344,7 +1344,7 @@ contract StateE4_User1_Unlocks_Lock1_Test is StateE4_User1_Unlocks_Lock1 {
         assertEq(esMoca.balanceOf(address(veMoca)), lock2_EsMocaAmount, "Contract esMOCA = Lock2 only");
     }
 
-    function test_User1_HasLock2PersonalVP() public {
+    function test_User1_HasLock2PersonalVP() public view {
         // User1 owns Lock2 (undelegated), should have personal VP
         uint128 currentTimestamp = uint128(block.timestamp);
         
@@ -1376,7 +1376,7 @@ contract StateE4_User1_Unlocks_Lock1_Test is StateE4_User1_Unlocks_Lock1 {
         assertEq(delegateSlope, 0, "User3 delegate history slope = 0");
     }
 
-    function test_User2_HasNoDelegations() public {
+    function test_User2_HasNoDelegations() public view {
         // Lock2 was never actually delegated to user2 (was pending, then undelegated)
         uint128 user2DelegatedVP = veMoca.balanceOfAt(user2, uint128(block.timestamp), true);
         assertEq(user2DelegatedVP, 0, "User2 has 0 delegated VP");

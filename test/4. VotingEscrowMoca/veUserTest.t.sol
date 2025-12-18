@@ -29,7 +29,7 @@ contract StateE1_Deploy_Test is StateE1_Deploy {
         new VotingEscrowMoca(address(0), address(esMoca), MOCA_TRANSFER_GAS_LIMIT, globalAdmin, votingEscrowMocaAdmin, monitorAdmin, cronJobAdmin, monitor, emergencyExitHandler);
     }
 
-    function test_Constructor() public {
+    function test_Constructor() public view {
         assertEq(veMoca.WMOCA(), address(mockWMoca), "WMOCA not set correctly");
         assertEq(address(veMoca.ESMOCA()), address(esMoca), "ESMOCA not set correctly");
         assertEq(veMoca.MOCA_TRANSFER_GAS_LIMIT(), MOCA_TRANSFER_GAS_LIMIT, "MOCA_TRANSFER_GAS_LIMIT not set correctly");
@@ -1029,7 +1029,7 @@ contract StateE3_User2_CreateLock3_Test is StateE3_User2_CreateLock3 {
         assertEq(getCurrentEpochNumber(), 3, "Current epoch number is 3");
     }
 
-    function test_Lock3_Created() public {
+    function test_Lock3_Created() public view {
         DataTypes.Lock memory lock3 = getLock(lock3_Id);
         assertEq(lock3.owner, user2, "Lock3 owner must be user2");
         assertEq(lock3.moca, lock3_MocaAmount, "Lock3 moca amount");
@@ -1044,7 +1044,7 @@ contract StateE3_User2_CreateLock3_Test is StateE3_User2_CreateLock3 {
         assertEq(lock3.expiry, uint128(getEpochEndTimestamp(6)), "Lock3 expiry must be at end of epoch 6");
     }
 
-    function test_User2_VotingPower() public {
+    function test_User2_VotingPower() public view {
         uint128 currentTimestamp = uint128(block.timestamp);
         uint128 user2VP = veMoca.balanceOfAt(user2, currentTimestamp, false);
         uint128 lock3VP = veMoca.getLockVotingPowerAt(lock3_Id, currentTimestamp);
@@ -1309,7 +1309,7 @@ contract StateE4_User1_UnlocksLock1_Test is StateE4_User1_UnlocksLock1 {
         assertEq(getCurrentEpochNumber(), 4, "Current epoch number is 4");
     }
 
-    function test_Lock1_IsUnlocked() public {
+    function test_Lock1_IsUnlocked() public view {
         DataTypes.Lock memory lock1 = getLock(lock1_Id);
         assertTrue(lock1.isUnlocked, "Lock1 must be unlocked");
         assertEq(lock1.moca, 0, "Lock1 moca must be 0");
@@ -1318,12 +1318,12 @@ contract StateE4_User1_UnlocksLock1_Test is StateE4_User1_UnlocksLock1 {
         assertEq(lock1.expiry, lock1_Expiry, "Lock1 expiry must be unchanged");
     }
 
-    function test_User1_ReceivedTokensBack() public {
+    function test_User1_ReceivedTokensBack() public view {
         assertEq(user1.balance, user1_MocaBalanceBeforeUnlock + lock1_MocaAmount, "User1 must receive MOCA back");
         assertEq(esMoca.balanceOf(user1), user1_EsMocaBalanceBeforeUnlock + lock1_EsMocaAmount, "User1 must receive esMOCA back");
     }
 
-    function test_GlobalTotals_Decreased() public {
+    function test_GlobalTotals_Decreased() public view {
         assertEq(
             veMoca.TOTAL_LOCKED_MOCA(),
             epoch4_BeforeUnlock.global.TOTAL_LOCKED_MOCA - lock1_MocaAmount,
@@ -1336,13 +1336,13 @@ contract StateE4_User1_UnlocksLock1_Test is StateE4_User1_UnlocksLock1 {
         );
     }
 
-    function test_Lock1_VotingPower_IsZero() public {
+    function test_Lock1_VotingPower_IsZero() public view {
         uint128 currentTimestamp = uint128(block.timestamp);
         uint128 lock1VP = veMoca.getLockVotingPowerAt(lock1_Id, currentTimestamp);
         assertEq(lock1VP, 0, "Lock1 voting power must be 0");
     }
 
-    function test_User1_VotingPower_OnlyFromLock2() public {
+    function test_User1_VotingPower_OnlyFromLock2() public view {
         uint128 currentTimestamp = uint128(block.timestamp);
         uint128 user1VP = veMoca.balanceOfAt(user1, currentTimestamp, false);
         uint128 lock2VP = veMoca.getLockVotingPowerAt(lock2_Id, currentTimestamp);
@@ -1351,7 +1351,7 @@ contract StateE4_User1_UnlocksLock1_Test is StateE4_User1_UnlocksLock1 {
         assertGt(user1VP, 0, "User1 must still have VP from lock2");
     }
 
-    function test_Lock2_And_Lock3_Unaffected() public {
+    function test_Lock2_And_Lock3_Unaffected() public view {
         DataTypes.Lock memory lock2 = getLock(lock2_Id);
         DataTypes.Lock memory lock3 = getLock(lock3_Id);
         
@@ -1841,7 +1841,7 @@ contract StateE4_FreezeContract_Test is StateE4_FreezeContract {
 
     // --- sanity checks ---
 
-        function test_ContractIsFrozen() public {
+        function test_ContractIsFrozen() public view {
             assertEq(veMoca.isFrozen(), 1, "Contract should be frozen");
             assertTrue(veMoca.paused(), "Contract should be paused");
         }

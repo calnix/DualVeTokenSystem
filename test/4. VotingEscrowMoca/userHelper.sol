@@ -179,7 +179,7 @@ abstract contract UserHelper is Test, TestingHarness {
 
 // ================= CAPTURE FUNCTIONS =================
 
-    function captureTokensState(address user) internal returns (TokensSnapshot memory) {
+    function captureTokensState(address user) internal view returns (TokensSnapshot memory) {
         TokensSnapshot memory state;
         // user
         state.userMoca = uint128(user.balance);
@@ -224,7 +224,7 @@ abstract contract UserHelper is Test, TestingHarness {
         return state;
     }
 
-    function captureLockState(bytes32 lockId) internal returns (LockStateSnapshot memory) {
+    function captureLockState(bytes32 lockId) internal view returns (LockStateSnapshot memory) {
         LockStateSnapshot memory state;
         state.lockId = lockId;
         state.lock = getLock(lockId);

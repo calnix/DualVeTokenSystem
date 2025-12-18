@@ -15,6 +15,7 @@ library VeDelegationLib {
 
     function executeDelegateLock(
         bytes32 lockId, uint128 currentEpochStart, address delegate,
+        DataTypes.Lock memory lock,
         mapping(bytes32 lockId => DataTypes.Lock lock) storage locks,
         mapping(address user => mapping(uint128 eTime => uint128 slopeChange)) storage userSlopeChanges,
         mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange)) storage delegateSlopeChanges,
@@ -23,9 +24,6 @@ library VeDelegationLib {
         mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas)) storage delegatePendingDeltas,
         mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) storage userPendingDeltasForDelegate
     ) external {
-
-        // get the lock
-        DataTypes.Lock memory lock = locks[lockId];
 
         uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
@@ -59,15 +57,13 @@ library VeDelegationLib {
 
     function executeSwitchDelegateLock(
         bytes32 lockId, uint128 currentEpochStart, address newDelegate,
+        DataTypes.Lock memory lock,
         mapping(bytes32 lockId => DataTypes.Lock lock) storage locks,
         mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange)) storage delegateSlopeChanges,
         mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas)) storage delegatePendingDeltas,
         mapping(address user => mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange))) storage userDelegatedSlopeChanges,
         mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) storage userPendingDeltasForDelegate
     ) external {
-
-        // get the lock
-        DataTypes.Lock memory lock = locks[lockId];
 
         uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 
@@ -110,6 +106,7 @@ library VeDelegationLib {
 
     function executeUndelegateLock(
         bytes32 lockId, uint128 currentEpochStart,
+        DataTypes.Lock memory lock,
         mapping(bytes32 lockId => DataTypes.Lock lock) storage locks,
         mapping(address user => mapping(uint128 eTime => uint128 slopeChange)) storage userSlopeChanges,
         mapping(address delegate => mapping(uint128 eTime => uint128 slopeChange)) storage delegateSlopeChanges, 
@@ -118,9 +115,6 @@ library VeDelegationLib {
         mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas)) storage delegatePendingDeltas,
         mapping(address user => mapping(address delegate => mapping(uint128 eTime => DataTypes.VeDeltas veDeltas))) storage userPendingDeltasForDelegate
     ) external {
-
-        // get the lock
-        DataTypes.Lock memory lock = locks[lockId];
 
         uint128 nextEpochStart = currentEpochStart + EpochMath.EPOCH_DURATION;
 

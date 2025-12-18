@@ -141,7 +141,7 @@ abstract contract StateE2_AdvanceEpoch is StateE1_Setup {
 // ================= PHASE 2 TESTS: Initial State After E2 =================
 contract StateE2_AdvanceEpoch_Test is StateE2_AdvanceEpoch {
 
-    function test_InitialState_E2() public {
+    function test_InitialState_E2() public view {
         // 1. Check all four locks
         _verifyLock(lock1_Id, user1, address(0), LOCK_AMOUNT, LOCK_AMOUNT, expiry);
         _verifyLock(lock2_Id, user1, user2, LOCK_AMOUNT, LOCK_AMOUNT, expiry);
