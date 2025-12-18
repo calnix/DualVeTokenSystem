@@ -494,7 +494,7 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
             uint128 poolTotalVotes = poolEpochPtr.totalVotes;
 
             // Calculate user's rewards for the pool [all in 1e18 precision]
-            uint128 userRewards = uint128((uint256(userVotes) * poolRewards) / poolTotalVotes);
+            uint128 userRewards = _mulDiv(userVotes, poolRewards, poolTotalVotes);
             if(userRewards == 0) continue;
             
             // Storage: set user's totalRewards for this pool
@@ -802,10 +802,11 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint128 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epoch);
         require(block.timestamp > epochEndTimestamp, Errors.EpochNotEnded());
 
-        // Current epoch must not be finalized
         DataTypes.Epoch storage epochPtr = epochs[epoch];
+        
+        // Current epoch must not be finalized
         require(!epochPtr.isEpochFinalized, Errors.EpochFinalized());
-
+        
         // Subsidies can only be set once per epoch
         require(!epochPtr.isSubsidiesSet, Errors.SubsidiesAlreadySet());
 
@@ -904,7 +905,7 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
             if(hasVotes) {
                 
                 // poolSubsidies = 0, if epochTotalSubsidiesAllocated = 0
-                uint128 poolSubsidies = uint128((uint256(poolVotes) * epochTotalSubsidiesAllocated) / epochTotalVotes);
+                uint128 poolSubsidies = _mulDiv(poolVotes, epochTotalSubsidiesAllocated, epochTotalVotes);
                 
                 // update pool & epochpool: totalSubsidiesAllocated
                 if(poolSubsidies > 0) { 
@@ -1292,7 +1293,7 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
             // if not previously calculated, compute
             if (delegatePoolRewards == 0) {
                 
-                delegatePoolRewards = uint128((uint256(delegatePoolVotes) * totalPoolRewards) / totalPoolVotes);
+                delegatePoolRewards = _mulDiv(delegatePoolVotes, totalPoolRewards, totalPoolVotes);
                 if (delegatePoolRewards == 0) continue;
                 
                 // store: delegate's rewards for this {pool, epoch} - done once, reused by subsequent callers
@@ -1300,14 +1301,14 @@ contract voting2 is Pausable, LowLevelWMoca, AccessControlEnumerable {
             }
            
             // calc. user's gross rewards for the pool
-            uint128 userGrossRewardsForPool = uint128((uint256(userDelegatedVP) * delegatePoolRewards) / delegateTotalVP);
+            uint128 userGrossRewardsForPool = _mulDiv(userDelegatedVP, delegatePoolRewards, delegateTotalVP);
             if (userGrossRewardsForPool == 0) continue;
             
             // book user's gross rewards for this {pool, epoch}
             pairAccountPtr.userPoolGrossRewards[poolId] = userGrossRewardsForPool;
             
             // calc. delegate's fee for this pool [could be 0 if delegate did not vote this epoch]
-            uint128 delegateFeeForPool = uint128((uint256(userGrossRewardsForPool) * delegateFeePct) / Constants.PRECISION_BASE);
+            uint128 delegateFeeForPool = _mulDiv(userGrossRewardsForPool, delegateFeePct, uint128(Constants.PRECISION_BASE));
             
             // update counters
             newGrossProcessed += userGrossRewardsForPool;
