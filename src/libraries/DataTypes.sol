@@ -73,7 +73,7 @@ library DataTypes {
     /* Lifecycle states for epoch finalization:
         Voting: default, voting open, pools can be created/removed
         Ended: voting closed, end-of-epoch processing started
-        VerifiersChecked: verifiers claims checked, awaiting rewards & subsidies allocation
+        Verified: verifiers claims checked, awaiting rewards & subsidies allocation
         Processed: all pools processed, awaiting reward deposit
         Finalized: rewards deposited, claims open
         ForceFinalized: admin forced (may block claims)
