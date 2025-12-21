@@ -31,46 +31,47 @@ import {LowLevelWMoca} from "./LowLevelWMoca.sol";
 contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     using SafeERC20 for IERC20;
 
-    // Immutable Contracts
-    IVotingEscrowMoca public immutable VEMOCA;
+    // Immutables
     address public immutable WMOCA;
+    IERC20 public immutable ESMOCA;
+    IVotingEscrowMoca public immutable VEMOCA;
+    IPaymentsController public immutable PAYMENTS_CONTROLLER;
 
-    // mutable contracts
-    IERC20 public ESMOCA;
-    IPaymentsController public PAYMENTS_CONTROLLER;
+    // Mutable Contracts
     address public VOTING_CONTROLLER_TREASURY;
 
-    // pools
+    // Epoch Finalization Tracking
+    uint128 public CURRENT_EPOCH_TO_FINALIZE;
+
+    // Pools
     uint128 public TOTAL_POOLS_CREATED;
     uint128 public TOTAL_ACTIVE_POOLS;
 
-    // subsidies
+    // Subsidies
     uint128 public TOTAL_SUBSIDIES_DEPOSITED;
     uint128 public TOTAL_SUBSIDIES_CLAIMED;
 
-    // rewards
+    // Rewards
     uint128 public TOTAL_REWARDS_DEPOSITED;
     uint128 public TOTAL_REWARDS_CLAIMED;
 
-    // delegate 
+    // Delegate 
     uint128 public DELEGATE_REGISTRATION_FEE;           // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint128 public MAX_DELEGATE_FEE_PCT;                // 100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)
     uint128 public FEE_INCREASE_DELAY_EPOCHS;           // in epochs
     
-    // registration fees [native MOCA]
+    // Registration Fees [native MOCA]
     uint128 public TOTAL_REGISTRATION_FEES_COLLECTED;    
     uint128 public TOTAL_REGISTRATION_FEES_CLAIMED;
 
     // Number of epochs that must pass before unclaimed rewards or subsidies can be withdrawn
     uint128 public UNCLAIMED_DELAY_EPOCHS;
 
-    // gas limit for moca transfer
-    uint128 public MOCA_TRANSFER_GAS_LIMIT;
+    uint128 public MOCA_TRANSFER_GAS_LIMIT; // gas limit for native MOCA transfer
 
-    // risk management
-    uint128 public isFrozen;
+    uint128 public isFrozen; // risk management
 
-//-------------------------------Mappings-------------------------------------------------
+//------------------------------- Mappings ------------------------------------------------------------------
 
     // global data
     mapping(uint128 epochNum => DataTypes.Epoch epoch) public epochs;    
@@ -89,7 +90,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
 
     // User-Delegate pair tracking [for this user-delegate pair, what was the user's {rewards,claimed}]
-    mapping(uint128 epochNum => mapping(address user => mapping(address delegate => DataTypes.UserDelegateAccount userDelegateAccount))) public userDelegateAccounting;
+    mapping(uint128 epochNum => mapping(address user => mapping(address delegate => DataTypes.UserDelegateAccount userDelegateAccount))) public userDelegateAccounts;
 
 
     // Delegate registration data + fee data
@@ -99,11 +100,11 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
     // updated in claimSubsidies()
     mapping(address verifier => uint128 totalSubsidies) public verifierSubsidies;                  
-    mapping(uint128 epoch => mapping(address verifier => uint128 totalSubsidies)) public verifierEpochSubsidies;
+    mapping(uint128 epoch => mapping(address verifier => DataTypes.VerifierEpoch verifierEpochData)) public verifierEpochData;
     mapping(uint128 epoch => mapping(uint128 poolId => mapping(address verifier => uint128 totalSubsidies))) public verifierEpochPoolSubsidies;
 
 
-//------------------------------- Constructor -------------------------------------------------------------------
+//------------------------------- Constructor ------------------------------------------------------------------
 
     constructor(
         uint128 maxDelegateFeePct, uint128 feeDelayEpochs, uint128 unclaimedDelayEpochs, address wMoca_, uint128 mocaTransferGasLimit, 
@@ -151,11 +152,15 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // roles
         _setupRoles(globalAdmin, votingControllerAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler, assetManager);
 
-        // finalize previous epoch [to unblock: createPools(), removePools(), depositEpochSubsidies()]
-        uint128 previousEpoch = EpochMath.getCurrentEpochNumber() - 1;
-        epochs[previousEpoch].isSubsidiesSet = true;
-        epochs[previousEpoch].isFullyProcessed = true;
-        epochs[previousEpoch].isEpochFinalized = true;
+        // set current epoch to finalize
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
+        CURRENT_EPOCH_TO_FINALIZE = currentEpoch;
+
+        // Finalize previous epoch to unblock: createPools(), removePools(), finalizeEpoch()
+        uint128 previousEpoch = currentEpoch - 1;
+        epochs[previousEpoch].state = DataTypes.EpochState.Finalized;
+        //emit Events.EpochFinalized(previousEpoch);
+
     }
 
     function _setupRoles(
@@ -207,15 +212,14 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     function vote(uint128[] calldata poolIds, uint128[] calldata poolVotes, bool isDelegated) external whenNotPaused {
         // sanity check: poolIds & poolVotes must be non-empty and have the same length
         uint256 length = poolIds.length;
-        require(length > 0, Errors.InvalidArray());
-        require(length == poolVotes.length, Errors.MismatchedArrayLengths());
+        _requireMatchingArrays(length, poolVotes.length);
 
         // get current epoch & cache epoch pointer
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();          
         DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
 
-        // epoch is being finalized: no more votes allowed
-        require(!epochPtr.isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
+        // Voting only allowed in Voting state
+        require(epochPtr.state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
         ( mapping(uint128 => mapping(address => DataTypes.Account)) storage accountEpochData,
@@ -230,7 +234,8 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint128 totalVotes = VEMOCA.balanceAtEpochEnd(msg.sender, currentEpoch, isDelegated);
         
         // get account's spent votes
-        uint128 spentVotes = accountEpochData[currentEpoch][msg.sender].totalVotesSpent; 
+        DataTypes.Account storage accountEpochPtr = accountEpochData[currentEpoch][msg.sender];
+        uint128 spentVotes = accountEpochPtr.totalVotesSpent; 
 
         // check: account has available votes 
         uint128 availableVotes = totalVotes - spentVotes;
@@ -268,7 +273,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         epochPtr.totalVotes += totalNewVotes;
 
         // increment account's votes [epoch]
-        accountEpochData[currentEpoch][msg.sender].totalVotesSpent += totalNewVotes;
+        accountEpochPtr.totalVotesSpent += totalNewVotes;
         
         emit Events.Voted(currentEpoch, msg.sender, poolIds, poolVotes, isDelegated);
     }
@@ -287,18 +292,16 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     function migrateVotes(uint128[] calldata srcPoolIds, uint128[] calldata dstPoolIds, uint128[] calldata votesToMigrate, bool isDelegated) external whenNotPaused {
         // input check: array lengths must be non-empty and match
         uint256 length = srcPoolIds.length;
-        require(length > 0, Errors.InvalidArray());
-        require(length == dstPoolIds.length, Errors.MismatchedArrayLengths());
-        require(length == votesToMigrate.length, Errors.MismatchedArrayLengths());
+        _requireMatchingArrays(length, dstPoolIds.length, votesToMigrate.length);
 
         // get current epoch
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();          
         DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
 
-        // if epoch is being finalized: no more votes allowed
-        require(!epochPtr.isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
+        // Voting only allowed in Voting state
+        require(epochPtr.state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
 
-        // validate delegate and record fee: executed each time, since delegate fee decreases are instantly applied
+        // Validate delegate and record fee: executed each time, since delegate fee decreases are instantly applied
         if (isDelegated) _validateDelegateAndRecordFee(currentEpoch);
 
 
@@ -307,7 +310,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         = isDelegated ? delegatesEpochPoolData : usersEpochPoolData;
    
 
-        // can migrate votes from inactive pool to active pool; but not vice versa
+        // allow migration of votes from inactive pool to active pool; but not vice versa
         for(uint256 i; i < length; ++i) {
             
             uint128 srcPoolId = srcPoolIds[i];
@@ -352,7 +355,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         emit Events.VotesMigrated(currentEpoch, msg.sender, srcPoolIds, dstPoolIds, votesToMigrate, isDelegated);
     }
 
-//------------------------------- Delegate functions ------------------------------------------
+//------------------------------- Delegate functions --------------------------------------------------------------
 
     /**
      * @notice Registers the caller as a delegate and activates their status.
@@ -385,33 +388,31 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
     /**
-     * @notice Called by delegate to update their fee percentage.
-     * @dev If the fee is increased, the new fee takes effect from currentEpoch + FEE_INCREASE_DELAY_EPOCHS to prevent last-minute increases.
-     *      If the fee is decreased, the new fee takes effect immediately and retroactively applies to all votes 
-     *      cast within the current epoch—even if a higher fee was previously recorded when the delegate first voted.
-     *      This benefits delegators (lower fees) and only reduces the delegate's own fee revenue.
-     *      Once the epoch ends, the historical fee for that epoch is frozen and cannot be modified.
-     * @param newFeePct The new fee percentage to be applied to the delegate's rewards.
+     * @notice Updates the delegate's fee percentage for rewards.
+     * @dev Fee decreases take effect immediately and overwrites for the current epoch; 
+     * fee increases are scheduled for (currentEpoch + FEE_INCREASE_DELAY_EPOCHS).
+     * After an epoch ends, fee percentages for that epoch are locked.
+     * @param newFeePct New fee percentage [100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)]
      */
     function updateDelegateFee(uint128 newFeePct) external whenNotPaused {
         // fee percentage cannot exceed MAX_DELEGATE_FEE_PCT
         require(newFeePct <= MAX_DELEGATE_FEE_PCT, Errors.InvalidFeePct());   
         
-        DataTypes.Delegate storage delegatePtr = delegates[msg.sender];
-        
         // check: delegate is registered
+        DataTypes.Delegate storage delegatePtr = delegates[msg.sender];      
         require(delegatePtr.isRegistered, Errors.NotRegisteredAsDelegate());
 
-        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
-        uint128 currentFeePct = delegatePtr.currentFeePct;
-        
         // check: new fee is different from current fee
+        uint128 currentFeePct = delegatePtr.currentFeePct;
         require(newFeePct != currentFeePct, Errors.InvalidFeePct()); 
+
+        // get current epoch
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();       
 
         // if new fee is less than current fee: decrease fee immediately
         if(newFeePct < currentFeePct) {
 
-            // set new fee immediately [retroactively overwrites any prior snapshot for this epoch]
+            // set new fee immediately [overwrites any prior fee snapshot for this epoch]
             delegatePtr.currentFeePct = newFeePct;
             delegateHistoricalFeePcts[msg.sender][currentEpoch] = newFeePct;
 
@@ -435,17 +436,18 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
      * @dev Removes delegate status and sets them as inactive in VotingEscrowMoca. Registration fee is non-refundable.
      */
     function unregisterAsDelegate() external whenNotPaused {
-        DataTypes.Delegate storage delegatePtr = delegates[msg.sender];
-        
-        // check: delegate is registered
+        DataTypes.Delegate storage delegatePtr = delegates[msg.sender];      
         require(delegatePtr.isRegistered, Errors.NotRegisteredAsDelegate());
 
-        // check: delegate has no active votes
+        // check: delegate has no active votes in current epoch
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         require(delegateEpochData[currentEpoch][msg.sender].totalVotesSpent == 0, Errors.CannotUnregisterWithActiveVotes());
  
         // storage: unregister delegate
         delete delegatePtr.isRegistered;
+        delete delegatePtr.currentFeePct;
+        delete delegatePtr.nextFeePct;
+        delete delegatePtr.nextFeePctEpoch;
 
         emit Events.DelegateUnregistered(msg.sender);
 
@@ -453,7 +455,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         VEMOCA.delegateRegistrationStatus(msg.sender, false);
     }
 
-//------------------------------- Claiming rewards & fees functions ----------------------------------------------
+//------------------------------- Claiming rewards & fees functions ------------------------------------------------
 
     /**
      * @notice Claims esMoca rewards for selected pools in a finalized epoch.
@@ -466,7 +468,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     function claimPersonalRewards(uint128 epoch, uint128[] calldata poolIds) external whenNotPaused {
         // input validation
         uint256 numOfPools = poolIds.length;
-        require(numOfPools > 0, Errors.InvalidArray());
+        _requireNonEmptyArray(numOfPools);
 
         // cache epoch pointer
         DataTypes.Epoch storage epochPtr = epochs[epoch];
@@ -485,14 +487,10 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             DataTypes.PoolEpoch storage poolEpochPtr = epochPools[epoch][poolId];
 
             // prevent double claiming
-            require(userPoolAccountPtr.totalRewards == 0, Errors.AlreadyClaimedOrNoRewardsToClaim()); 
+            require(userPoolAccountPtr.totalRewards == 0, Errors.AlreadyClaimedOrNothingToClaim()); 
 
             uint128 userVotes = userPoolAccountPtr.totalVotesSpent;
             uint128 poolRewards = poolEpochPtr.totalRewardsAllocated;
-            
-            // Skip pools with zero rewards or zero user votes
-            if(poolRewards == 0 || userVotes == 0) continue;
-
             uint128 poolTotalVotes = poolEpochPtr.totalVotes;
 
             // Calculate user's rewards for the pool [all in 1e18 precision]
@@ -533,13 +531,10 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     function claimRewardsFromDelegates(uint128 epoch, address[] calldata delegateList, uint128[][] calldata poolIds) external whenNotPaused {
         // input validation
         uint256 numOfDelegates = delegateList.length;
-        require(numOfDelegates > 0, Errors.InvalidArray());
-        require(numOfDelegates == poolIds.length, Errors.MismatchedArrayLengths());
-
-        // cache epoch pointer
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
+        _requireMatchingArrays(numOfDelegates, poolIds.length);
 
         // assert: epoch is finalized and rewards not withdrawn
+        DataTypes.Epoch storage epochPtr = epochs[epoch];
         _assertRewardsClaimWindow(epochPtr);
 
         
@@ -585,8 +580,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     function delegateClaimFees(uint128 epoch, address[] calldata delegators, uint128[][] calldata poolIds) external whenNotPaused {
         // input validation
         uint256 numOfDelegators = delegators.length;
-        require(numOfDelegators > 0, Errors.InvalidArray());
-        require(numOfDelegators == poolIds.length, Errors.MismatchedArrayLengths());
+        _requireMatchingArrays(numOfDelegators, poolIds.length);
 
         // cache epoch pointer
         DataTypes.Epoch storage epochPtr = epochs[epoch];
@@ -630,7 +624,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
 
-//------------------------------- Verifier: claimSubsidies function ----------------------------------------------
+//------------------------------- Claim Subsidies Function ----------------------------------------------
     
     /**
      * @notice Claim subsidies for a verifier in the specified pools for a given epoch.
@@ -641,23 +635,28 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
      * @param poolIds List of pool IDs to claim subsidies from.
      */
     function claimSubsidies(uint128 epoch, address verifier, uint128[] calldata poolIds) external whenNotPaused {
-        // Input validation
-        uint256 numOfPools = poolIds.length;
-        require(numOfPools > 0, Errors.InvalidArray());
         require(verifier != address(0), Errors.InvalidAddress());
 
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
+        uint256 numOfPools = poolIds.length;
+        _requireNonEmptyArray(numOfPools);
 
         // assert: epoch is finalized and subsidies not withdrawn
+        DataTypes.Epoch storage epochPtr = epochs[epoch];
         _assertSubsidyClaimWindow(epochPtr);
+
+        // verifier must not be blocked
+        DataTypes.VerifierEpoch storage verifierEpochPtr = verifierEpochData[epoch][verifier];
+        require(!verifierEpochPtr.isBlocked, Errors.ClaimsBlocked());
 
         uint128 totalSubsidiesClaimed; 
         for (uint256 i; i < numOfPools; ++i) {
             uint128 poolId = poolIds[i];
 
+            DataTypes.PoolEpoch storage poolEpochPtr = epochPools[epoch][poolId];
+
             // pool must have subsidies allocated
-            uint128 poolAllocatedSubsidies = epochPools[epoch][poolId].totalSubsidiesAllocated;
-            require(poolAllocatedSubsidies > 0, Errors.NoSubsidiesForPool());
+            uint128 poolAllocatedSubsidies = poolEpochPtr.totalSubsidiesAllocated;
+            if(poolAllocatedSubsidies == 0) continue;
 
             // verifier must not have claimed subsidies for this pool
             require(verifierEpochPoolSubsidies[epoch][poolId][verifier] == 0, Errors.SubsidyAlreadyClaimed());
@@ -683,7 +682,11 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
             // Calculate esMoca subsidy receivable [poolAllocatedSubsidies in 1e18 precision]
             uint128 subsidyReceivable = uint128((ratio * poolAllocatedSubsidies) / 1E18); 
-            if(subsidyReceivable == 0) continue;  
+            if(subsidyReceivable == 0) continue; 
+ 
+            // assert: subsidy receivable is less than or equal to remaining pool allocated subsidies
+            require(subsidyReceivable <= poolAllocatedSubsidies, Errors.SubsidyReceivableGreaterThanPoolAllocation());
+        
 
             // update counter
             totalSubsidiesClaimed += subsidyReceivable;
@@ -696,7 +699,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
         // update verifier's epoch & global total claimed
         verifierSubsidies[verifier] += totalSubsidiesClaimed;
-        verifierEpochSubsidies[epoch][verifier] += totalSubsidiesClaimed;
+        verifierEpochPtr.totalSubsidiesClaimed += totalSubsidiesClaimed;
 
         // update global & epoch total claimed
         TOTAL_SUBSIDIES_CLAIMED += totalSubsidiesClaimed;
@@ -712,34 +715,33 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 //------------------------------- VotingControllerAdmin: create/remove pools ----------------------------------------------------
 
     /**
-     * @notice Creates multiple voting pools in a single transaction.
-     * @dev Callable only by VotingController admin.
-     *      Pool creation is blocked during active end-of-epoch operations.
-     * @param count Number of pools to create (max 50 per call).
+     * @notice Creates several new voting pools in a single transaction.
+     * @dev Can only be called by addresses with the VotingController admin role.
+     *      Pool creation is only permitted when the current epoch is in the Voting state, and the previous epoch has been finalized.
+     *      This function will revert if called during any end-of-epoch state operations.
+     * @param count The number of pools to create in this call. [1-10]
      */
     function createPools(uint128 count) external whenNotPaused onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) {
-        require(count > 0 && count <= 50, Errors.InvalidAmount());
+        require(count > 0 && count <= 10, Errors.InvalidAmount());
         
-        // Prevent pool creation during current epoch finalization
-        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(!epochs[currentEpoch].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
-
-        // Ensure previous epoch is finalized
-        require(epochs[currentEpoch - 1].isEpochFinalized, Errors.EpochNotFinalized());
-
+        // Pool creation only during Voting state
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();      
+        require(epochs[currentEpoch].state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
+        
+        // Previous epoch must be finalized
+        require(_isFinalized(epochs[currentEpoch - 1].state), Errors.EpochNotFinalized());
 
         uint128 startPoolId = TOTAL_POOLS_CREATED + 1;
         uint128 endPoolId = TOTAL_POOLS_CREATED + count;
         
-        // Batch update counters
-        TOTAL_POOLS_CREATED = endPoolId;
-        TOTAL_ACTIVE_POOLS += count;
-
         // Set pools as active
-        
         for (uint128 i = startPoolId; i <= endPoolId; ++i) {
             pools[i].isActive = true;
         }
+
+        // update global counters
+        TOTAL_POOLS_CREATED = endPoolId;
+        TOTAL_ACTIVE_POOLS += count;
 
         emit Events.PoolsCreated(startPoolId, endPoolId, count);
     }
@@ -751,34 +753,33 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
      *      Pool removal is blocked during active end-of-epoch operations.
      * @param poolIds Array of pool IDs to remove (max 50 per call).
      */
-    function removePools(uint128[] calldata poolIds) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) whenNotPaused {
+    function removePools(uint128[] calldata poolIds) external whenNotPaused onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) {
         uint256 numOfPools = poolIds.length;
-        require(numOfPools > 0, Errors.InvalidArray());
+        _requireNonEmptyArray(numOfPools);
 
-        // Prevent pool removal during current epoch finalization
-        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(!epochs[currentEpoch].isSubsidiesSet, Errors.EndOfEpochOpsUnderway());
+        // Pool removal only during Voting state
+        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();       
+        require(epochs[currentEpoch].state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
+        
+        // Previous epoch must be finalized
+        require(_isFinalized(epochs[currentEpoch - 1].state), Errors.EpochNotFinalized());
 
-        // Ensure previous epoch is finalized
-        require(epochs[currentEpoch - 1].isEpochFinalized, Errors.EpochNotFinalized());
-
+        // accumulate votes to remove
         uint128 votesToRemove;
 
         for (uint256 i; i < numOfPools; ++i) {
             uint128 poolId = poolIds[i];
             require(pools[poolId].isActive, Errors.PoolNotActive());
 
-            // accumulate votes in removed pools for this epoch
             votesToRemove += epochPools[currentEpoch][poolId].totalVotes;
 
-            // remove pool
             delete pools[poolId].isActive;
         }
 
-        // Batch update counter
+        // update global counters
         TOTAL_ACTIVE_POOLS -= uint128(numOfPools);
 
-        // Reduce epoch totalVotes by votes in removed pools
+        // disregard votes from removed pools [for subsidy/rewards calculation]
         if (votesToRemove > 0) epochs[currentEpoch].totalVotes -= votesToRemove;
 
         emit Events.PoolsRemoved(poolIds, votesToRemove);
@@ -787,225 +788,231 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 //------------------------------- EndOfEpoch Operations -----------------------------------------
     
 
-    /**
-     * @notice Deposit esMOCA subsidies to be distributed for a specific epoch.
-     * @dev Only callable by CRON_JOB_ROLE after the epoch ends and before it is finalized.
-     *      Transfers esMOCA from the treasury if `subsidies` > 0 and the epoch has votes.
-     *      Instantly finalizes the epoch if no active pools exist.
-     *      Subsidies can be 0; set by protocol; discretionary.
-     * @param epoch Epoch number to deposit subsidies for.
-     * @param subsidies Total esMOCA subsidies to deposit (1e18 precision).
-     */
-    function depositEpochSubsidies(uint128 epoch, uint128 subsidies) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
-        // Previous epoch must be finalized
-        require(epochs[epoch - 1].isEpochFinalized, Errors.PreviousEpochNotFinalized());
+    // end epoch, log active pools, close voting.
+    function endEpoch() external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
+        // ensure sequential processing
+        uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
 
-        // Epoch must have ended
-        uint128 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epoch);
+        // Full epoch duration must be honoured before voting can be closed
+        uint128 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epochToFinalize);
         require(block.timestamp > epochEndTimestamp, Errors.EpochNotEnded());
-
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
         
-        // Current epoch must not be finalized
-        require(!epochPtr.isEpochFinalized, Errors.EpochFinalized());
-        
-        // Subsidies can only be set once per epoch
-        require(!epochPtr.isSubsidiesSet, Errors.SubsidiesAlreadySet());
+        // Validate: epoch must be in Voting state
+        DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];
+        require(epochPtr.state == DataTypes.EpochState.Voting, Errors.VotingInProgress());
 
-        // Set flag & log total active pools
-        epochPtr.isSubsidiesSet = true;
+        // Snapshot: total active pools for the epoch
         epochPtr.totalActivePools = TOTAL_ACTIVE_POOLS;
 
-        emit Events.SubsidiesSet(epoch, subsidies);
-
-        // If no active pools, epoch is fully processed [skip processEpochRewardsSubsidies() and finalizeEpoch()]
-        // all flags set to true & events emitted
+        // Handle edge case: no active pools = instant finalization
         if (TOTAL_ACTIVE_POOLS == 0) {
-            epochPtr.isFullyProcessed = true;
-            epochPtr.isEpochFinalized = true;
-            emit Events.EpochFullyProcessed(epoch);
-            emit Events.EpochFinalized(epoch);
+            epochPtr.state = DataTypes.EpochState.Finalized;
+            emit Events.EpochFinalized(epochToFinalize);
+            ++CURRENT_EPOCH_TO_FINALIZE;
             return;
         }
-    
-        // Deposit subsidies: if subsidies > 0 and epoch.totalVotes > 0
-        if(subsidies > 0 && epochPtr.totalVotes > 0) {
 
-            // get treasury address
-            address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
-            require(votingControllerTreasury != address(0), Errors.InvalidAddress());
+        // Transition to Ended
+        epochPtr.state = DataTypes.EpochState.Ended;
+        emit Events.EpochEnded(epochToFinalize);
+    }
 
-            // update total subsidies deposited for epoch + global
-            epochPtr.totalSubsidiesAllocated = subsidies;
-            TOTAL_SUBSIDIES_DEPOSITED += subsidies;
+    // Block verifier claims for a given epoch - guard for possible misbehavior on Payments Controller
+    function processVerifierChecks(bool allChecked, address[] calldata verifiers) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {    
+        // ensure sequential processing
+        uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
 
-            emit Events.SubsidiesDeposited(votingControllerTreasury, epoch, subsidies);
+        // Must be in Ended or Verified state (allows blocking in both phases)
+        DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];
+        require(
+            epochPtr.state == DataTypes.EpochState.Ended || epochPtr.state == DataTypes.EpochState.Verified, 
+            Errors.InvalidEpochState()
+        );
 
-            ESMOCA.safeTransferFrom(votingControllerTreasury, address(this), subsidies);
-        } 
+        // Transition to Verified
+        if(allChecked) {
+            epochPtr.state = DataTypes.EpochState.Verified;
+            emit Events.EpochVerified(epochToFinalize);
+            return;
+        }
+
+        // process verifiers to be blocked
+        uint256 numOfVerifiers = verifiers.length;
+        require(numOfVerifiers > 0, Errors.InvalidArray());
+
+
+        for (uint256 i; i < numOfVerifiers; ++i) {
+            address verifier = verifiers[i];
+            if (verifier == address(0)) continue; // skip invalid addresses
+
+            DataTypes.VerifierEpoch storage verifierEpochPtr = verifierEpochData[epochToFinalize][verifier];
+            verifierEpochPtr.isBlocked = true;
+        }
+
+        emit Events.VerifiersClaimsBlocked(epochToFinalize, verifiers, numOfVerifiers);
     }
 
 
-    /**
-     * @notice Allocates rewards and subsidies for specified pools in an epoch.
-     * @dev Can only be called by CRON_JOB_ROLE. Each pool can only be processed once per epoch.
-     *      Inactive pools are skipped. Only pools with votes and rewards/subsidies > 0 can be allocated rewards/subsidies.
-     * @param epoch The epoch to process.
-     * @param poolIds List of pool IDs to process.
-     * @param rewards Rewards (1e18 precision) allocated to each pool.
-     * Requirements:
-     *  - The specified epoch must have ended.
-     *  - Epoch must not be finalized.
-     *  - Subsidies must have already been set for the epoch.
-     *  - Each pool must be active and not previously processed for the epoch.
-     *  - Rewards can be 0; set by protocol; discretionary.
-     */
-    function processEpochRewardsSubsidies(uint128 epoch, uint128[] calldata poolIds, uint128[] calldata rewards) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
-       
-        // Input validation
+    // Process rewards & subsidies for a given epoch - allocate rewards & subsidies to pools
+    // Can be called multiple times to process pools in batches. Skips already-processed pools.
+    function processRewardsAndSubsidies(uint128[] calldata poolIds, uint128[] calldata rewards, uint128[] calldata subsidies) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
+        // INPUT VALIDATION
         uint256 numOfPools = poolIds.length;
-        require(numOfPools > 0, Errors.InvalidArray());
-        require(numOfPools == rewards.length, Errors.MismatchedArrayLengths());
+        _requireMatchingArrays(numOfPools, rewards.length, subsidies.length);
 
-        // Epoch must have ended
-        uint128 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epoch);
-        require(block.timestamp > epochEndTimestamp, Errors.EpochNotEnded());
+        // ═══════════════════════════════════════════════════════════════════
+        // STATE VALIDATION
+        // ═══════════════════════════════════════════════════════════════════
+        
+        uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
+        
+        // Must be in Verified state (verifiers claims checked)
+        DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];
+        require(epochPtr.state == DataTypes.EpochState.Verified, Errors.EpochNotVerified());
 
-        // Cache epoch pointer
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
 
-        // depositEpochSubsidies() must have been called prior
-        require(epochPtr.isSubsidiesSet, Errors.SubsidiesNotSet());
+        // ═══════════════════════════════════════════════════════════════════
+        // POOL PROCESSING
+        // ═══════════════════════════════════════════════════════════════════
 
-        // check: epoch must not be finalized yet
-        require(!epochPtr.isEpochFinalized, Errors.EpochFinalized());
-
-        // cache: both can be 0: so do not check for >0
-        uint128 epochTotalSubsidiesAllocated = epochPtr.totalSubsidiesAllocated;    
+        // Cache: epoch total votes
         uint128 epochTotalVotes = epochPtr.totalVotes;
 
-        uint128 totalRewards;
+        uint128 totalRewardsToAllocate;
+        uint128 totalSubsidiesToAllocate;
 
         // iterate through all active pools for the epoch: to mark pools as processed
         for (uint256 i; i < numOfPools; ++i) {
             uint128 poolId = poolIds[i];
             uint128 poolRewards = rewards[i];       // can be 0
+            uint128 poolSubsidies = subsidies[i];   // can be 0
 
-            // cache: pool & epoch pool pointers
+
+            // Cache: pool & epoch pool pointers
             DataTypes.Pool storage poolPtr = pools[poolId];
-            DataTypes.PoolEpoch storage epochPoolPtr = epochPools[epoch][poolId];
+            DataTypes.PoolEpoch storage epochPoolPtr = epochPools[epochToFinalize][poolId];
 
-            // sanity check: pool is active & not processed 
+            // Sanity check: pool must be active and not already processed
             require(poolPtr.isActive, Errors.PoolNotActive());
             require(!epochPoolPtr.isProcessed, Errors.PoolAlreadyProcessed());
+            
+            // mark pool as processed
+            epochPoolPtr.isProcessed = true;
+
+            // pool has 0 allocations: skip 
+            if(poolRewards == 0 && poolSubsidies == 0) continue;
 
             // get pool's total votes for the epoch
             uint128 poolVotes = epochPoolPtr.totalVotes;
-            bool hasVotes = poolVotes > 0;  
-
-            // if pool has votes: calc. subsidies & update rewards allocated
-            if(hasVotes) {
-                
-                // poolSubsidies = 0, if epochTotalSubsidiesAllocated = 0
-                uint128 poolSubsidies = _mulDiv(poolVotes, epochTotalSubsidiesAllocated, epochTotalVotes);
-                
-                // update pool & epochpool: totalSubsidiesAllocated
-                if(poolSubsidies > 0) { 
-                    // storage updates
-                    poolPtr.totalSubsidiesAllocated += poolSubsidies;
-                    epochPoolPtr.totalSubsidiesAllocated = poolSubsidies;                    
-                }
-
-                // update pool & epochpool: totalRewardsAllocated
-                if(poolRewards > 0) {
-                    // storage updates
-                    poolPtr.totalRewardsAllocated += poolRewards;
-                    epochPoolPtr.totalRewardsAllocated = poolRewards;
-                    
-                    // increment counter
-                    totalRewards += poolRewards;
-                }
+            // pool has 0 votes: skip 
+            if(poolVotes == 0) continue;
+                           
+            // allocate rewards
+            if(poolRewards > 0) {
+                poolPtr.totalRewardsAllocated += poolRewards;
+                epochPoolPtr.totalRewardsAllocated = poolRewards;
+                totalRewardsToAllocate += poolRewards;
             }
 
-            // mark pool as processed
-            epochPoolPtr.isProcessed = true;
+            // allocate subsidies 
+            if(poolSubsidies > 0) {
+                poolPtr.totalSubsidiesAllocated += poolSubsidies;
+                epochPoolPtr.totalSubsidiesAllocated = poolSubsidies;  
+                totalSubsidiesToAllocate += poolSubsidies;
+            }
         }
 
-        // STORAGE: update epoch global rewards 
-        epochPtr.totalRewardsAllocated += totalRewards;
+        // ═══════════════════════════════════════════════════════════════════
+        // STATE UPDATES
+        // ═══════════════════════════════════════════════════════════════════
 
-        // check if epoch will be fully processed
+        // accumulate total rewards & subsidies to allocate
+        epochPtr.totalRewardsAllocated += totalRewardsToAllocate;
+        epochPtr.totalSubsidiesAllocated += totalSubsidiesToAllocate;
+
+        emit Events.PoolsProcessed(epochToFinalize, numOfPools);
+    
+        // increment total active pools as processed
         uint128 totalPoolsProcessed = epochPtr.poolsProcessed += uint128(numOfPools);
         bool isFullyProcessed = totalPoolsProcessed == epochPtr.totalActivePools;
 
-        if(isFullyProcessed) {
-            // set flag & emit events
-            epochPtr.isFullyProcessed = true;
-            emit Events.PoolsProcessed(epoch, poolIds);
-            emit Events.EpochFullyProcessed(epoch);
-
-        } else{           
-            emit Events.PoolsProcessed(epoch, poolIds);
+        // ═══════════════════════════════════════════════════════════════════
+        // Transition to Processed when all pools are done
+        if (isFullyProcessed) {
+            epochPtr.state = DataTypes.EpochState.Processed;
+            emit Events.EpochFullyProcessed(epochToFinalize);
         }
     }
 
-    
-    function finalizeEpoch(uint128 epoch) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
-        // cache: epoch pointer
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
-        
-        // epoch must be fully processed
-        require(epochPtr.isFullyProcessed, Errors.EpochNotProcessed());
-        
-        // epoch must not be finalized
-        require(!epochPtr.isEpochFinalized, Errors.EpochFinalized());
+    // Finalizes an epoch by depositing rewards & subsidies from treasury and opening claims.
+    // off-chain sanity checks should be executed before calling this function.
+    // once this function is called, claims are open for the epoch.
+    function finalizeEpoch() external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
+        uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
 
-        // cache: total rewards
+        // Must be in Processed state (all pools processed)
+        DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];      
+        require(epochPtr.state == DataTypes.EpochState.Processed, Errors.EpochNotProcessed());
+
+        // Cache: total rewards & subsidies
         uint128 totalRewards = epochPtr.totalRewardsAllocated;
-        emit Events.RewardsSetForEpoch(epoch, totalRewards);
+        uint128 totalSubsidies = epochPtr.totalSubsidiesAllocated;
+        
+        // Update global counters
+        if(totalRewards > 0) TOTAL_REWARDS_DEPOSITED += totalRewards;
+        if(totalSubsidies > 0) TOTAL_SUBSIDIES_DEPOSITED += totalSubsidies;
+        
+        emit Events.EpochDistributionSet(epochToFinalize, totalRewards, totalSubsidies);
 
-        // transfer rewards from treasury to contract
-        if(totalRewards > 0){
+        // Transfer funds from treasury
+        uint256 totalDistribution = totalRewards + totalSubsidies;
+        if(totalDistribution > 0) {
+            address treasury = _getValidatedTreasury();
 
-            // get treasury address
-            address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
-            require(votingControllerTreasury != address(0), Errors.InvalidAddress());
-
-            TOTAL_REWARDS_DEPOSITED += totalRewards;         
-            emit Events.RewardsDeposited(votingControllerTreasury, epoch, totalRewards);
-
-            ESMOCA.safeTransferFrom(votingControllerTreasury, address(this), totalRewards);
+            emit Events.EpochDistributionDeposited(treasury, epochToFinalize, totalDistribution);
+            ESMOCA.safeTransferFrom(treasury, address(this), totalDistribution);
         }
 
-        // set flag: epoch finalized
-        epochPtr.isEpochFinalized = true;
-        emit Events.EpochFinalized(epoch); 
+        // Transition Epoch to Finalized 
+        epochPtr.state = DataTypes.EpochState.Finalized;
+        emit Events.EpochFinalized(epochToFinalize); 
+        ++CURRENT_EPOCH_TO_FINALIZE;
     }
 
-    // force finalize an epoch in case of any unexpected conditions
-    function forceFinalizeEpoch(uint128 epoch, bool blockClaims) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        // get current epoch number
-        uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
-        require(epoch < currentEpoch, Errors.InvalidEpoch());
+    // Force finalize an epoch in case of unexpected conditions or incorrect processing/execution
+    // Subsidies and rewards are to be distributed directly to actors; claims are blocked.
+    function forceFinalizeEpoch() external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;   
+        
+        // Full epoch duration must be honoured before voting can be closed
+        uint128 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epochToFinalize);
+        require(block.timestamp > epochEndTimestamp, Errors.EpochNotEnded());
 
-        // cache: epoch pointer
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
+        DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];
 
-        // block claiming
-        if(blockClaims) {
-            epochPtr.isRewardsWithdrawn = true;
-            epochPtr.isSubsidiesWithdrawn = true;
+        // Cannot force finalize already finalized epoch
+        require(!_isFinalized(epochPtr.state), Errors.EpochAlreadyFinalized());
+
+        // Snapshot total active pools if not already set
+        if (epochPtr.totalActivePools == 0 && TOTAL_ACTIVE_POOLS > 0) {
+            epochPtr.totalActivePools = TOTAL_ACTIVE_POOLS;
         }
+        epochPtr.poolsProcessed = epochPtr.totalActivePools;
 
-        // force finalize epoch: to allow next epoch to continue normally        
-        epochPtr.isSubsidiesSet = true;
-        epochPtr.isFullyProcessed = true;
-        epochPtr.isEpochFinalized = true;
+        // Zero out rewards & subsidies allocations (claims blocked)
+        delete epochPtr.totalRewardsAllocated;
+        delete epochPtr.totalSubsidiesAllocated;
 
-        emit Events.EpochForceFinalized(epoch, blockClaims); 
+        // Transition Epoch to ForceFinalized
+        epochPtr.state = DataTypes.EpochState.ForceFinalized;
+        
+        // Advance to next epoch
+        ++CURRENT_EPOCH_TO_FINALIZE;
+        
+        emit Events.EpochForceFinalized(epochToFinalize);
     }
 
-//------------------------------- AssetManager Role: withdrawUnclaimedRewards, withdrawUnclaimedSubsidies -----------------------------------------
+//------------------------------- AssetManager Role: withdraw unclaimed rewards & subsidies, registration fees -----------------------------------------
     
     /**
      * @notice Transfers all unclaimed and residual rewards for an epoch to the treasury.
@@ -1021,23 +1028,18 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         DataTypes.Epoch storage epochPtr = epochs[epoch];
 
         // Epoch must be finalized & rewards must not have been withdrawn yet
-        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
-        require(!epochPtr.isRewardsWithdrawn, Errors.RewardsAlreadyWithdrawn());  
+        require(_isFinalized(epochPtr.state), Errors.EpochNotFinalized());
+        require(epochPtr.totalRewardsWithdrawn == 0, Errors.RewardsAlreadyWithdrawn());  
 
         // Unclaimed rewards must be greater than 0
         uint128 unclaimedRewards = epochPtr.totalRewardsAllocated - epochPtr.totalRewardsClaimed;
         require(unclaimedRewards > 0, Errors.NoUnclaimedRewardsToWithdraw());
 
-        // Book unclaimed rewards
-        epochPtr.totalRewardsUnclaimed = unclaimedRewards;
+        // Book unclaimed rewards as withdrawn to treasury
+        epochPtr.totalRewardsWithdrawn = unclaimedRewards;
         
-        // Set flag to block future claims
-        epochPtr.isRewardsWithdrawn = true;
-
         // Get treasury address
-        address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
-        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
-
+        address votingControllerTreasury = _getValidatedTreasury();
         emit Events.UnclaimedRewardsWithdrawn(votingControllerTreasury, epoch, unclaimedRewards);
 
         ESMOCA.safeTransfer(votingControllerTreasury, unclaimedRewards);
@@ -1057,23 +1059,18 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         DataTypes.Epoch storage epochPtr = epochs[epoch];
 
         // Epoch must be finalized & subsidies must not have been withdrawn yet
-        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
-        require(!epochPtr.isSubsidiesWithdrawn, Errors.SubsidiesAlreadyWithdrawn());
+        require(_isFinalized(epochPtr.state), Errors.EpochNotFinalized());
+        require(epochPtr.totalSubsidiesWithdrawn == 0, Errors.SubsidiesAlreadyWithdrawn());
 
         // Unclaimed subsidies must be greater than 0
         uint128 unclaimedSubsidies = epochPtr.totalSubsidiesAllocated - epochPtr.totalSubsidiesClaimed;
         require(unclaimedSubsidies > 0, Errors.NoSubsidiesToClaim());
 
         // Book unclaimed subsidies
-        epochPtr.totalSubsidiesUnclaimed = unclaimedSubsidies;
+        epochPtr.totalSubsidiesWithdrawn = unclaimedSubsidies;
         
-        // Set flag to block future claims
-        epochPtr.isSubsidiesWithdrawn = true;
-
         // Get treasury address
-        address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
-        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
-
+        address votingControllerTreasury = _getValidatedTreasury();
         emit Events.UnclaimedSubsidiesWithdrawn(votingControllerTreasury, epoch, unclaimedSubsidies);
 
         ESMOCA.safeTransfer(votingControllerTreasury, unclaimedSubsidies);
@@ -1093,9 +1090,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         TOTAL_REGISTRATION_FEES_CLAIMED = TOTAL_REGISTRATION_FEES_COLLECTED;
 
         // Get treasury address
-        address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
-        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
-
+        address votingControllerTreasury = _getValidatedTreasury();
         emit Events.RegistrationFeesWithdrawn(votingControllerTreasury, unclaimedRegistrationFees);
 
         // Transfer Moca to user [wraps if transfer fails within gas limit] 
@@ -1104,30 +1099,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     
 //------------------------------- VotingControllerAdmin: setters ---------------------------------------------------------
 
-    /**
-     * @notice Sets the esMoca address.
-     * @dev Only callable by VotingController admin.
-     * @param newEsMoca The new esMoca address.
-     */
-    function setEsMoca(address newEsMoca) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) {
-        require(newEsMoca != address(0), Errors.InvalidAddress());
-        require(address(ESMOCA) != newEsMoca, Errors.InvalidAddress());
-
-        address oldEsMoca = address(ESMOCA);
-        ESMOCA = IERC20(newEsMoca);
-
-        emit Events.EsMocaUpdated(oldEsMoca, newEsMoca);
-    }
-
-    function setPaymentController(address newPaymentController) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) {
-        require(newPaymentController != address(0), Errors.InvalidAddress());
-        require(address(PAYMENTS_CONTROLLER) != newPaymentController, Errors.InvalidAddress());
-
-        address oldPaymentController = address(PAYMENTS_CONTROLLER);
-        PAYMENTS_CONTROLLER = IPaymentsController(newPaymentController);
-
-        emit Events.PaymentControllerUpdated(oldPaymentController, newPaymentController);
-    }
 
     function setVotingControllerTreasury(address newVotingControllerTreasury) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) {
         require(newVotingControllerTreasury != address(0), Errors.InvalidAddress());
@@ -1268,7 +1239,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint128 delegateFeePct = delegateHistoricalFeePcts[delegate][epoch];
         
         // cache user-delegate pair accounting pointer
-        DataTypes.UserDelegateAccount storage pairAccountPtr = userDelegateAccounting[epoch][user][delegate];  
+        DataTypes.UserDelegateAccount storage pairAccountPtr = userDelegateAccounts[epoch][user][delegate];  
         
         // Track newly processed amounts in this call
         uint128 newGrossProcessed;
@@ -1289,8 +1260,9 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             pairAccountPtr.poolProcessed[poolId] = true;
             
             // Pool must have rewards & votes; else skip
-            uint128 totalPoolRewards = epochPools[epoch][poolId].totalRewardsAllocated;
-            uint128 totalPoolVotes = epochPools[epoch][poolId].totalVotes;
+            DataTypes.PoolEpoch storage poolEpochPtr = epochPools[epoch][poolId];
+            uint128 totalPoolRewards = poolEpochPtr.totalRewardsAllocated;
+            uint128 totalPoolVotes = poolEpochPtr.totalVotes;
             if (totalPoolVotes == 0) continue;  // [implicitly totalPoolRewards: 0; rewards not allocated to pools w/ 0 votes]
             
             // Cache delegate's pool account pointer
@@ -1368,14 +1340,28 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         return uint128((uint256(multiplicand) * multiplier) / divisor);
     }
 
+    // createPools() & removePools() call this
+    // Returns true if epoch is in a finalized or forced finalized state
+    function _isFinalized(DataTypes.EpochState state) internal pure returns (bool) {
+        return uint8(state) >= uint8(DataTypes.EpochState.Finalized);
+    }
+
+
     function _assertRewardsClaimWindow(DataTypes.Epoch storage epochPtr) internal view {
-        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
-        require(!epochPtr.isRewardsWithdrawn, Errors.RewardsAlreadyWithdrawn());
+        require(epochPtr.state == DataTypes.EpochState.Finalized, Errors.EpochNotFinalized());
+        require(epochPtr.totalRewardsWithdrawn == 0, Errors.RewardsAlreadyWithdrawn());
     }
 
     function _assertSubsidyClaimWindow(DataTypes.Epoch storage epochPtr) internal view {
-        require(epochPtr.isEpochFinalized, Errors.EpochNotFinalized());
-        require(!epochPtr.isSubsidiesWithdrawn, Errors.SubsidiesAlreadyWithdrawn());
+        require(epochPtr.state == DataTypes.EpochState.Finalized, Errors.EpochNotFinalized());
+        require(epochPtr.totalSubsidiesWithdrawn == 0, Errors.SubsidiesAlreadyWithdrawn());
+    }
+
+    // Validates & returns treasury address
+    function _getValidatedTreasury() internal view returns (address) {
+        address treasury = VOTING_CONTROLLER_TREASURY;
+        require(treasury != address(0), Errors.InvalidAddress());
+        return treasury;
     }
 
     function _previewPersonalRewards(uint128 epoch, address user, uint128[] calldata poolIds) internal view returns (uint128, uint128[] memory) {
@@ -1408,7 +1394,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
     function _previewDelegationRewards(uint128 epoch, address user, address delegate, uint128[] calldata poolIds) internal view returns (uint128, uint128) {
-        DataTypes.UserDelegateAccount storage pairAccountPtr = userDelegateAccounting[epoch][user][delegate];
+        DataTypes.UserDelegateAccount storage pairAccountPtr = userDelegateAccounts[epoch][user][delegate];
         uint128 totalNet = pairAccountPtr.totalNetRewards;
         uint128 totalFees = pairAccountPtr.totalDelegateFees;
         
@@ -1491,6 +1477,20 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         return (grossDelta, feeDelta);
     }
 
+    function _requireNonEmptyArray(uint256 len) internal pure {
+        require(len > 0, Errors.InvalidArray());
+    }
+
+    function _requireMatchingArrays(uint256 len1, uint256 len2) internal pure {
+        require(len1 > 0, Errors.InvalidArray());
+        require(len1 == len2, Errors.MismatchedArrayLengths());
+    }
+
+    function _requireMatchingArrays(uint256 len1, uint256 len2, uint256 len3) internal pure {
+        require(len1 > 0, Errors.InvalidArray());
+        require(len1 == len2 && len2 == len3, Errors.MismatchedArrayLengths());
+    }
+
 //------------------------------- Risk functions----------------------------------------------------------
 
     /**
@@ -1550,7 +1550,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     // returns: totalClaimable, perPoolClaimable
     function viewClaimablePersonalRewards(uint128 epoch, address user, uint128[] calldata poolIds) external view returns (uint128, uint128[] memory) {
         uint256 numOfPools = poolIds.length;
-        require(numOfPools > 0, Errors.InvalidArray());
+        _requireNonEmptyArray(numOfPools);
         require(user != address(0), Errors.InvalidAddress());
 
         DataTypes.Epoch storage epochPtr = epochs[epoch];
@@ -1579,8 +1579,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     // returns: totalFeeClaimable, perDelegatorFees
     function viewClaimableDelegationFees(uint128 epoch, address[] calldata delegators, uint128[][] calldata poolIds) external view returns (uint128, uint128[] memory) {
         uint256 numOfDelegators = delegators.length;
-        require(numOfDelegators > 0, Errors.InvalidArray());
-        require(numOfDelegators == poolIds.length, Errors.MismatchedArrayLengths());
+        _requireMatchingArrays(numOfDelegators, poolIds.length);
 
         DataTypes.Epoch storage epochPtr = epochs[epoch];
         _assertRewardsClaimWindow(epochPtr);
@@ -1610,10 +1609,12 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
 
     // returns: totalClaimable, perPoolClaimable
-    function viewClaimableSubsidies(uint128 epoch, uint128[] calldata poolIds, address verifier) external view returns (uint128, uint128[] memory) {
-        uint256 numOfPools = poolIds.length;
-        require(numOfPools > 0, Errors.InvalidArray());
+    function viewClaimableSubsidies(uint128 epoch, uint128[] calldata poolIds, address verifier, address verifierAssetManager) external view returns (uint128, uint128[] memory) {
         require(verifier != address(0), Errors.InvalidAddress());
+        require(verifierAssetManager != address(0), Errors.InvalidAddress());
+
+        uint256 numOfPools = poolIds.length;
+        _requireNonEmptyArray(numOfPools);
 
         DataTypes.Epoch storage epochPtr = epochs[epoch];
         _assertSubsidyClaimWindow(epochPtr);
@@ -1631,7 +1632,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             if (poolAllocatedSubsidies == 0) continue;
 
             (uint256 verifierAccruedSubsidies, uint256 poolAccruedSubsidies) =
-                PAYMENTS_CONTROLLER.getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifier, msg.sender);
+                PAYMENTS_CONTROLLER.getVerifierAndPoolAccruedSubsidies(epoch, poolId, verifier, verifierAssetManager);
 
             if (poolAccruedSubsidies == 0 || verifierAccruedSubsidies == 0) continue;
             require(verifierAccruedSubsidies <= poolAccruedSubsidies, Errors.VerifierAccruedSubsidiesGreaterThanPool());

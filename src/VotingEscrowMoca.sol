@@ -1277,7 +1277,8 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     // ----------------------------- Voting Controller Queries -----------------------------------------------
 
 
-    // note: used by VotingController for vote()
+    // Note: used by VotingController.vote()
+    // cronJob should ensure state is updated(or not extremely stale) to avoid excessive looping.
     function balanceAtEpochEnd(address user, uint128 epoch, bool isDelegate) external view returns (uint128) {
         require(user != address(0), Errors.InvalidAddress());
 
@@ -1293,7 +1294,8 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         return veAccount_.getValueAt(epochEndTime);
     }
 
-    //Note: used by VotingController.claimRewardsFromDelegate() | returns userVotesAllocatedToDelegateForEpoch
+    // Note: used by VotingController.claimRewardsFromDelegates() 
+    // cronJob should ensure state is updated(or not extremely stale) to avoid excessive looping.
     function getSpecificDelegatedBalanceAtEpochEnd(address user, address delegate, uint128 epoch) external view returns (uint128) {
         require(user != address(0), Errors.InvalidAddress());
         require(delegate != address(0), Errors.InvalidAddress());

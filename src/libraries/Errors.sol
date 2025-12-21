@@ -10,7 +10,7 @@ pragma solidity ^0.8.27;
 
 library Errors {
 
-    // --------- Generic ---------
+// --------- Generic ---------
     error InvalidId();
     error InvalidIndex();
     error InvalidUser(); 
@@ -73,7 +73,9 @@ library Errors {
     error OnlyCallableByVotingControllerContract();
 
 // --------- VotingController.sol ---------
-    error EpochNotEnded();
+    error ClaimsBlocked();
+    error InvalidEpochState();
+    error EpochAlreadyFinalized();
     error EpochNotFinalized();
     error EpochFinalized();
     error EpochNotProcessed();
@@ -84,7 +86,8 @@ library Errors {
     error InsufficientVotes();
     error InvalidPoolPair();
     error PoolHasNoRewards();
-    
+    error PreviousEpochNotFinalized();
+
     // delegation
     error DelegateAlreadyRegistered();
     error NotRegisteredAsDelegate();
@@ -92,7 +95,7 @@ library Errors {
 
     //voterClaimRewards
     error NoRewardsToClaim();
-    error AlreadyClaimedOrNoRewardsToClaim();
+    error AlreadyClaimedOrNothingToClaim();
     
     //claimSubsidies
     error NoSubsidiesToClaim();
@@ -101,13 +104,19 @@ library Errors {
     error NoSubsidiesForPool(); 
     error SubsidyAlreadyClaimed();
     error VerifierAccruedSubsidiesGreaterThanPool();
+    error SubsidyReceivableGreaterThanPoolAllocation();
     // depositSubsidies
-    error PreviousEpochNotFinalized();
     error SubsidiesAlreadySet();
     error InsufficientSubsidies();
     //depositRewards
     error RewardsAlreadyDeposited();
-    // finalizeEpochRewardsSubsidies
+   
+    // endEpoch
+    error EpochNotEnded();
+    error VotingInProgress();
+    // blockVerifierClaims
+    // processRewardsAndSubsidies
+    error EpochNotVerified();
     error SubsidyPerVoteZero();
     error SubsidiesNotSet();
     error PoolAlreadyProcessed();

@@ -69,30 +69,43 @@ library DataTypes {
 
 // --------- VotingController.sol -------
 
+
+    /* Lifecycle states for epoch finalization:
+        Voting: default, voting open, pools can be created/removed
+        Ended: voting closed, end-of-epoch processing started
+        VerifiersChecked: verifiers claims checked, awaiting rewards & subsidies allocation
+        Processed: all pools processed, awaiting reward deposit
+        Finalized: rewards deposited, claims open
+        ForceFinalized: admin forced (may block claims)
+    */
+    enum EpochState {
+        Voting,           // 0 - voting open, epoch in progress
+        Ended,            // 1 - voting closed, end-of-epoch processing started
+        Verified,         // 2 - verifiers claims checked, awaiting rewards & subsidies allocation
+        Processed,        // 3 - all pools processed, awaiting finalization
+        Finalized,        // 4 - complete, claims open
+        ForceFinalized    // 5 - emergency finalization, claims blocked
+    }
+    
     struct Epoch {
-        uint128 totalVotes;                      // votes in active pools only (for subsidy/rewards calculation)
-        uint128 totalActivePools;                // set in depositEpochSubsidies()   
+        EpochState state;
 
-        // rewards + subsidies
+        // Pool & Vote Tracking
+        uint128 totalVotes;                     // votes in active pools only (for subsidy/rewards calculation)
+        uint128 totalActivePools;               // set in depositEpochSubsidies()   
+        uint128 poolsProcessed;                 // incremented in processEpochRewardsSubsidies()
+
+        // Allocations
         uint128 totalSubsidiesAllocated;         // set & deposited in depositEpochSubsidies()
-        uint128 totalRewardsAllocated;           // set in processEpochRewardsSubsidies() & deposited in finalizeEpoch()
+        uint128 totalRewardsAllocated;           // accumulated in processEpochRewardsSubsidies()
 
-        // claimed: esMOCA 
+        // Claims Tracking: esMOCA 
         uint128 totalRewardsClaimed;   
         uint128 totalSubsidiesClaimed;    
 
-        // unclaimed: withdrawn to treasury [for record-keeping purposes]
-        uint128 totalRewardsUnclaimed;   
-        uint128 totalSubsidiesUnclaimed;     
-
-        // epochEnd: flags
-        bool isSubsidiesSet;            // set in depositEpochSubsidies()
-        bool isFullyProcessed;          // set in processEpochRewardsSubsidies()
-        bool isEpochFinalized;          // set in finalizeEpoch()
-        uint128 poolsProcessed;         // incremented in processEpochRewardsSubsidies()
-
-        bool isRewardsWithdrawn;        // set in withdrawUnclaimedRewards()
-        bool isSubsidiesWithdrawn;      // set in withdrawUnclaimedSubsidies()
+        // Unclaimed: withdrawn to treasury (for record-keeping purposes)
+        uint128 totalRewardsWithdrawn;   
+        uint128 totalSubsidiesWithdrawn;     
     }
     
     // Pool data [global]
@@ -148,6 +161,11 @@ library DataTypes {
         mapping(uint128 poolId => bool) poolProcessed;
     }
 
+
+    struct VerifierEpoch {
+        bool isBlocked;
+        uint128 totalSubsidiesClaimed;
+    }
 
 
 // --------- VotingEscrowMoca.sol -------

@@ -872,7 +872,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Updates the poolId associated with a schema. Can set, update, or remove the poolId.
      * @dev Only callable by PaymentsController admin. The schema must exist.
      * @param schemaId The unique id of the schema to update.
-     * @param poolId The new poolId to associate with the schema (can be zero to remove).
+     * @param poolId The new poolId to associate with the schema (set to zero to remove).
      */
     function updatePoolId(bytes32 schemaId, uint128 poolId) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
         DataTypes.Schema storage schemaPtr = _schemas[schemaId];
@@ -1377,7 +1377,6 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         return _epochPoolVerifierSubsidies[epoch][poolId][verifier];
     }
 
-    // note: manually refer to this, to know how much esMoca to deposit per pool on VotingController.depositRewardsForEpoch()
     /**
      * @notice Returns the fees accrued for a given pool and epoch.
      * @param epoch The epoch.

@@ -109,18 +109,22 @@ library Events {
     event SubsidiesClaimed(address indexed verifier, uint128 epoch, uint128[] poolIds, uint128 totalSubsidiesClaimed);
 
 
-    // depositSubsidies
-    event SubsidiesSet(uint128 indexed epoch, uint128 totalSubsidies);
-    event SubsidiesDeposited(address indexed treasury, uint128 indexed epoch, uint128 totalSubsidies);
-    // finalizeEpoch
-    event PoolsProcessed(uint128 indexed epoch, uint128[] poolIds);
+    // 1. endEpoch
+    event EpochEnded(uint128 indexed epoch);
+    // 2. blockVerifierClaims
+    event VerifiersClaimsBlocked(uint128 indexed epoch, address[] verifiers, uint256 numOfVerifiers);
+    // 3. verifiersChecked
+    event EpochVerified(uint128 indexed epoch);
+    // 4. processRewardsAndSubsidies
+    event PoolsProcessed(uint128 indexed epoch, uint256 numOfPoolsProcessed);
     event EpochFullyProcessed(uint128 indexed epoch);
-    // depositRewards
-    event RewardsSetForEpoch(uint128 indexed epoch, uint128 totalRewards);
-    event RewardsDeposited(address indexed treasury, uint128 indexed epoch, uint128 totalRewards);
+    // 5. finalizeEpoch
+    event EpochDistributionSet(uint128 indexed epoch, uint128 totalRewards, uint128 totalSubsidies);
+    event EpochDistributionDeposited(address indexed treasury, uint128 indexed epoch, uint256 totalDistribution);
     event EpochFinalized(uint128 indexed epoch);
-    // forceFinalizeEpoch
-    event EpochForceFinalized(uint128 indexed epoch, bool blockClaims);
+    // 6. forceFinalizeEpoch
+    event EpochForceFinalized(uint128 indexed epoch);
+
 
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards & withdrawRegistrationFees
     event UnclaimedRewardsWithdrawn(address indexed treasury, uint128 indexed epoch, uint128 unclaimedRewards);
