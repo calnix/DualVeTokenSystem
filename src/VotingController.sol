@@ -644,7 +644,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         DataTypes.Epoch storage epochPtr = epochs[epoch];
         _assertSubsidyClaimWindow(epochPtr);
 
-        // verifier must not be blocked
+        // Verifier must not be blocked
         DataTypes.VerifierEpoch storage verifierEpochPtr = verifierEpochData[epoch][verifier];
         require(!verifierEpochPtr.isBlocked, Errors.ClaimsBlocked());
 
@@ -795,42 +795,42 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
         // Full epoch duration must be honoured before voting can be closed
         uint128 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epochToFinalize);
-        require(block.timestamp > epochEndTimestamp, Errors.EpochNotEnded());
+        require(block.timestamp > epochEndTimestamp, Errors.EpochNotOver());
         
         // Validate: epoch must be in Voting state
         DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];
-        require(epochPtr.state == DataTypes.EpochState.Voting, Errors.VotingInProgress());
+        require(epochPtr.state == DataTypes.EpochState.Voting, Errors.InvalidEpochState());
 
-        // Snapshot: total active pools for the epoch
-        epochPtr.totalActivePools = TOTAL_ACTIVE_POOLS;
+        uint128 totalActivePools = TOTAL_ACTIVE_POOLS;
 
         // Handle edge case: no active pools = instant finalization
-        if (TOTAL_ACTIVE_POOLS == 0) {
+        if (totalActivePools == 0) {
             epochPtr.state = DataTypes.EpochState.Finalized;
             emit Events.EpochFinalized(epochToFinalize);
             ++CURRENT_EPOCH_TO_FINALIZE;
             return;
         }
 
+        // Snapshot: total active pools for the epoch
+        epochPtr.totalActivePools = totalActivePools;
         // Transition to Ended
         epochPtr.state = DataTypes.EpochState.Ended;
+
         emit Events.EpochEnded(epochToFinalize);
     }
 
-    // Block verifier claims for a given epoch - guard for possible misbehavior on Payments Controller
-    function processVerifierChecks(bool allChecked, address[] calldata verifiers) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {    
+    // Process verifier checks for a given epoch - guard for possible misbehavior on Payments Controller
+    // can be repeatedly called when allCleared: false; finally call with allCleared: true to transition to Verified state.
+    function processVerifierChecks(bool allCleared, address[] calldata verifiers) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {    
         // ensure sequential processing
         uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
 
-        // Must be in Ended or Verified state (allows blocking in both phases)
+        // Must be in Ended state
         DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];
-        require(
-            epochPtr.state == DataTypes.EpochState.Ended || epochPtr.state == DataTypes.EpochState.Verified, 
-            Errors.InvalidEpochState()
-        );
+        require(epochPtr.state == DataTypes.EpochState.Ended, Errors.InvalidEpochState());
 
         // Transition to Verified
-        if(allChecked) {
+        if(allCleared) {
             epochPtr.state = DataTypes.EpochState.Verified;
             emit Events.EpochVerified(epochToFinalize);
             return;
@@ -838,8 +838,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
         // process verifiers to be blocked
         uint256 numOfVerifiers = verifiers.length;
-        require(numOfVerifiers > 0, Errors.InvalidArray());
-
+        _requireNonEmptyArray(numOfVerifiers);
 
         for (uint256 i; i < numOfVerifiers; ++i) {
             address verifier = verifiers[i];
@@ -986,7 +985,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         
         // Full epoch duration must be honoured before voting can be closed
         uint128 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epochToFinalize);
-        require(block.timestamp > epochEndTimestamp, Errors.EpochNotEnded());
+        require(block.timestamp > epochEndTimestamp, Errors.EpochNotOver());
 
         DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];
 

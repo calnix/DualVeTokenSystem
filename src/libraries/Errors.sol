@@ -112,8 +112,7 @@ library Errors {
     error RewardsAlreadyDeposited();
    
     // endEpoch
-    error EpochNotEnded();
-    error VotingInProgress();
+    error EpochNotOver();
     // blockVerifierClaims
     // processRewardsAndSubsidies
     error EpochNotVerified();
