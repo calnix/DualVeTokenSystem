@@ -750,7 +750,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     /** 
      * @notice Removes multiple voting pools in a single transaction.
      * @dev Pool removal is permanent and irreversible.
-     *      Pool removal is blocked during active end-of-epoch operations.
+     *      Pool removal is only permitted when the current epoch is in the Voting state, and the previous epoch has been finalized.
      * @param poolIds Array of pool IDs to remove (max 50 per call).
      */
     function removePools(uint128[] calldata poolIds) external whenNotPaused onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) {
@@ -781,10 +781,16 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
 //------------------------------- EndOfEpoch Operations -----------------------------------------
     
-
-    // end epoch, log active pools, close voting.
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // Step 1: End the current epoch and transition it to the Ended state
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    /**
+     * @notice Step 1: Ends the current epoch and transitions it to the Ended state.
+     * @dev Can only be called by addresses with the CronJob role.
+     *      The epoch must be in the Voting state and the previous epoch must have been finalized.
+     *      If there are no active pools, the epoch is instantly finalized and advanced to the next epoch.
+     */
     function endEpoch() external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
-        // ensure sequential processing
         uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
 
         // Full epoch duration must be honoured before voting can be closed
@@ -812,10 +818,19 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
         emit Events.EpochEnded(epochToFinalize);
     }
-
-    // Process verifier checks for a given epoch - guard for possible misbehavior on Payments Controller
-    // can be repeatedly called when allCleared: false; finally call with allCleared: true to transition to Verified state.
-    function processVerifierChecks(bool allCleared, address[] calldata verifiers) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {    
+    
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // Step 2: Process verifier checks for a given epoch and transition it to the Verified state
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    /**
+     * @notice Step 2: Processes verifier checks for a given epoch and transitions it to the Verified state.
+     * @dev The epoch must be in the Ended state.
+     *      Can be called multiple times to process verifiers in batches.
+     *      Call with allCleared: true to transition to Verified state.
+     * @param allCleared Flag indicating if all verifiers have been checked.
+     * @param verifiers Array of verifier addresses to be processed.
+     */
+    function processVerifierChecks(bool allCleared, address[] calldata verifiers) external whenNotPaused {    
         // ensure sequential processing
         uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
 
@@ -846,20 +861,25 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
 
-    // Process rewards & subsidies for a given epoch - allocate rewards & subsidies to pools
-    // Can be called multiple times to process pools in batches. Skips already-processed pools.
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // Step 3: Allocates rewards & subsidies to pools for a given epoch
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    /**
+     * @notice Step 3: Allocates rewards & subsidies to pools for a given epoch.
+     * @dev The epoch must be in the Verified state.
+     *      Can be called multiple times to process pools in batches.
+     *      Skips already-processed pools 
+     * @param poolIds Array of pool IDs to be allocated rewards & subsidies to. 
+     * @param rewards Array of reward amounts to be allocated to the pools. [can be 0]
+     * @param subsidies Array of subsidy amounts to be allocated to the pools. [can be 0]
+     */
     function processRewardsAndSubsidies(uint128[] calldata poolIds, uint128[] calldata rewards, uint128[] calldata subsidies) external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
-        // INPUT VALIDATION
         uint256 numOfPools = poolIds.length;
         _requireMatchingArrays(numOfPools, rewards.length, subsidies.length);
 
-        // ═══════════════════════════════════════════════════════════════════
-        // STATE VALIDATION
-        // ═══════════════════════════════════════════════════════════════════
         
+        // Must be in Verified state
         uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
-        
-        // Must be in Verified state (verifiers claims checked)
         DataTypes.Epoch storage epochPtr = epochs[epochToFinalize];
         require(epochPtr.state == DataTypes.EpochState.Verified, Errors.EpochNotVerified());
 
@@ -933,9 +953,16 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         }
     }
 
-    // Finalizes an epoch by depositing rewards & subsidies from treasury and opening claims.
-    // off-chain sanity checks should be executed before calling this function.
-    // once this function is called, claims are open for the epoch.
+
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // Step 4: Finalizes an epoch; transfers rewards & subsidies from treasury and opens claims
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    /**
+     * @notice Step 4: Finalizes an epoch by depositing rewards & subsidies from treasury and opening claims.
+     * @dev The epoch must be in the Processed state.
+     *      Final off-chain sanity checks should be executed before calling this function.
+     *      Once this function is called, claims are open for the epoch.
+     */
     function finalizeEpoch() external onlyRole(Constants.CRON_JOB_ROLE) whenNotPaused {
         uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;
 
@@ -968,8 +995,14 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         }
     }
 
-    // Force finalize an epoch in case of unexpected conditions or incorrect processing/execution
-    // Subsidies and rewards are to be distributed directly to actors; claims are blocked.
+
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // Fail-safe: Forces the finalization of an epoch in case of unexpected conditions or incorrect processing/execution
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    /**
+     * @notice Forces the finalization of an epoch in case of unexpected conditions or incorrect processing/execution.
+     * @dev Subsidies and rewards are to be distributed directly to actors; claims are blocked.
+     */
     function forceFinalizeEpoch() external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;   
         
