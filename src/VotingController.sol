@@ -886,7 +886,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             uint128 poolRewards = rewards[i];       // can be 0
             uint128 poolSubsidies = subsidies[i];   // can be 0
 
-
             // Cache: pool & epoch pool pointers
             DataTypes.Pool storage poolPtr = pools[poolId];
             DataTypes.PoolEpoch storage epochPoolPtr = epochPools[epochToFinalize][poolId];
@@ -901,10 +900,10 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             // pool has 0 allocations: skip 
             if(poolRewards == 0 && poolSubsidies == 0) continue;
 
+
             // get pool's total votes for the epoch
             uint128 poolVotes = epochPoolPtr.totalVotes;
-            // pool has 0 votes: skip 
-            if(poolVotes == 0) continue;
+            if(poolVotes == 0) continue;                // pool has 0 votes: skip 
                            
             // allocate rewards
             if(poolRewards > 0) {
@@ -963,6 +962,11 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         
         emit Events.EpochDistributionSet(epochToFinalize, totalRewards, totalSubsidies);
 
+        // Transition Epoch to Finalized 
+        epochPtr.state = DataTypes.EpochState.Finalized;
+        ++CURRENT_EPOCH_TO_FINALIZE;
+        emit Events.EpochFinalized(epochToFinalize); 
+
         // Transfer funds from treasury
         uint256 totalDistribution = totalRewards + totalSubsidies;
         if(totalDistribution > 0) {
@@ -971,11 +975,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             emit Events.EpochDistributionDeposited(treasury, epochToFinalize, totalDistribution);
             ESMOCA.safeTransferFrom(treasury, address(this), totalDistribution);
         }
-
-        // Transition Epoch to Finalized 
-        epochPtr.state = DataTypes.EpochState.Finalized;
-        emit Events.EpochFinalized(epochToFinalize); 
-        ++CURRENT_EPOCH_TO_FINALIZE;
     }
 
     // Force finalize an epoch in case of unexpected conditions or incorrect processing/execution
@@ -983,7 +982,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     function forceFinalizeEpoch() external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         uint128 epochToFinalize = CURRENT_EPOCH_TO_FINALIZE;   
         
-        // Full epoch duration must be honoured before voting can be closed
+        // Full epoch duration must be honoured before force finalization
         uint128 epochEndTimestamp = EpochMath.getEpochEndTimestamp(epochToFinalize);
         require(block.timestamp > epochEndTimestamp, Errors.EpochNotOver());
 
@@ -992,11 +991,8 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // Cannot force finalize already finalized epoch
         require(!_isFinalized(epochPtr.state), Errors.EpochAlreadyFinalized());
 
-        // Snapshot total active pools if not already set
-        if (epochPtr.totalActivePools == 0 && TOTAL_ACTIVE_POOLS > 0) {
-            epochPtr.totalActivePools = TOTAL_ACTIVE_POOLS;
-        }
-        epochPtr.poolsProcessed = epochPtr.totalActivePools;
+        // Snapshot total active pools for the epoch
+        epochPtr.totalActivePools = TOTAL_ACTIVE_POOLS;
 
         // Zero out rewards & subsidies allocations (claims blocked)
         delete epochPtr.totalRewardsAllocated;
@@ -1349,11 +1345,13 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     function _assertRewardsClaimWindow(DataTypes.Epoch storage epochPtr) internal view {
         require(epochPtr.state == DataTypes.EpochState.Finalized, Errors.EpochNotFinalized());
         require(epochPtr.totalRewardsWithdrawn == 0, Errors.RewardsAlreadyWithdrawn());
+        require(epochPtr.totalRewardsAllocated > 0, Errors.NoRewardsToClaim());
     }
 
     function _assertSubsidyClaimWindow(DataTypes.Epoch storage epochPtr) internal view {
         require(epochPtr.state == DataTypes.EpochState.Finalized, Errors.EpochNotFinalized());
         require(epochPtr.totalSubsidiesWithdrawn == 0, Errors.SubsidiesAlreadyWithdrawn());
+        require(epochPtr.totalSubsidiesAllocated > 0, Errors.NoSubsidiesToClaim());
     }
 
     // Validates & returns treasury address
