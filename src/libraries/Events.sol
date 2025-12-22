@@ -84,8 +84,8 @@ library Events {
 // --------- VotingController.sol ---------
     
     // createPool(), removePool()
-    event PoolsCreated(uint128 indexed startPoolId, uint128 indexed endPoolId, uint128 count);
-    event PoolsRemoved(uint128[] poolIds, uint128 votesToRemove);
+    event PoolsCreated(uint128 indexed epoch, uint128 startPoolId, uint128 endPoolId, uint128 count);
+    event PoolsRemoved(uint128 indexed epoch, uint128[] poolIds);
 
     // vote(), migrateVotes()
     event Voted(uint128 indexed epoch, address indexed account, uint128[] poolIds, uint128[] votes, bool isDelegated);

@@ -77,7 +77,6 @@ library Errors {
     error InvalidEpochState();
     error EpochAlreadyFinalized();
     error EpochNotFinalized();
-    error EpochFinalized();
     error EpochNotProcessed();
     error NoAvailableVotes();
     error ZeroVotes();
@@ -102,7 +101,7 @@ library Errors {
     error FutureEpoch();
     error NoVotesInPool();
     error NoSubsidiesForPool(); 
-    error SubsidyAlreadyClaimed();
+    error SubsidyAlreadyClaimedOrNothingToClaim();
     error VerifierAccruedSubsidiesGreaterThanPool();
     error SubsidyReceivableGreaterThanPoolAllocation();
     // depositSubsidies

@@ -231,7 +231,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         ) 
         = isDelegated ? (delegateEpochData, delegatesEpochPoolData) : (usersEpochData, usersEpochPoolData);
 
-        // executed each time, since delegate fee decreases are instantly applied
+        // executed each time; delegate fee decreases are instantly applied
         if (isDelegated) _validateDelegateAndRecordFee(currentEpoch);
 
         // get account's total voting power: benchmarked to end of epoch [forward-decay]
@@ -245,7 +245,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint128 availableVotes = totalVotes - spentVotes;
         require(availableVotes > 0, Errors.NoAvailableVotes());
 
-        // update votes at a pool+epoch level
+        // update votes at a pool level
         // does not check for duplicate poolIds in the array; users can vote repeatedly for the same pool
         uint128 totalNewVotes;
         for(uint256 i; i < length; ++i) {
@@ -291,18 +291,17 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
      * Reverts if input array lengths mismatch, pools do not exist, destination pool is not active, insufficient votes in source pool, or epoch is finalized.
      */
     function migrateVotes(uint128[] calldata srcPoolIds, uint128[] calldata dstPoolIds, uint128[] calldata votesToMigrate, bool isDelegated) external whenNotPaused {
-        // input check: array lengths must be non-empty and match
         uint256 length = srcPoolIds.length;
         _requireMatchingArrays(length, dstPoolIds.length, votesToMigrate.length);
 
-        // get current epoch
+        // get current epoch & cache epoch pointer
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();          
         DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
 
-        // Voting only allowed in Voting state
+        // voting only allowed in Voting state
         require(epochPtr.state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
 
-        // Validate delegate and record fee: executed each time, since delegate fee decreases are instantly applied
+        // executed each time; delegate fee decreases are instantly applied
         if (isDelegated) _validateDelegateAndRecordFee(currentEpoch);
 
 
@@ -356,10 +355,12 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 //------------------------------- Delegate functions --------------------------------------------------------------
 
     /**
-     * @notice Registers the caller as a delegate and activates their status.
-     * @dev Requires payment of the registration fee in Native Moca. 
-     *      Calls VotingEscrowMoca.registerAsDelegate() to mark the delegate as active.
-     * @param feePct The fee percentage to be applied to the delegate's rewards.
+     * @notice Registers the caller as a delegate, activating delegate status for voting and rewards.
+     * @dev Requires the payment of the delegate registration fee in native MOCA.
+     *      Marks the caller as a registered delegate in VotingController and VotingEscrowMoca.
+     *      Sets the delegate fee percentage for the current epoch and records it in delegateHistoricalFeePcts.
+     *      Reverts: if the caller is already registered or if the fee percentage is invalid.
+     * @param feePct Fee percentage to apply to delegate’s rewards (2 decimal precision; e.g., 1000 = 10.00%).
      */
     function registerAsDelegate(uint128 feePct) external payable whenNotPaused {
         require(msg.value == DELEGATE_REGISTRATION_FEE, Errors.InvalidAmount());
@@ -371,15 +372,15 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         DataTypes.Delegate storage delegatePtr = delegates[msg.sender];
         require(!delegatePtr.isRegistered, Errors.DelegateAlreadyRegistered());
         
-        // register on VotingEscrowMoca [if delegate is already registered on VotingEscrowMoca: reverts]
+        // register on VotingEscrowMoca [reverts: if delegate is already registered]
         VEMOCA.delegateRegistrationStatus(msg.sender, true);
 
-        // storage: register delegate & set fee percentage
+        // register delegate & set fee percentage
         delegatePtr.isRegistered = true;
-        delegatePtr.currentFeePct = feePct;
+        delegatePtr.currentFeePct = feePct; 
         delegateHistoricalFeePcts[msg.sender][EpochMath.getCurrentEpochNumber()] = feePct;
         
-        // update total registration fees collected
+        // increment total registration fees collected
         TOTAL_REGISTRATION_FEES_COLLECTED += uint128(msg.value);
 
         emit Events.DelegateRegistered(msg.sender, feePct);
@@ -388,8 +389,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     /**
      * @notice Updates the delegate's fee percentage for rewards.
      * @dev Fee decreases take effect immediately and overwrites for the current epoch; 
-     * fee increases are scheduled for (currentEpoch + FEE_INCREASE_DELAY_EPOCHS).
-     * After an epoch ends, fee percentages for that epoch are locked.
+     *      Fee increases are scheduled for (currentEpoch + FEE_INCREASE_DELAY_EPOCHS).
      * @param newFeePct New fee percentage [100%: 10_000, 1%: 100, 0.1%: 10 | 2dp precision (XX.yy)]
      */
     function updateDelegateFee(uint128 newFeePct) external whenNotPaused {
@@ -432,6 +432,9 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     /**
      * @notice Unregisters the caller as a delegate.
      * @dev Removes delegate status and sets them as inactive in VotingEscrowMoca. Registration fee is non-refundable.
+     *      Reverts: if the caller is not registered or if they have active votes in the current epoch.
+     *      Marks the caller as an unregistered delegate in VotingEscrowMoca.
+     *      Does not check registration status on VotingEscrowMoca; and assumed to be registered.
      */
     function unregisterAsDelegate() external whenNotPaused {
         DataTypes.Delegate storage delegatePtr = delegates[msg.sender];      
@@ -441,7 +444,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         require(delegateEpochData[currentEpoch][msg.sender].totalVotesSpent == 0, Errors.CannotUnregisterWithActiveVotes());
  
-        // storage: unregister delegate
+        // unregistration: wipe storage of delegate data
         delete delegatePtr.isRegistered;
         delete delegatePtr.currentFeePct;
         delete delegatePtr.nextFeePct;
@@ -464,7 +467,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
      * @param poolIds Array of pool IDs to claim rewards from.
      */
     function claimPersonalRewards(uint128 epoch, uint128[] calldata poolIds) external whenNotPaused {
-        // input validation
         uint256 numOfPools = poolIds.length;
         _requireNonEmptyArray(numOfPools);
 
@@ -475,7 +477,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         _assertRewardsClaimWindow(epochPtr);
 
 
-        uint128 userTotalRewards;
+        uint128 totalClaimable;
 
         for(uint256 i; i < numOfPools; ++i) {
             uint128 poolId = poolIds[i];
@@ -495,39 +497,38 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             uint128 userRewards = _mulDiv(userVotes, poolRewards, poolTotalVotes);
             if(userRewards == 0) continue;
             
-            // Storage: set user's totalRewards for this pool
+            // Set user's totalRewards for this pool
             userPoolAccountPtr.totalRewards = userRewards;
 
             // Update counter
-            userTotalRewards += userRewards;
+            totalClaimable += userRewards;
         }
 
-        require(userTotalRewards > 0, Errors.NoRewardsToClaim());
+        require(totalClaimable > 0, Errors.NoRewardsToClaim());
         
-        // Increment user's total rewards for this epoch
-        usersEpochData[epoch][msg.sender].totalRewards += userTotalRewards;
+        // Increment caller's total rewards for this epoch
+        usersEpochData[epoch][msg.sender].totalRewards += totalClaimable;
 
         // Increment epoch & global total claimed
-        epochPtr.totalRewardsClaimed += userTotalRewards;
-        TOTAL_REWARDS_CLAIMED += userTotalRewards;
+        epochPtr.totalRewardsClaimed += totalClaimable;
+        TOTAL_REWARDS_CLAIMED += totalClaimable;
 
-        emit Events.RewardsClaimed(msg.sender, epoch, poolIds, userTotalRewards);
+        emit Events.RewardsClaimed(msg.sender, epoch, poolIds, totalClaimable);
 
-        // transfer esMoca to user
-        ESMOCA.safeTransfer(msg.sender, userTotalRewards);
+        // Transfer rewards to user
+        ESMOCA.safeTransfer(msg.sender, totalClaimable);
     }
 
     /**
      * @notice Claims net rewards earned via delegation of votes, across multiple delegates, for a given epoch.
      * @dev Processes rewards in batches by delegates and their respective pools. 
-     *      Net rewards are aggregated and transferred to the user at the end.
+     *      Net rewards are aggregated and transferred to the caller(delegator). 
      *      The function should be called with poolIds selected to maximize net rewards per claim.
-     * @param epoch The epoch for which rewards are being claimed.
-     * @param delegateList Array of delegate addresses from whom the user is claiming rewards.
+     * @param epoch Epoch number for which rewards are claimed.
+     * @param delegateList Array of delegate addresses to claim rewards from.
      * @param poolIds Array of poolId arrays, each corresponding to the pools voted by a specific delegate.
      */
     function claimRewardsFromDelegates(uint128 epoch, address[] calldata delegateList, uint128[][] calldata poolIds) external whenNotPaused {
-        // input validation
         uint256 numOfDelegates = delegateList.length;
         _requireMatchingArrays(numOfDelegates, poolIds.length);
 
@@ -543,9 +544,10 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             address delegate = delegateList[i];
             require(delegate != address(0), Errors.InvalidAddress());
 
-            // Skip delegates who did not vote in this epoch
+            // Skip: delegate did not vote in this epoch
             if (delegateEpochData[epoch][delegate].totalVotesSpent == 0) continue;
 
+            // Skip: no pools specified for this delegate
             uint128[] calldata poolIdsForDelegate = poolIds[i];
             if (poolIdsForDelegate.length == 0) continue;
             
@@ -656,8 +658,8 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             uint128 poolAllocatedSubsidies = poolEpochPtr.totalSubsidiesAllocated;
             if(poolAllocatedSubsidies == 0) continue;
 
-            // verifier must not have claimed subsidies for this pool
-            require(verifierEpochPoolSubsidies[epoch][poolId][verifier] == 0, Errors.SubsidyAlreadyClaimed());
+            // prevents double-claiming
+            require(verifierEpochPoolSubsidies[epoch][poolId][verifier] == 0, Errors.SubsidyAlreadyClaimedOrNothingToClaim());
 
             // get verifier's accrued subsidies for {pool, epoch} & pool's accrued subsidies [AccruedSubsidies in 1e6 precision]
             // reverts if msg.sender is not the verifier's asset address
@@ -675,7 +677,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             uint256 ratio = (verifierAccruedSubsidies * 1E18) / poolAccruedSubsidies; 
             
 
-            // Safe downcast: ratio ∈ [0, 1e18] since verifierAccrued ≤ poolAccrued by definition.
+            // Safe downcast: ratio ∈ [0, 1e18] since verifierAccrued ≤ poolAccrued
             // therefore: (ratio * poolAllocatedSubsidies) / 1e18 ≤ poolAllocatedSubsidies (uint128)
 
             // Calculate esMoca subsidy receivable [poolAllocatedSubsidies in 1e18 precision]
@@ -741,13 +743,13 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         TOTAL_POOLS_CREATED = endPoolId;
         TOTAL_ACTIVE_POOLS += count;
 
-        emit Events.PoolsCreated(startPoolId, endPoolId, count);
+        emit Events.PoolsCreated(currentEpoch, startPoolId, endPoolId, count);
     }
 
 
-    /**
+    /** 
      * @notice Removes multiple voting pools in a single transaction.
-     * @dev Callable only by VotingController admin.
+     * @dev Pool removal is permanent and irreversible.
      *      Pool removal is blocked during active end-of-epoch operations.
      * @param poolIds Array of pool IDs to remove (max 50 per call).
      */
@@ -762,14 +764,11 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // Previous epoch must be finalized
         require(_isFinalized(epochs[currentEpoch - 1].state), Errors.EpochNotFinalized());
 
-        // accumulate votes to remove
-        uint128 votesToRemove;
-
+        
         for (uint256 i; i < numOfPools; ++i) {
             uint128 poolId = poolIds[i];
-            require(pools[poolId].isActive, Errors.PoolNotActive());
 
-            votesToRemove += epochPools[currentEpoch][poolId].totalVotes;
+            require(pools[poolId].isActive, Errors.PoolNotActive());
 
             delete pools[poolId].isActive;
         }
@@ -777,7 +776,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // update global counters
         TOTAL_ACTIVE_POOLS -= uint128(numOfPools);
 
-        emit Events.PoolsRemoved(poolIds, votesToRemove);
+        emit Events.PoolsRemoved(currentEpoch, poolIds);
     }
 
 //------------------------------- EndOfEpoch Operations -----------------------------------------
@@ -1261,24 +1260,24 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
             // Get or calculate delegate's share of pool rewards 
             uint128 delegatePoolRewards = delegatePoolAccountPtr.totalRewards;
-            // if not previously calculated, compute
+            // if delegatePoolRewards = 0, the if-block is repeated [known and accepted behavior; handle on the FE]
             if (delegatePoolRewards == 0) {
-                
+                // calc. delegate's share of pool rewards
                 delegatePoolRewards = _mulDiv(delegatePoolVotes, totalPoolRewards, totalPoolVotes);
                 if (delegatePoolRewards == 0) continue;
                 
-                // store: delegate's rewards for this {pool, epoch} - done once, reused by subsequent callers
+                // store: delegate's rewards for this {pool, epoch}
                 delegatePoolAccountPtr.totalRewards = delegatePoolRewards;
             }
            
-            // calc. user's gross rewards for the pool
+            // Calc. user's gross rewards for the pool
             uint128 userGrossRewardsForPool = _mulDiv(userDelegatedVP, delegatePoolRewards, delegateTotalVP);
             if (userGrossRewardsForPool == 0) continue;
             
-            // book user's gross rewards for this {pool, epoch}
+            // Book user's gross rewards for this {pool, epoch}
             pairAccountPtr.userPoolGrossRewards[poolId] = userGrossRewardsForPool;
             
-            // calc. delegate's fee for this pool [could be 0 if delegate did not vote this epoch]
+            // Calc. delegate's fee for this pool [could be 0: rounding down or 0 feePct]
             uint128 delegateFeeForPool = _mulDiv(userGrossRewardsForPool, delegateFeePct, uint128(Constants.PRECISION_BASE));
             
             // update counters
@@ -1302,7 +1301,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         }
         
         // ═══════════════════════════════════════════════════════════════════
-        // CLAIMING PHASE: Transfer delta between total and already-claimed
+        // CLAIMING PHASE: Calculate delta between total and already-claimed
         // ═══════════════════════════════════════════════════════════════════
         uint128 totalClaimable;
 
