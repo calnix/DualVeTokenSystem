@@ -352,7 +352,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         emit Events.VotesMigrated(currentEpoch, msg.sender, srcPoolIds, dstPoolIds, votesToMigrate, isDelegated);
     }
 
-//------------------------------- Delegate functions --------------------------------------------------------------
+//------------------------------- Delegate functions --------------------------------------------------------------------------
 
     /**
      * @notice Registers the caller as a delegate, activating delegate status for voting and rewards.
@@ -456,7 +456,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         VEMOCA.delegateRegistrationStatus(msg.sender, false);
     }
 
-//------------------------------- Claiming rewards & fees functions ------------------------------------------------
+//------------------------------- Claiming rewards & fees functions -----------------------------------------------------------
 
     /**
      * @notice Claims esMoca rewards for selected pools in a finalized epoch.
@@ -489,19 +489,20 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             // prevent double claiming
             require(userPoolAccountPtr.totalRewards == 0, Errors.AlreadyClaimedOrNothingToClaim()); 
 
-            uint128 userVotes = userPoolAccountPtr.totalVotesSpent;
-            uint128 poolRewards = poolEpochPtr.totalRewardsAllocated;
-            uint128 poolTotalVotes = poolEpochPtr.totalVotes;
-
             // Calculate user's rewards for the pool [all in 1e18 precision]
-            uint128 userRewards = _mulDiv(userVotes, poolRewards, poolTotalVotes);
-            if(userRewards == 0) continue;
+            uint128 claimable = _mulDiv(
+                userPoolAccountPtr.totalVotesSpent, 
+                poolEpochPtr.totalRewardsAllocated, 
+                poolEpochPtr.totalVotes
+            );
+
+            if(claimable == 0) continue;
             
             // Set user's totalRewards for this pool
-            userPoolAccountPtr.totalRewards = userRewards;
+            userPoolAccountPtr.totalRewards = claimable;
 
             // Update counter
-            totalClaimable += userRewards;
+            totalClaimable += claimable;
         }
 
         require(totalClaimable > 0, Errors.NoRewardsToClaim());
@@ -624,7 +625,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
 
-//------------------------------- Claim Subsidies Function ----------------------------------------------
+//------------------------------- Claim Subsidies Function --------------------------------------------------------------------
     
     /**
      * @notice Claim subsidies for a verifier in the specified pools for a given epoch.
@@ -712,7 +713,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
 
-//------------------------------- VotingControllerAdmin: create/remove pools ----------------------------------------------------
+//------------------------------- VotingControllerAdmin: create/remove pools --------------------------------------------------
 
     /**
      * @notice Creates several new voting pools in a single transaction.
@@ -779,7 +780,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         emit Events.PoolsRemoved(currentEpoch, poolIds);
     }
 
-//------------------------------- EndOfEpoch Operations -----------------------------------------
+//------------------------------- End Of Epoch Operations ---------------------------------------------------------------------
     
     // ════════════════════════════════════════════════════════════════════════════════════════
     // Step 1: End the current epoch and transition it to the Ended state
@@ -1031,13 +1032,13 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         emit Events.EpochForceFinalized(epochToFinalize);
     }
 
-//------------------------------- AssetManager Role: withdraw unclaimed rewards & subsidies, registration fees -----------------------------------------
+//------------------------------- AssetManager: withdraw unclaimed rewards & subsidies, registration fees ----------------------
     
     /**
-     * @notice Transfers all unclaimed and residual rewards for an epoch to the treasury.
+     * @notice Withdraws all unclaimed and residual rewards for an epoch to the treasury.
      * @dev Only callable by Asset Manager after UNCLAIMED_DELAY_EPOCHS. 
-     *      Requires the epoch to be finalized, rewards not yet withdrawn, treasury address set, and unclaimed rewards present.
-     * @param epoch Epoch number to withdraw unclaimed rewards from.
+     *      Requires the epoch to be finalized, rewards not yet withdrawn, treasury address set, and non-zero unclaimed rewards.
+     * @param epoch Epoch number to withdraw unclaimed rewards
      */
     function withdrawUnclaimedRewards(uint128 epoch) external onlyRole(Constants.ASSET_MANAGER_ROLE) whenNotPaused {
         // Withdraw delay must have passed
@@ -1095,7 +1096,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         ESMOCA.safeTransfer(votingControllerTreasury, unclaimedSubsidies);
     }
 
-    // note: treasury address should be able to handle both wMoca and Moca
+    // note: treasury address should be able to handle both wMoca and native Moca
     /**
      * @notice Transfers all unclaimed registration fees to the treasury.
      * @dev Only callable by Asset Manager. Reverts if treasury address is unset or no unclaimed fees.
@@ -1116,7 +1117,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         _transferMocaAndWrapIfFailWithGasLimit(WMOCA, votingControllerTreasury, unclaimedRegistrationFees, MOCA_TRANSFER_GAS_LIMIT);
     }
     
-//------------------------------- VotingControllerAdmin: setters ---------------------------------------------------------
+//------------------------------- VotingControllerAdmin: setters ----------------------------------------------------------------
 
 
     function setVotingControllerTreasury(address newVotingControllerTreasury) external onlyRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE) {
@@ -1195,7 +1196,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
     }
 
-//------------------------------- Internal functions ------------------------------------------------------
+//------------------------------- Internal functions ----------------------------------------------------------------------------
 
     /** Note: Repeated overwrites within the same epoch are known and accepted
      * @notice Validates delegate registration and ensures historical fee is recorded for the epoch
@@ -1353,25 +1354,25 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         return totalClaimable;
     }
 
-    // calc. in uint256 space to avoid overflow, then downcasted to uint128
+    // calc. in uint256 space to avoid overflow, then down-casted to uint128
     function _mulDiv(uint128 multiplicand, uint128 multiplier, uint128 divisor) internal pure returns (uint128) {
         if (multiplicand == 0 || multiplier == 0 || divisor == 0) return 0;
         return uint128((uint256(multiplicand) * multiplier) / divisor);
     }
 
-    // createPools() & removePools() call this
-    // Returns true if epoch is in a finalized or forced finalized state
+    // Returns true if epoch is in a finalized or forced-finalized state
     function _isFinalized(DataTypes.EpochState state) internal pure returns (bool) {
         return uint8(state) >= uint8(DataTypes.EpochState.Finalized);
     }
 
-
+    // Asserts that the epoch is finalized and rewards are available for claiming
     function _assertRewardsClaimWindow(DataTypes.Epoch storage epochPtr) internal view {
         require(epochPtr.state == DataTypes.EpochState.Finalized, Errors.EpochNotFinalized());
         require(epochPtr.totalRewardsWithdrawn == 0, Errors.RewardsAlreadyWithdrawn());
         require(epochPtr.totalRewardsAllocated > 0, Errors.NoRewardsToClaim());
     }
 
+    // Asserts that the epoch is finalized and subsidies are available for claiming
     function _assertSubsidyClaimWindow(DataTypes.Epoch storage epochPtr) internal view {
         require(epochPtr.state == DataTypes.EpochState.Finalized, Errors.EpochNotFinalized());
         require(epochPtr.totalSubsidiesWithdrawn == 0, Errors.SubsidiesAlreadyWithdrawn());
@@ -1396,7 +1397,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             uint128 poolId = poolIds[i];
             DataTypes.Account storage accountPtr = usersEpochPoolData[epoch][poolId][user];
 
-            if (accountPtr.totalRewards != 0) continue; // skip: already claimed 
+            if (accountPtr.totalRewards > 0) continue; // skip: already claimed 
 
             DataTypes.PoolEpoch storage poolEpochPtr = epochPools[epoch][poolId];
             uint128 claimable = _mulDiv(
@@ -1546,21 +1547,18 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
      * @notice Exfiltrate all contract-held assets (rewards + subsidies + registration fees) to the treasury.
      * @dev Disregards all outstanding claims and does not update any contract state.
      *      Intended for emergency use only when the contract is frozen.
-     *      Only callable by the Emergency Exit Handler [bot script].
      *      This is a kill switch function
      */
     function emergencyExit() external onlyRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE) {
         require(isFrozen == 1, Errors.NotFrozen());
 
         // get treasury address
-        address votingControllerTreasury = VOTING_CONTROLLER_TREASURY;
-        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
-
-        // exfil esMoca [rewards + subsidies]
+        address votingControllerTreasury = _getValidatedTreasury();
+        
+        // 1. exfil esMoca [rewards + subsidies]
         ESMOCA.safeTransfer(votingControllerTreasury, ESMOCA.balanceOf(address(this)));
 
-
-        // exfil moca [registration fees]
+        // 2. exfil moca [registration fees]
         _transferMocaAndWrapIfFailWithGasLimit(WMOCA, votingControllerTreasury, address(this).balance, MOCA_TRANSFER_GAS_LIMIT);
 
         emit Events.EmergencyExit(votingControllerTreasury);
@@ -1568,25 +1566,40 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
 //------------------------------- View functions ----------------------------------------------------------
     
-    // returns: totalClaimable, perPoolClaimable
+    /**
+     * @notice For voters: view claimable personal rewards
+     * @param epoch Target epoch
+     * @param user User(Voter) address
+     * @param poolIds Pools per user
+     * @return totalClaimable Total rewards claimable
+     * @return perPoolClaimable Rewards claimable per pool
+     */
     function viewClaimablePersonalRewards(uint128 epoch, address user, uint128[] calldata poolIds) external view returns (uint128, uint128[] memory) {
-        uint256 numOfPools = poolIds.length;
-        _requireNonEmptyArray(numOfPools);
         require(user != address(0), Errors.InvalidAddress());
 
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
-        _assertRewardsClaimWindow(epochPtr);
+        uint256 numOfPools = poolIds.length;
+        _requireNonEmptyArray(numOfPools);
+
+        _assertRewardsClaimWindow(epochs[epoch]);
 
         // returns: totalClaimable, perPoolClaimable
         return _previewPersonalRewards(epoch, user, poolIds);
     }
 
-    // returns: netClaimable, feeClaimable
+
+    /**
+     * @notice For delegators: view claimable delegated rewards and fees
+     * @param epoch Target epoch
+     * @param user User(delegator) address
+     * @param delegate Delegate address
+     * @param poolIds Pools per delegator
+     * @return netClaimable Net rewards claimable
+     * @return feeClaimable Fees payable to delegate
+     */
     function viewClaimableDelegatedRewards(uint128 epoch, address user, address delegate, uint128[] calldata poolIds) external view returns (uint128, uint128) {
         require(user != address(0) && delegate != address(0), Errors.InvalidAddress());
 
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
-        _assertRewardsClaimWindow(epochPtr);
+        _assertRewardsClaimWindow(epochs[epoch]);
 
         // delegate must have voted in this epoch to have claimable rewards
         if (delegateEpochData[epoch][delegate].totalVotesSpent == 0) {
@@ -1597,13 +1610,20 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         return _previewDelegationRewards(epoch, user, delegate, poolIds);
     }
 
-    // returns: totalFeeClaimable, perDelegatorFees
+
+    /**
+     * @notice For delegates: view total and per-delegator claimable fees
+     * @param epoch Target epoch
+     * @param delegators List of delegators
+     * @param poolIds Pools per delegator
+     * @return totalFeeClaimable Total fees claimable
+     * @return perDelegatorFees Fees claimable per delegator
+     */
     function viewClaimableDelegationFees(uint128 epoch, address[] calldata delegators, uint128[][] calldata poolIds) external view returns (uint128, uint128[] memory) {
         uint256 numOfDelegators = delegators.length;
         _requireMatchingArrays(numOfDelegators, poolIds.length);
 
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
-        _assertRewardsClaimWindow(epochPtr);
+        _assertRewardsClaimWindow(epochs[epoch]);
 
         require(delegateEpochData[epoch][msg.sender].totalVotesSpent > 0, Errors.NoFeesToClaim());
 
@@ -1629,7 +1649,15 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
 
-    // returns: totalClaimable, perPoolClaimable
+    /**
+     * @notice For verifiers: view claimable subsidies for a given epoch and pools.
+     * @param epoch Target epoch
+     * @param poolIds List of pool IDs
+     * @param verifier Verifier address
+     * @param verifierAssetManager Verifier's asset manager address
+     * @return totalClaimable Total claimable subsidies
+     * @return perPoolClaimable Claimable subsidies for each pool
+     */
     function viewClaimableSubsidies(uint128 epoch, uint128[] calldata poolIds, address verifier, address verifierAssetManager) external view returns (uint128, uint128[] memory) {
         require(verifier != address(0), Errors.InvalidAddress());
         require(verifierAssetManager != address(0), Errors.InvalidAddress());
@@ -1637,8 +1665,10 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint256 numOfPools = poolIds.length;
         _requireNonEmptyArray(numOfPools);
 
-        DataTypes.Epoch storage epochPtr = epochs[epoch];
-        _assertSubsidyClaimWindow(epochPtr);
+        _assertSubsidyClaimWindow(epochs[epoch]);
+
+        // Verifier must not be blocked
+        require(!verifierEpochData[epoch][verifier].isBlocked, Errors.ClaimsBlocked());
 
         // counters
         uint128 totalClaimable;
