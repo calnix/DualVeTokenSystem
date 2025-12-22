@@ -1068,8 +1068,8 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     /**
      * @notice Transfers all unclaimed subsidies for an epoch to the treasury after the required delay.
      * @dev Only callable by Asset Manager after UNCLAIMED_DELAY_EPOCHS. 
-     *      Requires the epoch to be finalized, subsidies not yet withdrawn, and nonzero unclaimed subsidies.
-     * @param epoch Epoch to withdraw unclaimed subsidies from.
+     *      Requires the epoch to be finalized, subsidies not yet withdrawn, treasury address set, and non-zero unclaimed subsidies.
+     * @param epoch Epoch number to withdraw unclaimed subsidies
      */
     function withdrawUnclaimedSubsidies(uint128 epoch) external onlyRole(Constants.ASSET_MANAGER_ROLE) whenNotPaused {
         // Withdraw delay must have passed
