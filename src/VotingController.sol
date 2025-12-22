@@ -107,60 +107,66 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 //------------------------------- Constructor ------------------------------------------------------------------
 
     constructor(
-        uint128 maxDelegateFeePct, uint128 feeDelayEpochs, uint128 unclaimedDelayEpochs, address wMoca_, uint128 mocaTransferGasLimit, 
-        address votingEscrowMoca_, address escrowedMoca_, address votingControllerTreasury_, address paymentsController_,
+        address wMoca, address esMoca, address veMoca, address paymentsController, address votingControllerTreasury,
         address globalAdmin, address votingControllerAdmin, address monitorAdmin, address cronJobAdmin,
-        address monitorBot, address emergencyExitHandler, address assetManager, uint128 delegateRegistrationFee
+        address monitorBot, address emergencyExitHandler, address assetManager, 
+        uint128 delegateRegistrationFee, uint128 maxDelegateFeePct, uint128 feeDelayEpochs, uint128 unclaimedDelayEpochs, 
+        uint128 mocaTransferGasLimit
     ) {
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // Contract addresses
+        require(wMoca != address(0), Errors.InvalidAddress());
+        require(esMoca != address(0), Errors.InvalidAddress());
+        require(veMoca != address(0), Errors.InvalidAddress());
+        require(paymentsController != address(0), Errors.InvalidAddress());
+        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
+        
+        // set immutable addresses
+        WMOCA = wMoca;
+        ESMOCA = IERC20(esMoca);
+        VEMOCA = IVotingEscrowMoca(veMoca);
+        PAYMENTS_CONTROLLER = IPaymentsController(paymentsController);
+        // mutable contract address
+        VOTING_CONTROLLER_TREASURY = votingControllerTreasury;
 
-        // check: voting controller treasury is set
-        require(votingControllerTreasury_ != address(0), Errors.InvalidAddress());
-        VOTING_CONTROLLER_TREASURY = votingControllerTreasury_;
-        // check: payments controller is set
-        require(paymentsController_ != address(0), Errors.InvalidAddress());
-        PAYMENTS_CONTROLLER = IPaymentsController(paymentsController_);
-        // check: voting escrow moca is set
-        require(votingEscrowMoca_ != address(0), Errors.InvalidAddress());
-        VEMOCA = IVotingEscrowMoca(votingEscrowMoca_);
-        // check: escrowed moca is set
-        require(escrowedMoca_ != address(0), Errors.InvalidAddress());
-        ESMOCA = IERC20(escrowedMoca_);
-        // wrapped moca 
-        require(wMoca_ != address(0), Errors.InvalidAddress());
-        WMOCA = wMoca_;
+        // ═══════════════════════════════════════════════════════════════════
+        // Contract params
 
+        // allowed to be 0: no registration fee
+        DELEGATE_REGISTRATION_FEE = delegateRegistrationFee;
 
-        // set fee increase delay
+        // fee increase delay: must be greater than 0 [1 epoch minimum]
         require(feeDelayEpochs > 0, Errors.InvalidDelayPeriod());
         FEE_INCREASE_DELAY_EPOCHS = feeDelayEpochs;
 
-        // set unclaimed delay
+        // unclaimed delay: must be greater than 0 [1 epoch minimum]
         require(unclaimedDelayEpochs > 0, Errors.InvalidDelayPeriod());
         UNCLAIMED_DELAY_EPOCHS = unclaimedDelayEpochs;
 
-        // set max delegate fee percentage
+        // max delegate fee percentage: must be greater than 0 and less than 100%
         require(maxDelegateFeePct > 0 && maxDelegateFeePct < Constants.PRECISION_BASE, Errors.InvalidFeePct());
         MAX_DELEGATE_FEE_PCT = maxDelegateFeePct;
-
-        // set delegate registration fee
-        DELEGATE_REGISTRATION_FEE = delegateRegistrationFee;
 
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
         require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
         MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
 
-        // roles
+        // ═══════════════════════════════════════════════════════════════════
+        // Roles
         _setupRoles(globalAdmin, votingControllerAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler, assetManager);
 
-        // set current epoch to finalize
+        // ═══════════════════════════════════════════════════════════════════
+        // Epoch Initialization
+
+        // set current epoch finalize
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
         CURRENT_EPOCH_TO_FINALIZE = currentEpoch;
 
-        // Finalize previous epoch to unblock: createPools(), removePools(), finalizeEpoch()
+        // Finalize previous epoch to unblock: createPools(), removePools(), endOfEpoch operations
         uint128 previousEpoch = currentEpoch - 1;
         epochs[previousEpoch].state = DataTypes.EpochState.Finalized;
         //emit Events.EpochFinalized(previousEpoch);
-
     }
 
     function _setupRoles(
@@ -962,7 +968,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         
         emit Events.EpochDistributionSet(epochToFinalize, totalRewards, totalSubsidies);
 
-        // Transition Epoch to Finalized 
+        // Transition Epoch to Finalized & Advance to next epoch
         epochPtr.state = DataTypes.EpochState.Finalized;
         ++CURRENT_EPOCH_TO_FINALIZE;
         emit Events.EpochFinalized(epochToFinalize); 
@@ -991,7 +997,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // Cannot force finalize already finalized epoch
         require(!_isFinalized(epochPtr.state), Errors.EpochAlreadyFinalized());
 
-        // Snapshot total active pools for the epoch
+        // Snapshot total active pools; record-keeping purposes: in case it was not already
         epochPtr.totalActivePools = TOTAL_ACTIVE_POOLS;
 
         // Zero out rewards & subsidies allocations (claims blocked)
