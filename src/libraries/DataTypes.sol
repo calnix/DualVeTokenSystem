@@ -91,7 +91,6 @@ library DataTypes {
         EpochState state;
 
         // Pool & Vote Tracking
-        uint128 totalVotes;                     // votes in active pools only (for subsidy/rewards calculation)
         uint128 totalActivePools;               // set in depositEpochSubsidies()   
         uint128 poolsProcessed;                 // incremented in processEpochRewardsSubsidies()
 

@@ -213,10 +213,8 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
      * @param poolIds Array of pool IDs to vote for.
      * @param poolVotes Array of votes corresponding to each pool.
      * @param isDelegated Boolean flag indicating whether to use delegated voting power.
-
      */
     function vote(uint128[] calldata poolIds, uint128[] calldata poolVotes, bool isDelegated) external whenNotPaused {
-        // sanity check: poolIds & poolVotes must be non-empty and have the same length
         uint256 length = poolIds.length;
         _requireMatchingArrays(length, poolVotes.length);
 
@@ -224,7 +222,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();          
         DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
 
-        // Voting only allowed in Voting state
+        // voting only allowed in Voting state
         require(epochPtr.state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
@@ -274,9 +272,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             epochPools[currentEpoch][poolId].totalVotes += votes;
             poolPtr.totalVotes += votes;       
         }
-
-        // increment epoch totalVotes 
-        epochPtr.totalVotes += totalNewVotes;
 
         // increment account's votes [epoch]
         accountEpochPtr.totalVotesSpent += totalNewVotes;
@@ -351,9 +346,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             accountEpochPoolData[currentEpoch][dstPoolId][msg.sender].totalVotesSpent += votes;
             dstEpochPoolPtr.totalVotes += votes;
             dstPoolPtr.totalVotes += votes;
-
-            // if migrating from an INACTIVE pool, restore votes to epoch.totalVotes
-            if (!srcPoolPtr.isActive) epochPtr.totalVotes += votes;
 
             // no need to update mappings accountEpochData; as its a migration of votes within the same epoch.
         }
@@ -785,9 +777,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // update global counters
         TOTAL_ACTIVE_POOLS -= uint128(numOfPools);
 
-        // disregard votes from removed pools [for subsidy/rewards calculation]
-        if (votesToRemove > 0) epochs[currentEpoch].totalVotes -= votesToRemove;
-
         emit Events.PoolsRemoved(poolIds, votesToRemove);
     }
 
@@ -879,9 +868,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // ═══════════════════════════════════════════════════════════════════
         // POOL PROCESSING
         // ═══════════════════════════════════════════════════════════════════
-
-        // Cache: epoch total votes
-        uint128 epochTotalVotes = epochPtr.totalVotes;
 
         uint128 totalRewardsToAllocate;
         uint128 totalSubsidiesToAllocate;
@@ -1179,7 +1165,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
 //------------------------------- Internal functions ------------------------------------------------------
 
-    /**
+    /** Note: Repeated overwrites within the same epoch are known and accepted
      * @notice Validates delegate registration and ensures historical fee is recorded for the epoch
      * @dev Called when a delegate performs voting actions (vote, migrateVotes)
      *      - Reverts if caller is not a registered delegate
@@ -1211,7 +1197,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
                 emit Events.DelegateFeeApplied(msg.sender, oldFeePct, delegatePtr.currentFeePct, currentEpoch);
             }
             
-            // record current fee for this epoch (whether just updated or existing)
+            // record current fee for this epoch (may overwrite with same value)
             delegateHistoricalFeePcts[msg.sender][currentEpoch] = delegatePtr.currentFeePct;
         }
     }
