@@ -100,13 +100,13 @@ library Events {
 
     
     // claimPersonalRewards()
-    event RewardsClaimed(address indexed user, uint128 indexed epoch, uint128[] poolIds, uint128 totalClaimableRewards);
+    event RewardsClaimed(uint128 indexed epoch, address indexed user, uint128[] poolIds, uint128 totalClaimable);
     // claimRewardsFromDelegates()
-    event RewardsClaimedFromDelegates(uint128 indexed epoch, address indexed user, address[] delegateList, uint128[][] poolIds, uint128 totalClaimableRewards);
+    event DelegationRewardsClaimed(uint128 indexed epoch, address indexed user, address[] delegateList, uint128[][] poolIds, uint128 totalClaimable);
     // claimDelegateFees()
-    event DelegateFeesClaimed(uint128 indexed epoch, address indexed delegate, address[] delegators, uint128[][] poolIds, uint128 totalClaimableDelegateFees);
+    event DelegationFeesClaimed(uint128 indexed epoch, address indexed delegate, address[] delegators, uint128[][] poolIds, uint128 totalClaimableDelegateFees);
     // claimSubsidies
-    event SubsidiesClaimed(address indexed verifier, uint128 epoch, uint128[] poolIds, uint128 totalSubsidiesClaimed);
+    event SubsidiesClaimed(uint128 indexed epoch, address indexed verifier, uint128[] poolIds, uint128 totalClaimable);
 
 
     // 1. endEpoch
@@ -119,8 +119,8 @@ library Events {
     event PoolsProcessed(uint128 indexed epoch, uint256 numOfPoolsProcessed);
     event EpochFullyProcessed(uint128 indexed epoch);
     // 5. finalizeEpoch
-    event EpochDistributionSet(uint128 indexed epoch, uint128 totalRewards, uint128 totalSubsidies);
-    event EpochDistributionDeposited(address indexed treasury, uint128 indexed epoch, uint256 totalDistribution);
+    event EpochAllocationsSet(uint128 indexed epoch, uint128 totalRewards, uint128 totalSubsidies);
+    event EpochAssetsDeposited(uint128 indexed epoch, address indexed treasury, uint256 totalDistribution);
     event EpochFinalized(uint128 indexed epoch);
     // 6. forceFinalizeEpoch
     event EpochForceFinalized(uint128 indexed epoch);
@@ -138,11 +138,11 @@ library Events {
     // setVotingControllerTreasury
     event VotingControllerTreasuryUpdated(address indexed oldTreasuryAddress, address indexed newTreasuryAddress);
     // setDelegateRegistrationFee
-    event DelegateRegistrationFeeUpdated(uint128 indexed newRegistrationFee);
+    event DelegateRegistrationFeeUpdated(uint128 indexed oldRegistrationFee, uint128 indexed newRegistrationFee);
     // setMaxDelegateFeePct
-    event MaxDelegateFeePctUpdated(uint128 indexed maxDelegateFeePct);
+    event MaxDelegateFeePctUpdated(uint128 indexed oldMaxFeePct, uint128 indexed newMaxFeePct);
     // setFeeIncreaseDelayEpochs
-    event FeeIncreaseDelayEpochsUpdated(uint128 indexed delayEpochs);
+    event FeeIncreaseDelayEpochsUpdated(uint128 indexed oldDelayEpochs, uint128 indexed newDelayEpochs);
     // setUnclaimedDelay
     event UnclaimedDelayUpdated(uint128 indexed oldDelay, uint128 indexed newDelay);
 

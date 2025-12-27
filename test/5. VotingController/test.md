@@ -1,55 +1,139 @@
-# Test Suggestions for Delegated Rewards in VotingController.sol
+# VotingController Test Suite
 
-## Unit Tests
-- testClaimSmallRewardsDelegate: Verify delegate claim distributes small rewards proportionally without 0 truncation revert.
-- testClaimSmallRewardsLargeVoter: Ensure user with large vote share claims >0 from small poolRewards; small voter gets 0.
-- testClaimZeroRewardPool: Attempt claim on 0-reward pool skips or reverts per-pool without blocking others.
-- testFeeEdgeCases: Test 0% fee (user gets full share), 100% fee (user gets 0, delegate gets all), and mid-values (e.g., 50% with 2dp precision).
-- testFinalizeMixedPools: Verify finalize sets totalRewards only for pools with rewards>0 and votes>0; skips 0-reward pools.
-- testFinalizeWithSmallRewards: Verify finalize sets totalRewards without revert when poolRewards * 1e18 < totalVotes.
-- testIncrementalDeposits: Deposit rewards twice for a pool; claim before/after second deposit; assert incremental claimable matches updated rewardsPerVote.
-- testMultiPoolRatios: Simulate delegate voting on 3 pools with varying rewardsPerVote (e.g., 10, 20, 30). User delegates 30% of total; assert claim matches 30% of aggregated rewards minus fees.
-- testNoDoubleSweep: Call withdrawResidualSubsidies twice for same epoch; reverts on second with ResidualsAlreadyWithdrawn.
-- testResidualSweepImmediate: Post-finalize, sweep residuals; assert transfer matches deposited - distributable, flag sets, event emits.
-- testSubsidyFlooringResiduals: Simulate small subsidies with high votes causing flooring losses; verify residuals = deposited - distributable, and they aren't claimable.
-- testSweepUnclaimedAfterTime: Confirm admin can sweep remainder after 1 year; reverts if too early or no unclaimed.
-- testZeroChecks: Attempt claim with delegatePoolVotes=0 (should revert); ensure no zero-division if totalVotes=0 post-check.
-- testZeroVotePoolSkip: Finalize with some pools at 0 votes; assert no allocation/subsidies set for them.
+## Overview
 
-## Integration Tests
-- testDepositAdditionalSmall: Verify additional deposit adds to totalRewards; claims use direct calc correctly.
-- testFullCycleDepositClaimSweep: Deposit subsidies, finalize (with flooring), partial claims by verifiers, immediate residual sweep, delayed unclaimed sweep; assert totals balance.
-- testFullEpochCycleSmallRewards: Simulate epoch with small fees, finalize, claim partial, sweep remainder.
-- testFullEpochFlow: Create delegation, delegate votes on multiple pools, deposit rewards, finalize epoch. Multiple users claim; verify totals match delegate's aggregated rewards and proportions.
-- testMultiDelegate: User delegates to 2 delegates; each votes differently; assert isolated claims per delegate without interference.
-- testMultiPoolSmallRewards: Simulate epoch with varying pool rewards (some 0, some small); confirm per-pool distributions, partial claims, sweeps.
-- testUnclaimedSweepAfterDelay: After delay, sweep unclaimed; assert only distributable - claimed transferred, residuals already swept separately.
+Comprehensive testing suite for `VotingController.sol` covering all functionality including voting, delegation, reward/subsidy claims, epoch lifecycle management, admin setters, risk management, and multi-actor scenarios.
 
-## Property-Based Tests (Foundry Fuzzing)
-- fuzzSubsidyDivision: Fuzz subsidies/votes/pools; assert allocated <= deposited, residuals >=0, claims <= allocated.
-- testEdgeFuzz: Fuzz zero/min/max values for votes, rewards, delegations; ensure reverts or 0 outputs as expected.
-- testNoOverClaim: Fuzz multiple claims in same epoch; assert total claimed <= entitled share.
-- testProportionalityInvariant: Fuzz user delegation ratios (1-100%), delegate votes (1-1000 across 1-5 pools), fees (0-100%); assert user's net claim == (delegation % * total gross rewards) - fee.
+## Test Files
 
-## Coverage Tests
-- testEdgeZeroRewards: Finalize/claim with poolRewards=0; no transfer.
-- testEdgeZeroVotes: Revert finalize if poolRewards>0 but totalVotes=0.
-- testPrecisionLoss: Fuzz small poolRewards vs varying totalVotes; verify claimed <= totalRewards, remainder sweepable.
-- testRewardFlooringResiduals: Simulate claims with small votes causing non-zero remainders, verify they accumulate as unclaimed.
-- testResidualSweep: After delay, confirm sweep transfers exact unclaimed amount and emits event.
+### Mocks (`mocks/`)
 
-These tests target critical paths for small rewards handling and truncation avoidance. Use Foundry for fuzzing edge cases.
-Run with high coverage; use Slither for static analysis.
+| File | Description |
+|------|-------------|
+| `MockPaymentsControllerVC.sol` | Standalone `IPaymentsController` implementation with setters for mocked verifier/pool accrued subsidies |
+| `MockEscrowedMocaVC.sol` | Standalone `IEscrowedMoca` + `IERC20` implementation with `mintForTesting` helper for direct token minting |
+| `MockVotingEscrowMocaVC.sol` | Standalone `IVotingEscrowMoca` implementation with setters for mocked voting power balances |
+| `MockWMoca.sol` | Simple payable fallback contract for native MOCA token |
+| `MockUSD8.sol` | Simple ERC20 mock for USD8 token |
 
-## PaymentsController Admin Change Tests
+### Base Harness
 
-### Integration Tests
-- testAdminTransition_FullCycle: Create issuer/verifier, change admin, verify old admin locked out while new admin has full control
-- testMultipleAdminChanges: Chain multiple admin changes and verify access control at each step
-- testAdminChange_WithPendingOperations: Change admin while schema fee increase is pending, verify new admin inherits control
+| File | Description |
+|------|-------------|
+| `VotingControllerHarness.sol` | Base test harness that deploys VotingController with mocked contracts, provides epoch math helpers, state snapshots, and utility functions |
 
-These tests ensure proper access control during admin transitions, preventing unauthorized access while maintaining continuity of operations.
+### Unit Tests
 
-# Others
+| File | Coverage Area | Key Test Cases |
+|------|---------------|----------------|
+| `VotingController_ConstructorAndRoles.t.sol` | Constructor, roles, access control | Immutable/mutable address validation, parameter bounds, role hierarchy, initial epoch state |
+| `VotingController_Pools.t.sol` | Pool creation/removal | createPools (1-10 count), removePools, active pool tracking, epoch state requirements |
+| `VotingController_Voting.t.sol` | vote(), migrateVotes() | Personal/delegated voting, multi-pool votes, vote migration, insufficient votes, inactive pools |
+| `VotingController_Delegation.t.sol` | Delegate lifecycle | Registration, fee updates (immediate decrease, delayed increase), unregistration, historical fee tracking |
+| `VotingController_ClaimsRewards.t.sol` | Reward claims | Personal rewards, delegated rewards, delegate fees, pro-rata distribution, double-claim prevention |
+| `VotingController_ClaimsSubsidies.t.sol` | Subsidy claims | Verifier claims, blocked verifiers, accrued ratio calculations, multiple verifiers per pool |
+| `VotingController_EpochLifecycle.t.sol` | Epoch state machine | endEpoch, processVerifierChecks, processRewardsAndSubsidies, finalizeEpoch, forceFinalizeEpoch |
+| `VotingController_Withdrawals.t.sol` | Unclaimed withdrawals | withdrawUnclaimedRewards, withdrawUnclaimedSubsidies, withdrawRegistrationFees, delay enforcement |
+| `VotingController_AdminSetters.t.sol` | Admin configuration | setVotingControllerTreasury, setDelegateRegistrationFee, setMaxDelegateFeePct, setFeeIncreaseDelayEpochs, setUnclaimedDelay, setMocaTransferGasLimit |
+| `VotingController_RiskAndPause.t.sol` | Risk management | pause, unpause, freeze, emergencyExit, paused state blocking |
+| `VotingController_Views.t.sol` | View functions | viewClaimablePersonalRewards, viewClaimableDelegationRewards (with fee changes across epochs, multiple delegators pro-rata, multiple pools), viewClaimableSubsidies, delegateHistoricalFeePcts tracking |
 
-- change global admin on addressbook is applied to accesscontroller
+### Integration/Scenario Tests
+
+| File | Description |
+|------|-------------|
+| `VotingController_AllActors_MultiEpoch.t.sol` | Multi-epoch scenarios with all actors (verifiers, personal voters, delegators, delegates) |
+
+## Test Scenarios
+
+### Scenario Coverage in AllActors Tests
+
+1. **BasicMultiActor_SingleEpoch**: All actor types participate in a single epoch with mixed rewards/subsidies. **Includes EXACT amount verification** for:
+   - Personal voter rewards with pro-rata math validation
+   - Delegator net rewards after fee deduction
+   - Delegate fees collected
+   - Verifier subsidy claims with accrued ratio calculations
+   - Epoch and global counter verification
+2. **MultiEpoch_DelegateFeeChanges**: Delegate fee increase scheduling and application across epochs. **Verifies fee application to actual payouts** in the post-delay epoch with exact net/fee amounts.
+3. **ZeroRewardsSubsidies_Combinations**: Pools with zero/non-zero reward and subsidy combinations
+4. **BlockedVerifiers_MixedPools**: Verifier blocking during epoch finalization
+5. **FullLifecycle_ThreeEpochs**: Complete flow across 3 epochs including delegate unregistration and force finalization
+6. **VoteMigration_MultipleActors**: Vote migration mid-epoch for both personal and delegated votes
+7. **UnclaimedWithdrawals_AfterDelay**: Unclaimed reward/subsidy withdrawal after delay period
+
+## Epoch State Transitions Tested
+
+```
+Voting → Ended → Verified → Processed → Finalized
+                                     ↓
+                              ForceFinalized
+```
+
+## Error Coverage
+
+All errors from `Errors.sol` related to VotingController are tested:
+
+- `InvalidAddress`, `InvalidAmount`, `InvalidArray`, `MismatchedArrayLengths`
+- `InvalidPercentage`, `InvalidDelayPeriod`, `InvalidGasLimit`
+- `InvalidEpochState`, `EpochNotFinalized`, `EpochNotProcessed`, `EpochAlreadyFinalized`, `EpochNotOver`
+- `NoAvailableVotes`, `ZeroVotes`, `InsufficientVotes`
+- `PoolNotActive`, `InvalidPoolPair`, `PoolHasNoRewards`, `PoolHasNoSubsidies`, `PoolAlreadyProcessed`
+- `AlreadyClaimed`, `NoRewardsToClaim`, `NoSubsidiesToClaim`
+- `ZeroDelegatedVP`, `ZeroDelegatePoolRewards`, `ZeroUserGrossRewards`
+- `DelegateAlreadyRegistered`, `NotRegisteredAsDelegate`, `CannotUnregisterWithActiveVotes`
+- `ClaimsBlocked`, `VerifierAccruedSubsidiesGreaterThanPool`
+- `EndOfEpochOpsUnderway`, `EpochNotVerified`
+- `CanOnlyWithdrawUnclaimedAfterDelay`, `RewardsAlreadyWithdrawn`, `SubsidiesAlreadyWithdrawn`
+- `NoUnclaimedRewardsToWithdraw`, `NoUnclaimedSubsidiesToWithdraw`, `NoRegistrationFeesToWithdraw`
+- `IsFrozen`, `NotFrozen`
+
+## Event Coverage
+
+All events from `Events.sol` related to VotingController are verified:
+
+- Pool events: `PoolsCreated`, `PoolsRemoved`
+- Voting events: `Voted`, `VotesMigrated`
+- Delegate events: `DelegateRegistered`, `DelegateUnregistered`, `DelegateFeeDecreased`, `DelegateFeeIncreased`, `DelegateFeeApplied`
+- Claim events: `RewardsClaimed`, `DelegationRewardsClaimed`, `DelegationFeesClaimed`, `SubsidiesClaimed`
+- Epoch events: `EpochEnded`, `EpochVerified`, `PoolsProcessed`, `EpochFullyProcessed`, `EpochAllocationsSet`, `EpochAssetsDeposited`, `EpochFinalized`, `EpochForceFinalized`, `VerifiersClaimsBlocked`
+- Withdrawal events: `UnclaimedRewardsWithdrawn`, `UnclaimedSubsidiesWithdrawn`, `RegistrationFeesWithdrawn`
+- Admin events: `VotingControllerTreasuryUpdated`, `DelegateRegistrationFeeUpdated`, `MaxDelegateFeePctUpdated`, `FeeIncreaseDelayEpochsUpdated`, `UnclaimedDelayUpdated`, `MocaTransferGasLimitUpdated`
+- Risk events: `ContractFrozen`, `EmergencyExit`
+
+## Running Tests
+
+```bash
+# Run all VotingController tests
+forge test --match-path "test/5. VotingController/*.t.sol" -vv
+
+# Run specific test file
+forge test --match-path "test/5. VotingController/VotingController_Voting.t.sol" -vvv
+
+# Run with coverage
+forge coverage --match-path "test/5. VotingController/*.t.sol"
+
+# Run gas snapshot
+forge snapshot --match-path "test/5. VotingController/*.t.sol"
+```
+
+## Test Dependencies
+
+- **Mocked External Contracts**: Tests use mock versions of `PaymentsController`, `EscrowedMoca`, and `VotingEscrowMoca`
+- **Epoch Time**: Tests use `vm.warp()` to manipulate block.timestamp for epoch transitions
+- **Role Setup**: All required roles are granted in the harness setUp()
+
+## Actor Types
+
+| Actor Type | Description | Key Operations |
+|------------|-------------|----------------|
+| Personal Voter | Uses personal voting power | vote(), migrateVotes(), claimPersonalRewards() |
+| Delegate | Registered delegate with fee | registerAsDelegate(), vote(isDelegated=true), claimDelegationFees() |
+| Delegator | Delegates voting power | claimDelegatedRewards() |
+| Verifier | Claims subsidies | claimSubsidies() (via asset manager) |
+| Admin | VotingController admin | createPools(), removePools(), setter functions |
+| CronJob | Epoch operations | endEpoch(), processVerifierChecks(), processRewardsAndSubsidies(), finalizeEpoch() |
+| AssetManager | Withdrawal operations | withdrawUnclaimedRewards(), withdrawUnclaimedSubsidies(), withdrawRegistrationFees() |
+| Monitor | Risk operations | pause() |
+| GlobalAdmin | Emergency operations | unpause(), freeze(), forceFinalizeEpoch() |
+| EmergencyExitHandler | Emergency exit | emergencyExit() |
+

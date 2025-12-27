@@ -15,7 +15,6 @@ library Errors {
     error InvalidIndex();
     error InvalidUser(); 
     error InvalidAmount();
-    error InvalidFeePct();
     error InvalidAddress();
     error InvalidExpiry();
     error InvalidEpoch();
@@ -73,46 +72,45 @@ library Errors {
     error OnlyCallableByVotingControllerContract();
 
 // --------- VotingController.sol ---------
-    error ClaimsBlocked();
+    // epoch
     error InvalidEpochState();
     error EpochAlreadyFinalized();
     error EpochNotFinalized();
     error EpochNotProcessed();
+    error PreviousEpochNotFinalized();
+    // votes
     error NoAvailableVotes();
     error ZeroVotes();
-    error PoolNotActive();
-    error PoolRemoved();
     error InsufficientVotes();
+    // pool
+    error PoolNotActive();
     error InvalidPoolPair();
     error PoolHasNoRewards();
-    error PreviousEpochNotFinalized();
-
+    error PoolHasNoSubsidies();
+    error NoVotesInPool();
+    // claiming
+    error AlreadyClaimed();
+    error NoRewardsToClaim();
+    // _claimRewardsInternal
+    error ZeroDelegatedVP();
+    error ZeroDelegatePoolRewards();
+    error ZeroUserGrossRewards();
+    error InsufficientRewardsClaimable();
+    
     // delegation
     error DelegateAlreadyRegistered();
     error NotRegisteredAsDelegate();
     error CannotUnregisterWithActiveVotes();
-
-    //voterClaimRewards
-    error NoRewardsToClaim();
-    error AlreadyClaimedOrNothingToClaim();
-    
-    //claimSubsidies
+        
+    // claimSubsidies
+    error ClaimsBlocked();
     error NoSubsidiesToClaim();
-    error FutureEpoch();
-    error NoVotesInPool();
     error NoSubsidiesForPool(); 
-    error SubsidyAlreadyClaimedOrNothingToClaim();
     error VerifierAccruedSubsidiesGreaterThanPool();
-    error SubsidyReceivableGreaterThanPoolAllocation();
-    // depositSubsidies
-    error SubsidiesAlreadySet();
-    error InsufficientSubsidies();
-    //depositRewards
-    error RewardsAlreadyDeposited();
+    error InsufficientSubsidiesClaimable();
    
     // endEpoch
     error EpochNotOver();
-    // blockVerifierClaims
     // processRewardsAndSubsidies
     error EpochNotVerified();
     error SubsidyPerVoteZero();
@@ -121,6 +119,7 @@ library Errors {
     
     // withdrawUnclaimedSubsidies & withdrawUnclaimedRewards
     error NoUnclaimedRewardsToWithdraw();
+    error NoUnclaimedSubsidiesToWithdraw();
     error CanOnlyWithdrawUnclaimedAfterDelay();
     error RewardsAlreadyWithdrawn();
     error SubsidiesAlreadyWithdrawn();

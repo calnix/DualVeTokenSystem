@@ -122,7 +122,11 @@ library DataTypes {
         uint128 totalRewardsAllocated;           // set in processEpochRewardsSubsidies()
         uint128 totalSubsidiesAllocated;         // set in processEpochRewardsSubsidies()
 
-        bool isProcessed;                        // flag for finalization of pool
+        // Claim tracking
+        uint128 totalRewardsClaimed;
+        uint128 totalSubsidiesClaimed;        
+        
+        bool isProcessed;                        // flag for processing pool [end of epoch ops]
     }
 
     // global delegate data
@@ -157,7 +161,7 @@ library DataTypes {
         
         // Per-pool tracking (for processing only)
         mapping(uint128 poolId => uint128 grossRewards) userPoolGrossRewards;
-        mapping(uint128 poolId => bool) poolProcessed;
+        //mapping(uint128 poolId => bool) poolProcessed;
     }
 
 
