@@ -35,14 +35,16 @@ contract VotingController_ClaimsRewards_Test is VotingControllerHarness {
         // ---- CAPTURE BEFORE STATE ----
         uint256 voterBalanceBefore = mockEsMoca.balanceOf(voter1);
         uint256 contractBalanceBefore = mockEsMoca.balanceOf(address(votingController));
-        GlobalCountersSnapshot memory globalBefore = captureGlobalCounters();
-        EpochSnapshot memory epochBefore = captureEpochState(epoch);
-        PoolEpochSnapshot memory poolBefore = capturePoolEpochState(epoch, 1);
+        uint128 globalRewardsClaimedBefore = captureGlobalCounters().totalRewardsClaimed;
+        uint128 epochRewardsClaimedBefore = captureEpochState(epoch).totalRewardsClaimed;
+        uint128 poolRewardsClaimedBefore = capturePoolEpochState(epoch, 1).totalRewardsClaimed;
         
         // Account has votesSpent and totalRewards - totalRewards is 0 before claiming
-        (uint128 votesBefore, uint128 rewardsBefore) = votingController.usersEpochPoolData(epoch, 1, voter1);
-        assertEq(rewardsBefore, 0, "Rewards should be 0 before claim");
-        assertEq(votesBefore, 1000 ether, "Votes should be recorded");
+        {
+            (uint128 votesBefore, uint128 rewardsBefore) = votingController.usersEpochPoolData(epoch, 1, voter1);
+            assertEq(rewardsBefore, 0, "Rewards should be 0 before claim");
+            assertEq(votesBefore, 1000 ether, "Votes should be recorded");
+        }
         
         // ---- EXECUTE ----
         vm.expectEmit(true, true, true, true, address(votingController));
@@ -51,36 +53,29 @@ contract VotingController_ClaimsRewards_Test is VotingControllerHarness {
         vm.prank(voter1);
         votingController.claimPersonalRewards(epoch, _toArray(1));
         
-        // ---- CAPTURE AFTER STATE ----
-        uint256 voterBalanceAfter = mockEsMoca.balanceOf(voter1);
-        uint256 contractBalanceAfter = mockEsMoca.balanceOf(address(votingController));
-        GlobalCountersSnapshot memory globalAfter = captureGlobalCounters();
-        EpochSnapshot memory epochAfter = captureEpochState(epoch);
-        PoolEpochSnapshot memory poolAfter = capturePoolEpochState(epoch, 1);
-        
-        // After claiming, totalRewards is populated
-        (uint128 votesAfter, uint128 rewardsAfter) = votingController.usersEpochPoolData(epoch, 1, voter1);
-        
-        // ---- VERIFY EXACT STATE CHANGES ----
+        // ---- VERIFY STATE CHANGES ----
         
         // Token balances (tokens move from contract to voter)
-        assertEq(voterBalanceAfter, voterBalanceBefore + 100 ether, "Voter balance: +100 ether");
-        assertEq(contractBalanceAfter, contractBalanceBefore - 100 ether, "Contract balance: -100 ether");
+        assertEq(mockEsMoca.balanceOf(voter1), voterBalanceBefore + 100 ether, "Voter balance: +100 ether");
+        assertEq(mockEsMoca.balanceOf(address(votingController)), contractBalanceBefore - 100 ether, "Contract balance: -100 ether");
         
         // User pool account - rewards now tracked (prevents double claim)
-        assertEq(rewardsAfter, 100 ether, "User pool rewards recorded: 100 ether");
-        assertEq(votesAfter, votesBefore, "Votes unchanged");
+        {
+            (uint128 votesAfter, uint128 rewardsAfter) = votingController.usersEpochPoolData(epoch, 1, voter1);
+            assertEq(rewardsAfter, 100 ether, "User pool rewards recorded: 100 ether");
+            assertEq(votesAfter, 1000 ether, "Votes unchanged");
+        }
         
         // Global counters
-        assertEq(globalAfter.totalRewardsClaimed, globalBefore.totalRewardsClaimed + 100 ether, 
+        assertEq(captureGlobalCounters().totalRewardsClaimed, globalRewardsClaimedBefore + 100 ether, 
             "Global totalRewardsClaimed: +100 ether");
         
         // Epoch counters
-        assertEq(epochAfter.totalRewardsClaimed, epochBefore.totalRewardsClaimed + 100 ether, 
+        assertEq(captureEpochState(epoch).totalRewardsClaimed, epochRewardsClaimedBefore + 100 ether, 
             "Epoch totalRewardsClaimed: +100 ether");
         
         // Pool epoch counters
-        assertEq(poolAfter.totalRewardsClaimed, poolBefore.totalRewardsClaimed + 100 ether, 
+        assertEq(capturePoolEpochState(epoch, 1).totalRewardsClaimed, poolRewardsClaimedBefore + 100 ether, 
             "Pool totalRewardsClaimed: +100 ether");
     }
 

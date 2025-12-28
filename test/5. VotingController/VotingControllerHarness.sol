@@ -153,25 +153,31 @@ abstract contract VotingControllerHarness is Test {
         mockVeMoca = new MockVotingEscrowMocaVC();
         mockPaymentsController = new MockPaymentsControllerVC();
 
-        // Deploy VotingController
+        // Deploy VotingController with struct params
         votingController = new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
+            DataTypes.VCContractAddresses({
+                wMoca: address(mockWMoca),
+                esMoca: address(mockEsMoca),
+                veMoca: address(mockVeMoca),
+                paymentsController: address(mockPaymentsController),
+                votingControllerTreasury: votingControllerTreasury
+            }),
+            DataTypes.VCRoleAddresses({
+                globalAdmin: globalAdmin,
+                votingControllerAdmin: votingControllerAdmin,
+                monitorAdmin: monitorAdmin,
+                cronJobAdmin: cronJobAdmin,
+                monitorBot: monitor,
+                emergencyExitHandler: emergencyExitHandler,
+                assetManager: assetManager
+            }),
+            DataTypes.VCParams({
+                delegateRegistrationFee: delegateRegistrationFee,
+                maxDelegateFeePct: maxDelegateFeePct,
+                feeDelayEpochs: feeIncreaseDelayEpochs,
+                unclaimedDelayEpochs: unclaimedDelayEpochs,
+                mocaTransferGasLimit: uint128(MOCA_TRANSFER_GAS_LIMIT)
+            })
         );
 
         // Grant CRON_JOB_ROLE to cronJob address

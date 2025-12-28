@@ -15,6 +15,42 @@ import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessCon
 contract VotingController_ConstructorAndRoles_Test is VotingControllerHarness {
 
     // ═══════════════════════════════════════════════════════════════════
+    // Helper functions to build constructor structs
+    // ═══════════════════════════════════════════════════════════════════
+
+    function _getDefaultContractAddresses() internal view returns (DataTypes.VCContractAddresses memory) {
+        return DataTypes.VCContractAddresses({
+            wMoca: address(mockWMoca),
+            esMoca: address(mockEsMoca),
+            veMoca: address(mockVeMoca),
+            paymentsController: address(mockPaymentsController),
+            votingControllerTreasury: votingControllerTreasury
+        });
+    }
+
+    function _getDefaultRoleAddresses() internal view returns (DataTypes.VCRoleAddresses memory) {
+        return DataTypes.VCRoleAddresses({
+            globalAdmin: globalAdmin,
+            votingControllerAdmin: votingControllerAdmin,
+            monitorAdmin: monitorAdmin,
+            cronJobAdmin: cronJobAdmin,
+            monitorBot: monitor,
+            emergencyExitHandler: emergencyExitHandler,
+            assetManager: assetManager
+        });
+    }
+
+    function _getDefaultParams() internal view returns (DataTypes.VCParams memory) {
+        return DataTypes.VCParams({
+            delegateRegistrationFee: delegateRegistrationFee,
+            maxDelegateFeePct: maxDelegateFeePct,
+            feeDelayEpochs: feeIncreaseDelayEpochs,
+            unclaimedDelayEpochs: unclaimedDelayEpochs,
+            mocaTransferGasLimit: uint128(MOCA_TRANSFER_GAS_LIMIT)
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // Constructor: Success Cases
     // ═══════════════════════════════════════════════════════════════════
 
@@ -69,141 +105,51 @@ contract VotingController_ConstructorAndRoles_Test is VotingControllerHarness {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_RevertWhen_Constructor_ZeroWMoca() public {
+        DataTypes.VCContractAddresses memory contracts = _getDefaultContractAddresses();
+        contracts.wMoca = address(0);
+        
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new VotingController(
-            address(0), // wMoca
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(contracts, _getDefaultRoleAddresses(), _getDefaultParams());
     }
 
     function test_RevertWhen_Constructor_ZeroEsMoca() public {
+        DataTypes.VCContractAddresses memory contracts = _getDefaultContractAddresses();
+        contracts.esMoca = address(0);
+        
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(0), // esMoca
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(contracts, _getDefaultRoleAddresses(), _getDefaultParams());
     }
 
     function test_RevertWhen_Constructor_ZeroVeMoca() public {
+        DataTypes.VCContractAddresses memory contracts = _getDefaultContractAddresses();
+        contracts.veMoca = address(0);
+        
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(0), // veMoca
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(contracts, _getDefaultRoleAddresses(), _getDefaultParams());
     }
 
     function test_RevertWhen_Constructor_ZeroPaymentsController() public {
+        DataTypes.VCContractAddresses memory contracts = _getDefaultContractAddresses();
+        contracts.paymentsController = address(0);
+        
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(0), // paymentsController
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(contracts, _getDefaultRoleAddresses(), _getDefaultParams());
     }
 
     function test_RevertWhen_Constructor_ZeroTreasury() public {
+        DataTypes.VCContractAddresses memory contracts = _getDefaultContractAddresses();
+        contracts.votingControllerTreasury = address(0);
+        
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            address(0), // treasury
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(contracts, _getDefaultRoleAddresses(), _getDefaultParams());
     }
 
     function test_RevertWhen_Constructor_ZeroGlobalAdmin() public {
+        DataTypes.VCRoleAddresses memory roles = _getDefaultRoleAddresses();
+        roles.globalAdmin = address(0);
+        
         vm.expectRevert(Errors.InvalidAddress.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            address(0), // globalAdmin
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(_getDefaultContractAddresses(), roles, _getDefaultParams());
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -211,118 +157,43 @@ contract VotingController_ConstructorAndRoles_Test is VotingControllerHarness {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_RevertWhen_Constructor_ZeroFeeDelayEpochs() public {
+        DataTypes.VCParams memory params = _getDefaultParams();
+        params.feeDelayEpochs = 0;
+        
         vm.expectRevert(Errors.InvalidDelayPeriod.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            0, // feeDelayEpochs = 0
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(_getDefaultContractAddresses(), _getDefaultRoleAddresses(), params);
     }
 
     function test_RevertWhen_Constructor_ZeroUnclaimedDelayEpochs() public {
+        DataTypes.VCParams memory params = _getDefaultParams();
+        params.unclaimedDelayEpochs = 0;
+        
         vm.expectRevert(Errors.InvalidDelayPeriod.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            0, // unclaimedDelayEpochs = 0
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(_getDefaultContractAddresses(), _getDefaultRoleAddresses(), params);
     }
 
     function test_RevertWhen_Constructor_MaxDelegateFeePctZero() public {
+        DataTypes.VCParams memory params = _getDefaultParams();
+        params.maxDelegateFeePct = 0;
+        
         vm.expectRevert(Errors.InvalidPercentage.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            0, // maxDelegateFeePct = 0
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(_getDefaultContractAddresses(), _getDefaultRoleAddresses(), params);
     }
 
     function test_RevertWhen_Constructor_MaxDelegateFeePctTooHigh() public {
+        DataTypes.VCParams memory params = _getDefaultParams();
+        params.maxDelegateFeePct = 10_000; // 100% (PRECISION_BASE)
+        
         vm.expectRevert(Errors.InvalidPercentage.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            10_000, // maxDelegateFeePct = 100% (PRECISION_BASE)
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
-        );
+        new VotingController(_getDefaultContractAddresses(), _getDefaultRoleAddresses(), params);
     }
 
     function test_RevertWhen_Constructor_GasLimitTooLow() public {
+        DataTypes.VCParams memory params = _getDefaultParams();
+        params.mocaTransferGasLimit = 2299; // less than 2300
+        
         vm.expectRevert(Errors.InvalidGasLimit.selector);
-        new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            delegateRegistrationFee,
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            2299 // less than 2300
-        );
+        new VotingController(_getDefaultContractAddresses(), _getDefaultRoleAddresses(), params);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -426,27 +297,15 @@ contract VotingController_ConstructorAndRoles_Test is VotingControllerHarness {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_Constructor_ZeroRegistrationFeeAllowed() public {
+        DataTypes.VCParams memory params = _getDefaultParams();
+        params.delegateRegistrationFee = 0;
+        
         VotingController vc = new VotingController(
-            address(mockWMoca),
-            address(mockEsMoca),
-            address(mockVeMoca),
-            address(mockPaymentsController),
-            votingControllerTreasury,
-            globalAdmin,
-            votingControllerAdmin,
-            monitorAdmin,
-            cronJobAdmin,
-            monitor,
-            emergencyExitHandler,
-            assetManager,
-            0, // zero registration fee allowed
-            maxDelegateFeePct,
-            feeIncreaseDelayEpochs,
-            unclaimedDelayEpochs,
-            uint128(MOCA_TRANSFER_GAS_LIMIT)
+            _getDefaultContractAddresses(),
+            _getDefaultRoleAddresses(),
+            params
         );
         
         assertEq(vc.DELEGATE_REGISTRATION_FEE(), 0, "Zero registration fee should be allowed");
     }
 }
-

@@ -170,6 +170,34 @@ library DataTypes {
         uint128 totalSubsidiesClaimed;
     }
 
+// --------- VotingController.sol: Constructor params -------
+
+    struct VCContractAddresses {
+        address wMoca;
+        address esMoca;
+        address veMoca;
+        address paymentsController;
+        address votingControllerTreasury;
+    }
+
+    struct VCRoleAddresses {
+        address globalAdmin;
+        address votingControllerAdmin;
+        address monitorAdmin;
+        address cronJobAdmin;
+        address monitorBot;
+        address emergencyExitHandler;
+        address assetManager;
+    }
+
+    struct VCParams {
+        uint128 delegateRegistrationFee;
+        uint128 maxDelegateFeePct;
+        uint128 feeDelayEpochs;
+        uint128 unclaimedDelayEpochs;
+        uint128 mocaTransferGasLimit;
+    }
+
 
 // --------- VotingEscrowMoca.sol -------
 

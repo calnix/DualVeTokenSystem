@@ -107,54 +107,52 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 //------------------------------- Constructor ------------------------------------------------------------------
 
     constructor(
-        address wMoca, address esMoca, address veMoca, address paymentsController, address votingControllerTreasury,
-        address globalAdmin, address votingControllerAdmin, address monitorAdmin, address cronJobAdmin,
-        address monitorBot, address emergencyExitHandler, address assetManager, 
-        uint128 delegateRegistrationFee, uint128 maxDelegateFeePct, uint128 feeDelayEpochs, uint128 unclaimedDelayEpochs, 
-        uint128 mocaTransferGasLimit
+        DataTypes.VCContractAddresses memory contracts,
+        DataTypes.VCRoleAddresses memory roles,
+        DataTypes.VCParams memory params
     ) {
         
         // ═══════════════════════════════════════════════════════════════════
         // Contract addresses
-        require(wMoca != address(0), Errors.InvalidAddress());
-        require(esMoca != address(0), Errors.InvalidAddress());
-        require(veMoca != address(0), Errors.InvalidAddress());
-        require(paymentsController != address(0), Errors.InvalidAddress());
-        require(votingControllerTreasury != address(0), Errors.InvalidAddress());
+        require(contracts.wMoca != address(0), Errors.InvalidAddress());
+        require(contracts.esMoca != address(0), Errors.InvalidAddress());
+        require(contracts.veMoca != address(0), Errors.InvalidAddress());
+        require(contracts.paymentsController != address(0), Errors.InvalidAddress());
+        require(contracts.votingControllerTreasury != address(0), Errors.InvalidAddress());
         
         // set immutable addresses
-        WMOCA = wMoca;
-        ESMOCA = IERC20(esMoca);
-        VEMOCA = IVotingEscrowMoca(veMoca);
-        PAYMENTS_CONTROLLER = IPaymentsController(paymentsController);
+        WMOCA = contracts.wMoca;
+        ESMOCA = IERC20(contracts.esMoca);
+        VEMOCA = IVotingEscrowMoca(contracts.veMoca);
+        PAYMENTS_CONTROLLER = IPaymentsController(contracts.paymentsController);
         // mutable contract address
-        VOTING_CONTROLLER_TREASURY = votingControllerTreasury;
+        VOTING_CONTROLLER_TREASURY = contracts.votingControllerTreasury;
 
         // ═══════════════════════════════════════════════════════════════════
         // Contract params
 
         // allowed to be 0: no registration fee
-        DELEGATE_REGISTRATION_FEE = delegateRegistrationFee;
+        DELEGATE_REGISTRATION_FEE = params.delegateRegistrationFee;
 
         // fee increase delay: must be greater than 0 [1 epoch minimum]
-        require(feeDelayEpochs > 0, Errors.InvalidDelayPeriod());
-        FEE_INCREASE_DELAY_EPOCHS = feeDelayEpochs;
+        require(params.feeDelayEpochs > 0, Errors.InvalidDelayPeriod());
+        FEE_INCREASE_DELAY_EPOCHS = params.feeDelayEpochs;
 
         // unclaimed delay: must be greater than 0 [1 epoch minimum]
-        require(unclaimedDelayEpochs > 0, Errors.InvalidDelayPeriod());
-        UNCLAIMED_DELAY_EPOCHS = unclaimedDelayEpochs;
+        require(params.unclaimedDelayEpochs > 0, Errors.InvalidDelayPeriod());
+        UNCLAIMED_DELAY_EPOCHS = params.unclaimedDelayEpochs;
 
         // max delegate fee percentage: must be greater than 0 and less than 100%
-        require(maxDelegateFeePct > 0 && maxDelegateFeePct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
-        MAX_DELEGATE_FEE_PCT = maxDelegateFeePct;
+        require(params.maxDelegateFeePct > 0 && params.maxDelegateFeePct < Constants.PRECISION_BASE, Errors.InvalidPercentage());
+        MAX_DELEGATE_FEE_PCT = params.maxDelegateFeePct;
 
         // gas limit for moca transfer [EOA is ~2300, gnosis safe with a fallback is ~4029]
-        require(mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
-        MOCA_TRANSFER_GAS_LIMIT = mocaTransferGasLimit;
+        require(params.mocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
+        MOCA_TRANSFER_GAS_LIMIT = params.mocaTransferGasLimit;
 
         // ═══════════════════════════════════════════════════════════════════
         // Roles
-        _setupRoles(globalAdmin, votingControllerAdmin, monitorAdmin, cronJobAdmin, monitorBot, emergencyExitHandler, assetManager);
+        _setupRoles(roles);
 
         // ═══════════════════════════════════════════════════════════════════
         // Epoch Initialization
@@ -166,31 +164,28 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         // Finalize previous epoch to unblock: createPools(), removePools(), endOfEpoch operations
         uint128 previousEpoch = currentEpoch - 1;
         epochs[previousEpoch].state = DataTypes.EpochState.Finalized;
-        //emit Events.EpochFinalized(previousEpoch);
     }
 
-    function _setupRoles(
-        address globalAdmin, address votingControllerAdmin, address monitorAdmin, address cronJobAdmin,
-        address monitorBot, address emergencyExitHandler, address assetManager
-    ) internal {
-        require(globalAdmin != address(0), Errors.InvalidAddress());
-        require(votingControllerAdmin != address(0), Errors.InvalidAddress());
-        require(monitorAdmin != address(0), Errors.InvalidAddress());
-        require(cronJobAdmin != address(0), Errors.InvalidAddress());
-        require(monitorBot != address(0), Errors.InvalidAddress());
-        require(emergencyExitHandler != address(0), Errors.InvalidAddress());
-        require(assetManager != address(0), Errors.InvalidAddress());
+    function _setupRoles(DataTypes.VCRoleAddresses memory roles) internal {
+        // checks
+        require(roles.globalAdmin != address(0), Errors.InvalidAddress());
+        require(roles.votingControllerAdmin != address(0), Errors.InvalidAddress());
+        require(roles.monitorAdmin != address(0), Errors.InvalidAddress());
+        require(roles.cronJobAdmin != address(0), Errors.InvalidAddress());
+        require(roles.monitorBot != address(0), Errors.InvalidAddress());
+        require(roles.emergencyExitHandler != address(0), Errors.InvalidAddress());
+        require(roles.assetManager != address(0), Errors.InvalidAddress());
         
         // grant roles to addresses
-        _grantRole(DEFAULT_ADMIN_ROLE, globalAdmin);    
-        _grantRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE, votingControllerAdmin);
-        _grantRole(Constants.MONITOR_ADMIN_ROLE, monitorAdmin);
-        _grantRole(Constants.CRON_JOB_ADMIN_ROLE, cronJobAdmin);
-        _grantRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE, emergencyExitHandler);
-        _grantRole(Constants.ASSET_MANAGER_ROLE, assetManager);
+        _grantRole(DEFAULT_ADMIN_ROLE, roles.globalAdmin);    
+        _grantRole(Constants.VOTING_CONTROLLER_ADMIN_ROLE, roles.votingControllerAdmin);
+        _grantRole(Constants.MONITOR_ADMIN_ROLE, roles.monitorAdmin);
+        _grantRole(Constants.CRON_JOB_ADMIN_ROLE, roles.cronJobAdmin);
+        _grantRole(Constants.EMERGENCY_EXIT_HANDLER_ROLE, roles.emergencyExitHandler);
+        _grantRole(Constants.ASSET_MANAGER_ROLE, roles.assetManager);
 
         // there should at least 1 bot address for monitoring at deployment
-        _grantRole(Constants.MONITOR_ROLE, monitorBot);
+        _grantRole(Constants.MONITOR_ROLE, roles.monitorBot);
 
         // --------------- Set role admins ------------------------------
         // Operational role administrators managed by global admin
@@ -218,12 +213,11 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint256 length = poolIds.length;
         _requireMatchingArrays(length, poolVotes.length);
 
-        // get current epoch & cache epoch pointer
+        // get current epoch
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();          
-        DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
-
+        
         // voting only allowed in Voting state
-        require(epochPtr.state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
+        require(epochs[currentEpoch].state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
 
         // mapping lookups based on isDelegated | account:{personal,delegate}
         ( mapping(uint128 => mapping(address => DataTypes.Account)) storage accountEpochData,
@@ -239,11 +233,14 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         
         // get account's spent votes
         DataTypes.Account storage accountEpochPtr = accountEpochData[currentEpoch][msg.sender];
-        uint128 spentVotes = accountEpochPtr.totalVotesSpent; 
-
-        // check: account has available votes 
-        uint128 availableVotes = totalVotes - spentVotes;
-        require(availableVotes > 0, Errors.NoAvailableVotes());
+        
+        uint128 availableVotes;
+        {
+            uint128 spentVotes = accountEpochPtr.totalVotesSpent; 
+            // check: account has available votes 
+            availableVotes = totalVotes - spentVotes;
+            require(availableVotes > 0, Errors.NoAvailableVotes());
+        }
 
         // update votes at a pool level
         // does not check for duplicate poolIds in the array; users can vote repeatedly for the same pool
@@ -256,10 +253,13 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
             require(votes > 0, Errors.ZeroVotes()); 
             
             // cache pool pointer
-            DataTypes.Pool storage poolPtr = pools[poolId];
+            DataTypes.Pool storage poolPtr = pools[poolId]; 
 
             // pool must be active
             require(poolPtr.isActive, Errors.PoolNotActive());
+                
+            // increment pool votes 
+            poolPtr.totalVotes += votes;
             
             // increment counter & check: cannot exceed available votes
             totalNewVotes += votes; 
@@ -270,7 +270,6 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
             // increment pool votes [epoch, pool]
             epochPools[currentEpoch][poolId].totalVotes += votes;
-            poolPtr.totalVotes += votes;       
         }
 
         // increment account's votes [epoch]
@@ -294,12 +293,11 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint256 length = srcPoolIds.length;
         _requireMatchingArrays(length, dstPoolIds.length, votesToMigrate.length);
 
-        // get current epoch & cache epoch pointer
+        // get current epoch
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();          
-        DataTypes.Epoch storage epochPtr = epochs[currentEpoch];
-
+        
         // voting only allowed in Voting state
-        require(epochPtr.state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
+        require(epochs[currentEpoch].state == DataTypes.EpochState.Voting, Errors.EndOfEpochOpsUnderway());
 
         // executed each time; delegate fee decreases are instantly applied
         if (isDelegated) _validateDelegateAndRecordFee(currentEpoch);
@@ -636,7 +634,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
     }
 
 
-//------------------------------- Claim Subsidies Function --------------------------------------------------------------------
+//------------------------------- Claim Subsidies function --------------------------------------------------------------------
     
     /**
      * @notice Claim subsidies for a verifier in the specified pools for a given epoch.
@@ -1455,44 +1453,48 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
     // returns: netClaimable, feeClaimable, perPoolNet, perPoolFee
     function _previewDelegationRewards(uint128 epoch, address user, address delegate, uint128[] calldata poolIds) internal view 
-        returns (uint128, uint128, uint128[] memory, uint128[] memory) 
+        returns (uint128 netClaimable, uint128 feeClaimable, uint128[] memory perPoolNet, uint128[] memory perPoolFee) 
     {
-        // counters
-        uint128 netClaimable;
-        uint128 feeClaimable;
-        uint256 numOfPools = poolIds.length;
-
-        DataTypes.UserDelegateAccount storage pairAccountPtr = userDelegateAccounts[epoch][user][delegate];
-        uint128 totalNet = pairAccountPtr.totalNetRewards;
-        uint128 totalFees = pairAccountPtr.totalDelegateFees;
+        uint128 totalNet;
+        uint128 totalFees;
+        {
+            DataTypes.UserDelegateAccount storage pairAccountPtr = userDelegateAccounts[epoch][user][delegate];
+            totalNet = pairAccountPtr.totalNetRewards;
+            totalFees = pairAccountPtr.totalDelegateFees;
+        }
 
         uint128 userDelegatedVP = VEMOCA.getSpecificDelegatedBalanceAtEpochEnd(user, delegate, epoch);
         
-        // early return: user must have delegated voting power to have claimable rewards
         if (userDelegatedVP == 0) {
-            return (0, 0, new uint128[](numOfPools), new uint128[](numOfPools));
+            perPoolNet = new uint128[](poolIds.length);
+            perPoolFee = new uint128[](poolIds.length);
+            return (netClaimable, feeClaimable, perPoolNet, perPoolFee);
         }
         
-        // implicitly: delegateTotalVP > 0 [since userDelegatedVP > 0]
-        uint128 delegateTotalVP = VEMOCA.balanceAtEpochEnd(delegate, epoch, true);
+        uint128[2] memory deltas;
+        {
+            uint128 delegateTotalVP = VEMOCA.balanceAtEpochEnd(delegate, epoch, true);
 
-        (uint128 grossDelta, uint128 feeDelta, uint128[] memory perPoolNet, uint128[] memory perPoolFee) 
-            = _simulateDelegationProcessing(epoch, delegate, poolIds, pairAccountPtr, userDelegatedVP, delegateTotalVP);
-
-        // Update totals with newly simulated pools
-        totalNet += (grossDelta - feeDelta);
-        totalFees += feeDelta;
-
-        // Calculate claimable amounts
-        if (totalNet > pairAccountPtr.userClaimed) {
-            netClaimable = totalNet - pairAccountPtr.userClaimed;
+            (deltas, perPoolNet, perPoolFee) 
+                = _simulateDelegationProcessing(epoch, delegate, poolIds, user, [userDelegatedVP, delegateTotalVP]);
         }
 
-        if (totalFees > pairAccountPtr.delegateClaimed) {
-            feeClaimable = totalFees - pairAccountPtr.delegateClaimed;
-        }
+        // Update totals with newly simulated pools [deltas: [0]=grossDelta, [1]=feeDelta]
+        totalNet += (deltas[0] - deltas[1]); 
+        totalFees += deltas[1];
 
-        return (netClaimable, feeClaimable, perPoolNet, perPoolFee);
+        // Calculate claimable amounts: netClaimable, feeClaimable
+        {
+            uint128 userClaimed = userDelegateAccounts[epoch][user][delegate].userClaimed;
+            uint128 delegateClaimed = userDelegateAccounts[epoch][user][delegate].delegateClaimed;
+            
+            if (totalNet > userClaimed) {
+                netClaimable = totalNet - userClaimed;
+            }
+            if (totalFees > delegateClaimed) {
+                feeClaimable = totalFees - delegateClaimed;
+            }
+        }
     }
 
     // returns: grossDelta, feeDelta, perPoolNet, perPoolFee
@@ -1500,54 +1502,57 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
         uint128 epoch, 
         address delegate, 
         uint128[] calldata poolIds, 
-        DataTypes.UserDelegateAccount storage pairAccountPtr, 
-        uint128 userDelegatedVP, 
-        uint128 delegateTotalVP
-    ) internal view returns (uint128, uint128, uint128[] memory, uint128[] memory) {
+        address user,        // changed from pairAccountPtr
+        uint128[2] memory votingPowers // [0]=userDelegatedVP, [1]=delegateTotalVP
+    ) internal view returns (uint128[2] memory deltas, uint128[] memory perPoolNet, uint128[] memory perPoolFee) {
 
-        uint128 delegateFeePct = delegateHistoricalFeePcts[delegate][epoch];
+        // initialize arrays
+        perPoolNet = new uint128[](poolIds.length);
+        perPoolFee = new uint128[](poolIds.length);
 
-        // counters
-        uint128 grossDelta;
-        uint128 feeDelta;
-        uint256 numOfPools = poolIds.length;
-        uint128[] memory perPoolNet = new uint128[](numOfPools);
-        uint128[] memory perPoolFee = new uint128[](numOfPools);
+        for (uint256 i; i < poolIds.length; ++i) {
 
-        for (uint256 i; i < numOfPools; ++i) {
-            uint128 poolId = poolIds[i];
+            if (userDelegateAccounts[epoch][user][delegate].userPoolGrossRewards[poolIds[i]] > 0) continue;
 
-            if (pairAccountPtr.userPoolGrossRewards[poolId] > 0) continue;
-
-            DataTypes.Account storage delegatePoolAccountPtr = delegatesEpochPoolData[epoch][poolId][delegate];
-            uint128 delegatePoolVotes = delegatePoolAccountPtr.totalVotesSpent;
-            if (delegatePoolVotes == 0) continue;
-
-            DataTypes.PoolEpoch storage poolEpochPtr = epochPools[epoch][poolId];
-            uint128 totalPoolVotes = poolEpochPtr.totalVotes;
-            uint128 totalPoolRewards = poolEpochPtr.totalRewardsAllocated;
-            if (totalPoolRewards == 0) continue;
-
-            uint128 delegatePoolRewards = delegatePoolAccountPtr.totalRewards;
-            if (delegatePoolRewards == 0) {
-                delegatePoolRewards = _mulDiv(delegatePoolVotes, totalPoolRewards, totalPoolVotes);
-                if (delegatePoolRewards == 0) continue;
+            uint128 delegatePoolVotes;
+            uint128 delegatePoolRewards;
+            {
+                DataTypes.Account storage delegatePoolAccountPtr = delegatesEpochPoolData[epoch][poolIds[i]][delegate];
+                delegatePoolVotes = delegatePoolAccountPtr.totalVotesSpent;
+                if (delegatePoolVotes == 0) continue;
+                delegatePoolRewards = delegatePoolAccountPtr.totalRewards;
             }
 
-            uint128 userGrossRewardsForPool = _mulDiv(userDelegatedVP, delegatePoolRewards, delegateTotalVP);
-            if (userGrossRewardsForPool == 0) continue;
+            uint128 totalPoolRewards;
+            {
+                DataTypes.PoolEpoch storage poolEpochPtr = epochPools[epoch][poolIds[i]];
+                uint128 totalPoolVotes = poolEpochPtr.totalVotes;
+                totalPoolRewards = poolEpochPtr.totalRewardsAllocated;
+                if (totalPoolRewards == 0) continue;
 
-            uint128 poolFee = _mulDiv(userGrossRewardsForPool, delegateFeePct, uint128(Constants.PRECISION_BASE));
+                if (delegatePoolRewards == 0) {
+                    delegatePoolRewards = _mulDiv(delegatePoolVotes, totalPoolRewards, totalPoolVotes);
+                    if (delegatePoolRewards == 0) continue;
+                }
+            }
 
-            // Calculate net directly: gross - fee
-            perPoolNet[i] = userGrossRewardsForPool - poolFee;
-            perPoolFee[i] = poolFee;
+            {
+                // votingPowers: [0]=userDelegatedVP, [1]=delegateTotalVP
+                uint128 userGrossRewardsForPool = _mulDiv(votingPowers[0], delegatePoolRewards, votingPowers[1]);
+                if (userGrossRewardsForPool == 0) continue;
 
-            grossDelta += userGrossRewardsForPool;
-            feeDelta += poolFee;
+                uint128 delegateFeePct = delegateHistoricalFeePcts[delegate][epoch];
+
+                uint128 poolFee = _mulDiv(userGrossRewardsForPool, delegateFeePct, uint128(Constants.PRECISION_BASE));
+
+                // Calculate net directly: gross - fee
+                perPoolNet[i] = userGrossRewardsForPool - poolFee;
+                perPoolFee[i] = poolFee;
+
+                deltas[0] += userGrossRewardsForPool;   // grossDelta
+                deltas[1] += poolFee;                   // feeDelta
+            }
         }
-        
-        return (grossDelta, feeDelta, perPoolNet, perPoolFee);
     }
 
     function _requireNonEmptyArray(uint256 len) internal pure {

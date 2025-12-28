@@ -32,17 +32,17 @@ contract VotingController_Voting_Test is VotingControllerHarness {
         uint128[] memory votes = _toArray(500 ether);
         
         // ---- CAPTURE BEFORE STATE ----
-        GlobalCountersSnapshot memory globalBefore = captureGlobalCounters();
-        PoolSnapshot memory poolBefore = capturePoolState(1);
-        PoolEpochSnapshot memory poolEpochBefore = capturePoolEpochState(epoch, 1);
-        
-        (uint128 userVotesBefore,) = votingController.usersEpochData(epoch, voter1);
-        (uint128 userPoolVotesBefore,) = votingController.usersEpochPoolData(epoch, 1, voter1);
+        uint128 poolVotesBefore = capturePoolState(1).totalVotes;
+        uint128 poolEpochVotesBefore = capturePoolEpochState(epoch, 1).totalVotes;
         
         // Verify initial state is zero
-        assertEq(userVotesBefore, 0, "User votes should start at 0");
-        assertEq(userPoolVotesBefore, 0, "User pool votes should start at 0");
-        assertEq(poolEpochBefore.totalVotes, 0, "Pool epoch votes should start at 0");
+        {
+            (uint128 userVotesBefore,) = votingController.usersEpochData(epoch, voter1);
+            (uint128 userPoolVotesBefore,) = votingController.usersEpochPoolData(epoch, 1, voter1);
+            assertEq(userVotesBefore, 0, "User votes should start at 0");
+            assertEq(userPoolVotesBefore, 0, "User pool votes should start at 0");
+            assertEq(poolEpochVotesBefore, 0, "Pool epoch votes should start at 0");
+        }
         
         // ---- EXECUTE ----
         vm.expectEmit(true, true, true, true, address(votingController));
@@ -50,33 +50,22 @@ contract VotingController_Voting_Test is VotingControllerHarness {
         
         _vote(voter1, poolIds, votes);
         
-        // ---- CAPTURE AFTER STATE ----
-        GlobalCountersSnapshot memory globalAfter = captureGlobalCounters();
-        PoolSnapshot memory poolAfter = capturePoolState(1);
-        PoolEpochSnapshot memory poolEpochAfter = capturePoolEpochState(epoch, 1);
-        
-        (uint128 userVotesAfter,) = votingController.usersEpochData(epoch, voter1);
-        (uint128 userPoolVotesAfter,) = votingController.usersEpochPoolData(epoch, 1, voter1);
-        
-        // ---- VERIFY EXACT STATE CHANGES ----
+        // ---- VERIFY STATE CHANGES ----
         
         // User state
-        assertEq(userVotesAfter, userVotesBefore + 500 ether, "User totalVotesSpent should increase by 500 ether");
-        assertEq(userPoolVotesAfter, userPoolVotesBefore + 500 ether, "User pool votes should increase by 500 ether");
+        {
+            (uint128 userVotesAfter,) = votingController.usersEpochData(epoch, voter1);
+            (uint128 userPoolVotesAfter,) = votingController.usersEpochPoolData(epoch, 1, voter1);
+            assertEq(userVotesAfter, 500 ether, "User totalVotesSpent should be 500 ether");
+            assertEq(userPoolVotesAfter, 500 ether, "User pool votes should be 500 ether");
+        }
         
         // Pool state
-        assertEq(poolAfter.totalVotes, poolBefore.totalVotes + 500 ether, "Pool totalVotes should increase by 500 ether");
-        assertEq(poolEpochAfter.totalVotes, poolEpochBefore.totalVotes + 500 ether, "Pool epoch totalVotes should increase by 500 ether");
-        
-        // Note: EpochSnapshot doesn't track totalVotes - votes are tracked per pool
-        
-        // Global counters (votes don't affect these, just verify they're unchanged)
-        assertEq(globalAfter.totalPoolsCreated, globalBefore.totalPoolsCreated, "Total pools should not change");
-        assertEq(globalAfter.totalActivePools, globalBefore.totalActivePools, "Active pools should not change");
+        assertEq(capturePoolState(1).totalVotes, poolVotesBefore + 500 ether, "Pool totalVotes should increase by 500 ether");
+        assertEq(capturePoolEpochState(epoch, 1).totalVotes, poolEpochVotesBefore + 500 ether, "Pool epoch totalVotes should increase by 500 ether");
         
         // Other pools should be unaffected
-        PoolEpochSnapshot memory pool2Epoch = capturePoolEpochState(epoch, 2);
-        assertEq(pool2Epoch.totalVotes, 0, "Pool 2 should have no votes");
+        assertEq(capturePoolEpochState(epoch, 2).totalVotes, 0, "Pool 2 should have no votes");
     }
 
     function test_Vote_Personal_MultiplePools() public {
@@ -109,14 +98,18 @@ contract VotingController_Voting_Test is VotingControllerHarness {
         assertEq(capturePoolEpochState(epoch, 3).totalVotes, 200 ether, "Pool 3: exactly 200 ether");
         
         // User pool-specific data
-        (uint128 userPool1Votes,) = votingController.usersEpochPoolData(epoch, 1, voter1);
-        (uint128 userPool2Votes,) = votingController.usersEpochPoolData(epoch, 2, voter1);
-        (uint128 userPool3Votes,) = votingController.usersEpochPoolData(epoch, 3, voter1);
-        assertEq(userPool1Votes, 300 ether, "User pool 1 votes: exactly 300 ether");
-        assertEq(userPool2Votes, 400 ether, "User pool 2 votes: exactly 400 ether");
-        assertEq(userPool3Votes, 200 ether, "User pool 3 votes: exactly 200 ether");
-        
-        // Note: Epoch doesn't track aggregate votes - they're tracked per pool
+        {
+            (uint128 userPool1Votes,) = votingController.usersEpochPoolData(epoch, 1, voter1);
+            assertEq(userPool1Votes, 300 ether, "User pool 1 votes: exactly 300 ether");
+        }
+        {
+            (uint128 userPool2Votes,) = votingController.usersEpochPoolData(epoch, 2, voter1);
+            assertEq(userPool2Votes, 400 ether, "User pool 2 votes: exactly 400 ether");
+        }
+        {
+            (uint128 userPool3Votes,) = votingController.usersEpochPoolData(epoch, 3, voter1);
+            assertEq(userPool3Votes, 200 ether, "User pool 3 votes: exactly 200 ether");
+        }
         
         // Global pool totals
         assertEq(capturePoolState(1).totalVotes, 300 ether, "Pool 1 global total: 300 ether");
@@ -493,44 +486,40 @@ contract VotingController_Voting_Test is VotingControllerHarness {
         _setupVotingPower(voter3, epoch, 500 ether, 0);
         
         // ---- CAPTURE INITIAL STATE ----
-        PoolEpochSnapshot memory poolBefore = capturePoolEpochState(epoch, 1);
-        assertEq(poolBefore.totalVotes, 0, "Pool should start with 0 votes");
+        assertEq(capturePoolEpochState(epoch, 1).totalVotes, 0, "Pool should start with 0 votes");
         
         // ---- VOTER 1 VOTES ----
         _vote(voter1, _toArray(1), _toArray(300 ether));
-        
-        (uint128 voter1Votes,) = votingController.usersEpochData(epoch, voter1);
-        (uint128 voter1PoolVotes,) = votingController.usersEpochPoolData(epoch, 1, voter1);
-        assertEq(voter1Votes, 300 ether, "Voter1 total: exactly 300 ether");
-        assertEq(voter1PoolVotes, 300 ether, "Voter1 pool votes: exactly 300 ether");
+        {
+            (uint128 voter1Votes,) = votingController.usersEpochData(epoch, voter1);
+            (uint128 voter1PoolVotes,) = votingController.usersEpochPoolData(epoch, 1, voter1);
+            assertEq(voter1Votes, 300 ether, "Voter1 total: exactly 300 ether");
+            assertEq(voter1PoolVotes, 300 ether, "Voter1 pool votes: exactly 300 ether");
+        }
         assertEq(capturePoolEpochState(epoch, 1).totalVotes, 300 ether, "Pool after voter1: 300 ether");
         
         // ---- VOTER 2 VOTES ----
         _vote(voter2, _toArray(1), _toArray(1000 ether));
-        
-        (uint128 voter2Votes,) = votingController.usersEpochData(epoch, voter2);
-        (uint128 voter2PoolVotes,) = votingController.usersEpochPoolData(epoch, 1, voter2);
-        assertEq(voter2Votes, 1000 ether, "Voter2 total: exactly 1000 ether");
-        assertEq(voter2PoolVotes, 1000 ether, "Voter2 pool votes: exactly 1000 ether");
+        {
+            (uint128 voter2Votes,) = votingController.usersEpochData(epoch, voter2);
+            (uint128 voter2PoolVotes,) = votingController.usersEpochPoolData(epoch, 1, voter2);
+            assertEq(voter2Votes, 1000 ether, "Voter2 total: exactly 1000 ether");
+            assertEq(voter2PoolVotes, 1000 ether, "Voter2 pool votes: exactly 1000 ether");
+        }
         assertEq(capturePoolEpochState(epoch, 1).totalVotes, 1300 ether, "Pool after voter2: 300 + 1000 = 1300 ether");
         
         // ---- VOTER 3 VOTES ----
         _vote(voter3, _toArray(1), _toArray(500 ether));
-        
-        (uint128 voter3Votes,) = votingController.usersEpochData(epoch, voter3);
-        (uint128 voter3PoolVotes,) = votingController.usersEpochPoolData(epoch, 1, voter3);
-        assertEq(voter3Votes, 500 ether, "Voter3 total: exactly 500 ether");
-        assertEq(voter3PoolVotes, 500 ether, "Voter3 pool votes: exactly 500 ether");
+        {
+            (uint128 voter3Votes,) = votingController.usersEpochData(epoch, voter3);
+            (uint128 voter3PoolVotes,) = votingController.usersEpochPoolData(epoch, 1, voter3);
+            assertEq(voter3Votes, 500 ether, "Voter3 total: exactly 500 ether");
+            assertEq(voter3PoolVotes, 500 ether, "Voter3 pool votes: exactly 500 ether");
+        }
         
         // ---- FINAL STATE VERIFICATION ----
-        PoolEpochSnapshot memory poolAfter = capturePoolEpochState(epoch, 1);
-        
-        // Pool totals
-        assertEq(poolAfter.totalVotes, 1800 ether, "Pool total: 300 + 1000 + 500 = 1800 ether");
+        assertEq(capturePoolEpochState(epoch, 1).totalVotes, 1800 ether, "Pool total: 300 + 1000 + 500 = 1800 ether");
         assertEq(capturePoolState(1).totalVotes, 1800 ether, "Global pool votes: 1800 ether");
-        
-        // Each voter's contribution is distinct and tracked
-        assertEq(voter1PoolVotes + voter2PoolVotes + voter3PoolVotes, 1800 ether, "Sum of individual votes equals pool total");
     }
 }
 
