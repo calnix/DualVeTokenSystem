@@ -96,7 +96,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     // ----- Delegate Actions Per Epoch -----
     mapping(bytes32 lockId => mapping(uint128 eTime => uint8 numOfDelegateActions)) public numOfDelegateActionsPerEpoch;
 
-//------------------------------- Constructor -----------------------------------------------------------
+//------------------------------ Constructor ------------------------------------------------------------
 
     constructor(address wMoca_, address esMoca_, uint256 mocaTransferGasLimit,
         address globalAdmin, address votingEscrowMocaAdmin, address monitorAdmin, address cronJobAdmin, 
@@ -142,7 +142,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
         _setRoleAdmin(Constants.CRON_JOB_ROLE, Constants.CRON_JOB_ADMIN_ROLE);
     }
 
-//------------------------------- User functions---------------------------------------------------------
+//------------------------------ User functions----------------------------------------------------------
 
 
     // lock created is booked to currentEpochStart
@@ -393,7 +393,7 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
     }
 
 
-//------------------------------- Delegation functions----------------------------------------------------
+//------------------------------ Delegation functions----------------------------------------------------
 
     function delegationAction(bytes32 lockId, address delegate, DataTypes.DelegationType action) external whenNotPaused {
         (uint128 currentEpochStart, DataTypes.Lock memory lock) 
@@ -749,10 +749,10 @@ contract VotingEscrowMoca is LowLevelWMoca, AccessControlEnumerable, Pausable {
 //------------------------------ Admin function: setMocaTransferGasLimit() ------------------------------
 
     /**
-        * @notice Sets the gas limit for moca transfer.
-        * @dev Only callable by the VotingEscrowMocaAdmin.
-        * @param newMocaTransferGasLimit The new gas limit for moca transfer.
-        */
+     * @notice Sets the gas limit for moca transfer.
+     * @dev Only callable by the VotingEscrowMocaAdmin.
+     * @param newMocaTransferGasLimit The new gas limit for moca transfer.
+     */
     function setMocaTransferGasLimit(uint256 newMocaTransferGasLimit) external onlyRole(Constants.VOTING_ESCROW_MOCA_ADMIN_ROLE) whenNotPaused {
         require(newMocaTransferGasLimit >= 2300, Errors.InvalidGasLimit());
 
