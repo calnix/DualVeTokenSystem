@@ -1,23 +1,42 @@
 # Cross-contract flows
 
-## Every Epoch: `PaymentsController` + `VotingController  + EscrowedMoca`
+## Every Epoch: `PaymentsController` + `VotingController` + `EscrowedMoca`
 
 ### 1. PaymentsController
 
 ```markdown
-    - `cronJob` calls `withdrawProtocolFees()` and `withdrawVotersFees()`. 
-    - `USD8` is withdrawn and sent to `PAYMENTS_CONTROLLER_TREASURY`
-    - X amount of `USD8` is then converted to `esMoca` for the VotingController's voting rewards.
+- `cronJob` calls `withdrawProtocolFees(epoch)` and `withdrawVotersFees(epoch)`. 
+- `USD8` is withdrawn and sent to `PAYMENTS_CONTROLLER_TREASURY`
+- X amount of `USD8` is then converted to `esMoca` for the VotingController's voting rewards.
 ```
 
 ### 2. VotingController
 
+**4-Step Epoch Finalization Flow:**
+
 ```
-- `cronJob` calls `depositEpochSubsidies(uint256 epoch, uint128 subsidies)`, to deposit `esMoca` as subsidies for verifiers.
-- `cronJob` calls `finalizeEpochRewardsSubsidies(uint128 epoch, bytes32[] calldata poolIds, uint128[] calldata rewards)` to deposit `esMoca` as voting rewards for pools.
-- esMoca subsidies are financed from the USD8 fees paid in step 1. [verifiers get a cut of paid fees back]
-- esMoca rewards are financed from treasury; these are ecosystem incentives are giving out. [users are incentivized by us bankrolling it]
+Step 1: `cronJob` calls `endEpoch()`
+        - Transitions epoch from Voting → Ended state
+        - Snapshots TOTAL_ACTIVE_POOLS for the epoch
+
+Step 2: `cronJob` calls `processVerifierChecks(allCleared, verifiers[])`
+        - Blocks specified verifiers from claiming subsidies
+        - Call with allCleared=true to transition Ended → Verified state
+
+Step 3: `cronJob` calls `processRewardsAndSubsidies(poolIds[], rewards[], subsidies[])`
+        - Allocates rewards and subsidies to each pool
+        - Transitions Verified → Processed state when all pools done
+
+Step 4: `cronJob` calls `finalizeEpoch()`
+        - Transfers esMoca (rewards + subsidies) from treasury to contract
+        - Transitions Processed → Finalized state
+        - Opens claims for voters and verifiers
 ```
+
+**Funding Sources:**
+- esMoca subsidies: financed from treasury; incentivizes verifier participation
+- esMoca rewards: financed from treasury; incentivizes voter participation
+
 Now both Verifiers and Voters can claim subsidies and rewards respectively for the prior epoch.
 
 ### 3. EscrowedMoca
@@ -41,7 +60,7 @@ Now both Verifiers and Voters can claim subsidies and rewards respectively for t
 
 **`releaseEscrowedMoca(uint256 amount)`**
 
-- CronJob function to release esMOCA → MOCA
+- Called by `ASSET_MANAGER_ROLE` to release esMOCA → MOCA
 - Burns esMOCA and transfers native MOCA (or wMOCA) to caller
 - Asset flow: esMOCA (burned) → MOCA (transferred)
 
@@ -49,18 +68,27 @@ Now both Verifiers and Voters can claim subsidies and rewards respectively for t
 
 **`createLockFor()`**
 
-1. `cronJob` calls `createLockFor(address user, uint128 expiry, uint128 moca, uint128 esMoca)`
-2. allows protocol to create locks for users using either moca/esMoca or both, for a specified expiry.
-3. if esMoca is used users will have to content with redemption options once lock expires. 
+```
+cronJob calls:
+  createLockFor(address[] users, uint128[] esMocaAmounts, uint128[] mocaAmounts, uint128 expiry)
+```
 
-**Misc:**
+- Allows protocol to batch-create locks for multiple users
+- Can use either MOCA, esMoca, or both per user
+- If esMoca is used, users will have to contend with redemption options once lock expires
 
-1. `withdrawUnclaimedRewards`   ->  esMoca is transferred 
-2. `withdrawUnclaimedSubsidies` ->  esMoca is transferred 
-3. `withdrawRegistrationFees`   ->  native, else wrapped moca if transferred
+### VotingController 
 
-`AssetManager` will call these functions on an ad-hoc basis to claim the respective assets listed above.
-All claimed assets are sent to `VOTING_CONTROLLER_TREASURY`.
+**Withdraw Functions:**
+
+| Function                          | Asset                      | Role                |
+|-----------------------------------|----------------------------|---------------------|
+| `withdrawUnclaimedRewards(epoch)` | esMoca                     | ASSET_MANAGER_ROLE  |
+| `withdrawUnclaimedSubsidies(epoch)`| esMoca                    | ASSET_MANAGER_ROLE  |
+| `withdrawRegistrationFees()`      | native MOCA (or wMOCA)     | ASSET_MANAGER_ROLE  |
+
+- Called on an ad-hoc basis after `UNCLAIMED_DELAY_EPOCHS` has passed
+- All claimed assets are sent to `VOTING_CONTROLLER_TREASURY`
 
 ---
 
@@ -78,15 +106,16 @@ All claimed assets are sent to `VOTING_CONTROLLER_TREASURY`.
 
 1. `emergencyExitFees()`
 
-- called by `EmergencyExitHandler`; assets sent to `PAYMENTS_CONTROLLER_TREASURY`
+- Called by `EMERGENCY_EXIT_HANDLER_ROLE`
+- Assets sent to `PAYMENTS_CONTROLLER_TREASURY`
 
-2. `emergencyExitVerifiers(bytes32[] calldata verifierIds)`
+2. `emergencyExitVerifiers(address[] calldata verifiers)`
 
 - Exfiltrates verifier USD8 balances + staked MOCA → verifier asset managers
 - Callable by EmergencyExitHandler or verifier themselves
 - Assets: USD8 + native MOCA (or wMOCA if transfer fails)
 
-3. `emergencyExitIssuers(bytes32[] calldata issuerIds)`
+3. `emergencyExitIssuers(address[] calldata issuers)`
 
 - Exfiltrates issuer unclaimed USD8 fees → issuer asset managers
 - Callable by EmergencyExitHandler or issuer themselves
@@ -111,19 +140,16 @@ All claimed assets are sent to `VOTING_CONTROLLER_TREASURY`.
 1. `emergencyExit(bytes32[] calldata lockIds)`
 
 - Returns locked MOCA/esMOCA principals to lock owners
-- Callable by EmergencyExitHandler only
+- Callable by `EMERGENCY_EXIT_HANDLER_ROLE` only
 - Assets: native MOCA + esMOCA returned
-- Note: Burns veMOCA and returns principals; no state updates
+- Note: Burns veMOCA and returns principals
 
 ### VotingController
 
 1. `emergencyExit()`
 
-- Exfiltrate all contract-held assets (rewards + subsidies + registration fees) 
-- `esMoca` and native `moca` (else `wMoca`), transferred to `VOTING_CONTROLLER_TREASURY`
-- rewards & subsidies would be in esMoca
-- registrations fees would be in native moca
-
-
-
-
+- Callable by `EMERGENCY_EXIT_HANDLER_ROLE` only (requires contract to be frozen first)
+- Exfiltrates all contract-held assets (rewards + subsidies + registration fees) 
+- `esMoca` and native `moca` (else `wMoca`) transferred to `VOTING_CONTROLLER_TREASURY`
+- Rewards & subsidies: esMoca
+- Registration fees: native MOCA
