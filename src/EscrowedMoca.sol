@@ -190,13 +190,15 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
             // redemption with no penalty [user receives 100% of the redemption amount]
             mocaReceivable = redemptionAmount;
         } else {
+
             // redemption with penalty [user receives a percentage of the redemption amount & pays a penalty]
             mocaReceivable = redemptionAmount * option.receivablePct / Constants.PRECISION_BASE;
-            penaltyAmount = redemptionAmount - mocaReceivable;
+            require(mocaReceivable > 0, Errors.InvalidAmount());
 
-            // sanity checks: ensure penaltyAmount & mocaReceivable are > 0 [flooring]
+            penaltyAmount = redemptionAmount - mocaReceivable;
             require(penaltyAmount > 0, Errors.InvalidAmount()); 
 
+            // sanity checks: ensure penaltyAmount & mocaReceivable are > 0 [flooring]
             // we block cases where penaltyAmount is floored to 0,
             // when selecting a redemption option, the user must honour its penalty, and receive a non-zero amount of moca. 
             // this prevents users from abusing the system(or getting griefed), and protects protocol from rounding/misconfiguration errors.
@@ -210,23 +212,15 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
             
             uint256 votersPenaltyPct = VOTERS_PENALTY_PCT;
             
-            // if voters penalty split is > 0, calculate penalty splits to voters and treasury
-            if(votersPenaltyPct > 0) {
-                
-                uint256 penaltyToVoters = penaltyAmount * votersPenaltyPct / Constants.PRECISION_BASE;
-                uint256 penaltyToTreasury = penaltyAmount - penaltyToVoters;
-            
-                // book penalty amounts to globals [if >0, in case of flooring]
-                if(penaltyToTreasury > 0) ACCRUED_PENALTY_TO_TREASURY += penaltyToTreasury;
-                if(penaltyToVoters > 0) ACCRUED_PENALTY_TO_VOTERS += penaltyToVoters;
+            // safe even with voters penalty split = 0
+            uint256 penaltyToVoters = penaltyAmount * votersPenaltyPct / Constants.PRECISION_BASE;
+            uint256 penaltyToTreasury = penaltyAmount - penaltyToVoters;
+        
+            // book penalty amounts to globals [if >0, in case of flooring]
+            if(penaltyToTreasury > 0) ACCRUED_PENALTY_TO_TREASURY += penaltyToTreasury;
+            if(penaltyToVoters > 0) ACCRUED_PENALTY_TO_VOTERS += penaltyToVoters;
 
-                emit Events.PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
-
-            } else {
-                // all penalties to treasury [0 voters penalty split]
-                ACCRUED_PENALTY_TO_TREASURY += penaltyAmount;
-                emit Events.PenaltyAccrued(0, penaltyAmount);
-            }
+            emit Events.PenaltyAccrued(penaltyToVoters, penaltyToTreasury);
         }
 
         // 4. Handle instant redemptions
@@ -352,7 +346,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      *      Note: potential tiny dust from rounding.
      *      Also to be used in case of emergency exit scenario, to exfiltrate penalties to the esMoca treasury.
      */
-    function claimPenalties() external payable onlyRole(CRON_JOB_ROLE) {
+    function claimPenalties() external onlyRole(CRON_JOB_ROLE) {
         // get treasury address
         address esMocaTreasury = ESCROWED_MOCA_TREASURY;
         require(esMocaTreasury != address(0), Errors.InvalidAddress());
@@ -379,7 +373,7 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
      * @dev Only callable by EscrowedMocaAdmin.
      * @param amount The amount of esMoca to release to the admin caller.
      */
-    function releaseEscrowedMoca(uint256 amount) external payable onlyRole(ASSET_MANAGER_ROLE) whenNotPaused {
+    function releaseEscrowedMoca(uint256 amount) external onlyRole(ASSET_MANAGER_ROLE) whenNotPaused {
         // sanity check: amount + balance
         require(amount > 0, Errors.InvalidAmount());
         require(balanceOf(msg.sender) >= amount, Errors.InsufficientBalance());
@@ -573,15 +567,15 @@ contract EscrowedMoca is ERC20, Pausable, LowLevelWMoca, AccessControlEnumerable
         require(isFrozen == 1, Errors.NotFrozen());
         require(users.length > 0, Errors.InvalidArray());
 
+        // check: if NOT emergency exit handler, user can only exit themselves
+        if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
+            // check: caller can only exit themselves
+            require(msg.sender == users[0] && users.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrUser());
+        }
+
         uint256 totalMocaAmount;
         for(uint256 i; i < users.length; ++i) {
             address user = users[i];
-
-            // check: if NOT emergency exit handler, user can only exit themselves
-            if (!hasRole(EMERGENCY_EXIT_HANDLER_ROLE, msg.sender)) {
-                // check: user can only exit themselves
-                require(msg.sender == user && users.length == 1, Errors.OnlyCallableByEmergencyExitHandlerOrUser());
-            }
 
             // get user's esMoca balance
             uint256 esMocaBalance = balanceOf(user);
