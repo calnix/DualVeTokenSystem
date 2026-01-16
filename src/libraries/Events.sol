@@ -151,6 +151,7 @@ library Events {
     event EmergencyExit(address indexed treasury);
 
 // --------- PaymentsController.sol ---------
+
     event IssuerCreated(address indexed issuer, address assetManagerAddress);
     event VerifierCreated(address indexed verifier, address signerAddress, address assetManagerAddress);
     event SchemaCreated(bytes32 indexed schemaId, address indexed issuer, uint256 fee);
@@ -169,7 +170,7 @@ library Events {
     event VerifierSignerAddressUpdated(address indexed verifier, address newSignerAddress);
 
     // updateAssetManagerAddress
-    event AssetManagerAddressUpdated(address indexed verifierOrIssuer, address newAssetAddress);
+    event AssetManagerAddressUpdated(address indexed verifierOrIssuer, address newAssetAddress, bool isIssuer);
 
     // deductBalance()
     event SubsidyBooked(address indexed verifier, uint128 indexed poolId, bytes32 indexed schemaId, uint256 subsidy);
@@ -192,7 +193,9 @@ library Events {
     event VerifierStakingTiersSet(uint128[] mocaStaked, uint128[] subsidyPercentages);
     // clear verifier staking tiers
     event VerifierStakingTiersCleared();
-
+    // update verifier unstake delay period
+    event VerifierUnstakeDelayPeriodUpdated(uint256 oldDelayPeriod, uint256 newDelayPeriod);
+    
     // --- cronJob events ---
     // cronJob: withdrawProtocolFees, withdrawVotersFees
     event ProtocolFeesWithdrawn(uint256 epoch, uint256 protocolFees);

@@ -41,6 +41,8 @@ issuer increases fee
 ---------------
 deductBalanceZeroFees
 - schema 3
+- pending fee increase not effective yet -> still zero-fee path works
+- pending fee increase becomes effective -> zero-fee path reverts
 ---------------
 subsidies: verifier stakes moca
 - deductBalance should book subsidy
@@ -84,10 +86,6 @@ Admin: withdraw fns
 Admin: risk fns
 - emergencyExitVerifiers
 - emergencyExitIssuers
-
-
-        paymentsController.updateVerifierSubsidyPercentages(10 ether, 1000);
-        // Second tier
-        paymentsController.updateVerifierSubsidyPercentages(20 ether, 2000);       
-        // Third tier
-        paymentsController.updateVerifierSubsidyPercentages(30 ether, 3000);
+Coverage updates
+- emergencyExitVerifiers: handler exits mixed list with zero-balance entries safely skipped
+- updateAssetManagerAddress emits role-disambiguating flag for issuer vs verifier

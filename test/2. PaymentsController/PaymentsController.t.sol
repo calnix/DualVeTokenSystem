@@ -30,6 +30,8 @@ contract StateT0_DeployAndCreateSubsidyTiers_Test is StateT0_Deploy {
 
         // Check delay period for fee increase
         assertEq(paymentsController.FEE_INCREASE_DELAY_PERIOD(), feeIncreaseDelayPeriod, "FEE_INCREASE_DELAY_PERIOD not set correctly");
+        // Check default verifier unstake delay period
+        assertEq(paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD(), 1 days, "VERIFIER_UNSTAKE_DELAY_PERIOD not set correctly");
 
         // Confirm the name and version if constructor arguments are visible
         //assertEq(paymentsController.name(), "PaymentsController", "Name not set correctly");
@@ -1500,6 +1502,64 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
         assertEq(epochFeesAfter.feesAccruedToVoters, votersFeesBefore, "Voter fees should remain unchanged for zero fee");
     }
 
+    function testCan_DeductBalanceZeroFee_WhenFeeIncreasePendingAndNotEffective() public {
+        uint128 scheduledFee = 1_000_000; // 1 USD8 with 6 decimals
+
+        // Schedule a fee increase for the zero-fee schema
+        vm.prank(issuer3);
+        paymentsController.updateSchemaFee(schemaId3, scheduledFee);
+
+        DataTypes.Schema memory schemaAfterSchedule = paymentsController.getSchema(schemaId3);
+        uint256 expectedNextFeeTimestamp = schemaAfterSchedule.nextFeeTimestamp;
+        assertGt(expectedNextFeeTimestamp, block.timestamp, "Next fee should be scheduled in the future");
+        assertEq(schemaAfterSchedule.currentFee, 0, "Current fee must remain zero until timestamp");
+
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier2Signer, user1);
+        bytes memory signature = generateDeductBalanceZeroFeeSignature(verifier2SignerPrivateKey, issuer3, verifier2, schemaId3, user1, expiry, nonce);
+
+        vm.expectEmit(true, true, false, true, address(paymentsController));
+        emit Events.SchemaVerifiedZeroFee(schemaId3);
+
+        vm.prank(verifier2Asset);
+        paymentsController.deductBalanceZeroFee(verifier2, schemaId3, user1, expiry, signature);
+
+        // Ensure scheduled increase is untouched and counters increment
+        DataTypes.Schema memory schemaAfterCall = paymentsController.getSchema(schemaId3);
+        assertEq(schemaAfterCall.currentFee, 0, "Current fee should remain zero before schedule activates");
+        assertEq(schemaAfterCall.nextFee, scheduledFee, "Scheduled fee should remain set");
+        assertEq(schemaAfterCall.totalVerified, schemaAfterSchedule.totalVerified + 1, "totalVerified should increment");
+
+        // Nonce should increment on successful call
+        assertEq(getVerifierNonce(verifier2Signer, user1), nonce + 1, "Verifier nonce should increment");
+    }
+
+    function testCannot_DeductBalanceZeroFee_WhenFeeIncreaseBecameEffective() public {
+        assertEq(paymentsController.getSchema(schemaId3).currentFee, 0, "currentFee should be 0");
+
+        uint128 scheduledFee = 1e6; // 1 USD8 with 6 decimals
+
+        // Schedule a fee increase for the zero-fee schema
+        vm.prank(issuer3);
+        paymentsController.updateSchemaFee(schemaId3, scheduledFee);
+
+        uint256 nextFeeTimestamp = paymentsController.getSchema(schemaId3).nextFeeTimestamp;
+        vm.warp(nextFeeTimestamp + 1);
+
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier2Signer, user1);
+        bytes memory signature = generateDeductBalanceZeroFeeSignature(verifier2SignerPrivateKey, issuer3, verifier2, schemaId3, user1, expiry, nonce);
+
+        vm.expectRevert(Errors.InvalidSchemaFee.selector);
+        vm.prank(verifier2Asset);
+        paymentsController.deductBalanceZeroFee(verifier2, schemaId3, user1, expiry, signature);
+
+        // Revert unwinds the fee application; state should remain scheduled at zero-fee current
+        DataTypes.Schema memory schemaAfterRevert = paymentsController.getSchema(schemaId3);
+        assertEq(schemaAfterRevert.currentFee, 0, "currentFee remains zero after revert");
+        assertEq(schemaAfterRevert.nextFee, scheduledFee, "nextFee stays scheduled after revert");
+    }
+
     //------------------------------ negative tests for deductBalanceZeroFee ------------------------------
 
         function testCannot_DeductBalanceZeroFee_WhenExpiryIsInThePast() public {
@@ -1631,8 +1691,63 @@ contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
             paymentsController.unstakeMoca(verifier1, amount);
         }
 
+        function testCannot_UnstakeMoca_BeforeDelayPeriod() public {
+            vm.expectRevert(Errors.UnstakeDelayNotPassed.selector);
+            vm.prank(verifier1Asset);
+            paymentsController.unstakeMoca(verifier1, 1 ether);
+        }
+
+        function testCan_UnstakeMoca_AfterDelayPeriod() public {
+            uint128 amount = 1 ether;
+
+            // move time past delay threshold
+            uint256 lastStakedAt = paymentsController.getVerifier(verifier1).lastStakedAt;
+            vm.warp(lastStakedAt + paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD() + 1);
+
+            uint256 verifier1AssetBalanceBefore = verifier1Asset.balance;
+            uint256 contractBalanceBefore = address(paymentsController).balance;
+
+            vm.expectEmit(true, true, false, true, address(paymentsController));
+            emit Events.VerifierMocaUnstaked(verifier1, verifier1Asset, amount);
+
+            vm.prank(verifier1Asset);
+            paymentsController.unstakeMoca(verifier1, amount);
+
+            DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier1);
+            assertEq(verifier.mocaStaked, 10 ether - amount, "Verifier mocaStaked not updated correctly after delay");
+            assertEq(paymentsController.TOTAL_MOCA_STAKED(), 10 ether - amount, "TOTAL_MOCA_STAKED not updated correctly after delay");
+            assertEq(verifier1Asset.balance, verifier1AssetBalanceBefore + amount, "Verifier asset native balance not increased");
+            assertEq(address(paymentsController).balance, contractBalanceBefore - amount, "Contract native balance not decreased");
+        }
+
+        function testCan_UnstakeMoca_UsesUpdatedDelay() public {
+            uint256 oldDelay = paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD();
+            uint256 newDelay = oldDelay + 6 hours;
+
+            vm.expectEmit(true, false, false, true, address(paymentsController));
+            emit Events.VerifierUnstakeDelayPeriodUpdated(oldDelay, newDelay);
+
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierUnstakeDelayPeriod(newDelay);
+
+            // attempt before new delay should revert
+            vm.expectRevert(Errors.UnstakeDelayNotPassed.selector);
+            vm.prank(verifier1Asset);
+            paymentsController.unstakeMoca(verifier1, 1 ether);
+
+            // warp past new delay and succeed
+            uint256 lastStakedAt = paymentsController.getVerifier(verifier1).lastStakedAt;
+            vm.warp(lastStakedAt + newDelay + 1);
+
+            vm.prank(verifier1Asset);
+            paymentsController.unstakeMoca(verifier1, 1 ether);
+        }
+
         function testCan_Verifier1_UnstakeMOCA_ReceiveNative() public {
             uint128 amount = 10 ether;
+
+            uint256 lastStakedAt = paymentsController.getVerifier(verifier1).lastStakedAt;
+            vm.warp(lastStakedAt + paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD() + 1);
 
             // Record state before
             uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1).mocaStaked;
@@ -1669,6 +1784,9 @@ contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
             vm.etch(verifier1Asset, gasGuzzlerCode);
 
             uint128 amount = 10 ether;
+
+            uint256 lastStakedAt = paymentsController.getVerifier(verifier1).lastStakedAt;
+            vm.warp(lastStakedAt + paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD() + 1);
 
             // Record state before
             uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1).mocaStaked;
@@ -1727,6 +1845,49 @@ contract StateT10_Verifier1StakeMOCA_Test is StateT10_Verifier1StakeMOCA {
             vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, verifier1, paymentsController.PAYMENTS_CONTROLLER_ADMIN_ROLE()));
             vm.prank(verifier1);
             paymentsController.updatePoolId(schemaId1, uint128(123));
+        }
+
+        // ---------------------- updateVerifierUnstakeDelayPeriod ----------------------
+        function testCan_PaymentsControllerAdmin_UpdateVerifierUnstakeDelayPeriod() public {
+            uint256 oldDelay = paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD();
+            uint256 newDelay = oldDelay + 6 hours;
+
+            vm.expectEmit(true, false, false, true, address(paymentsController));
+            emit Events.VerifierUnstakeDelayPeriodUpdated(oldDelay, newDelay);
+
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierUnstakeDelayPeriod(newDelay);
+
+            assertEq(paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD(), newDelay, "VERIFIER_UNSTAKE_DELAY_PERIOD not updated");
+        }
+
+        function testCannot_NonAdmin_UpdateVerifierUnstakeDelayPeriod() public {
+            uint256 oldDelay = paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD();
+            uint256 newDelay = oldDelay + 1 hours;
+
+            vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, verifier1, paymentsController.PAYMENTS_CONTROLLER_ADMIN_ROLE()));
+            vm.prank(verifier1);
+            paymentsController.updateVerifierUnstakeDelayPeriod(newDelay);
+        }
+
+        function testCannot_UpdateVerifierUnstakeDelayPeriod_WhenZero() public {
+            vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierUnstakeDelayPeriod(0);
+        }
+
+        function testCannot_UpdateVerifierUnstakeDelayPeriod_WhenAboveMax() public {
+            vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierUnstakeDelayPeriod(60 days + 1);
+        }
+
+        function testCannot_UpdateVerifierUnstakeDelayPeriod_WhenUnchanged() public {
+            uint256 currentDelay = paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD();
+
+            vm.expectRevert(Errors.InvalidDelayPeriod.selector);
+            vm.prank(paymentsControllerAdmin);
+            paymentsController.updateVerifierUnstakeDelayPeriod(currentDelay);
         }
 
     //------------------------------ deductBalance should book subsidies for verifier ------------------------------
@@ -2049,7 +2210,7 @@ contract StateT12_IssuerClaimsAllFees_Test is StateT12_IssuerClaimsAllFees {
         address issuer1_newAssetAddress = address(0x1234567890123456789012345678901234567890);
 
         vm.expectEmit(true, true, false, true, address(paymentsController));
-        emit Events.AssetManagerAddressUpdated(issuer1, issuer1_newAssetAddress);
+        emit Events.AssetManagerAddressUpdated(issuer1, issuer1_newAssetAddress, true);
  
         vm.prank(issuer1);
         address newAssetManagerAddress = paymentsController.updateAssetManagerAddress(issuer1_newAssetAddress, true);
@@ -2175,7 +2336,7 @@ contract StateT13_IssuerChangesAssetManagerAddress_Test is StateT13_IssuerChange
             address verifier1_newAssetManagerAddress = address(uint160(uint256(keccak256(abi.encodePacked("verifier1_newAssetManagerAddress", block.timestamp, block.prevrandao)))));
 
             vm.expectEmit(true, true, false, false, address(paymentsController));
-            emit Events.AssetManagerAddressUpdated(verifier1, verifier1_newAssetManagerAddress);
+        emit Events.AssetManagerAddressUpdated(verifier1, verifier1_newAssetManagerAddress, false);
 
             vm.prank(verifier1);
             paymentsController.updateAssetManagerAddress(verifier1_newAssetManagerAddress, false);
@@ -3451,6 +3612,12 @@ contract StateT21_PaymentsControllerAdminFreezesContract_Test is StateT21_Paymen
                 paymentsController.unstakeMoca(verifier1, 5 ether);
             }
 
+            function test_updateVerifierUnstakeDelayPeriod_revertsWhenPaused() public {
+                vm.expectRevert(Pausable.EnforcedPause.selector);
+                vm.prank(paymentsControllerAdmin);
+                paymentsController.updateVerifierUnstakeDelayPeriod(2 days);
+            }
+
         // ------ Common functions for issuer and verifier ------
 
             function test_updateAssetManagerAddress_worksWhenPaused() public {
@@ -3817,6 +3984,37 @@ contract StateT22_PaymentsControllerAdminFreezesContract_Test is StateT22_Paymen
             assertEq(afterVerifier1MOCABalance, beforeVerifier1MocaStaked + beforeVerifier1MOCABalance, "verifier1Asset should receive all contract-state Moca_staked tokens");
             assertEq(afterVerifier2MOCABalance, beforeVerifier2MocaStaked + beforeVerifier2MOCABalance, "verifier2Asset should receive all contract-state Moca_staked tokens");
             assertEq(afterVerifier3MOCABalance, beforeVerifier3MocaStaked + beforeVerifier3MOCABalance, "verifier3Asset should receive all contract-state Moca_staked tokens");
+        }
+
+        function testCan_EmergencyExitHandler_EmergencyExitVerifiers_SkipsZeroBalanceEntries() public {
+            address zeroVerifier = makeAddr("zeroVerifier");
+
+            // verifier1 has funds; zeroVerifier is unregistered/zero balances
+            address[] memory verifierIds = new address[](2);
+            verifierIds[0] = verifier1;
+            verifierIds[1] = zeroVerifier;
+
+            DataTypes.Verifier memory v1Before = paymentsController.getVerifier(verifier1);
+            uint256 controllerUSD8Before = mockUSD8.balanceOf(address(paymentsController));
+            uint256 zeroVerifierUSD8Before = mockUSD8.balanceOf(zeroVerifier);
+            uint256 zeroVerifierMocaBefore = zeroVerifier.balance;
+
+            vm.expectEmit(true, false, false, true, address(paymentsController));
+            emit Events.EmergencyExitVerifiers(verifierIds);
+
+            vm.prank(emergencyExitHandler);
+            paymentsController.emergencyExitVerifiers(verifierIds);
+
+            DataTypes.Verifier memory v1After = paymentsController.getVerifier(verifier1);
+            assertEq(v1After.currentBalance, 0, "verifier1 USD8 should be exited");
+            assertEq(v1After.mocaStaked, 0, "verifier1 MOCA should be exited");
+
+            uint256 controllerUSD8After = mockUSD8.balanceOf(address(paymentsController));
+            assertEq(controllerUSD8Before - v1Before.currentBalance, controllerUSD8After, "Controller should reduce by verifier1 balance only");
+
+            // zeroVerifier remains untouched
+            assertEq(mockUSD8.balanceOf(zeroVerifier), zeroVerifierUSD8Before, "zeroVerifier USD8 should remain unchanged");
+            assertEq(zeroVerifier.balance, zeroVerifierMocaBefore, "zeroVerifier native balance should remain unchanged");
         }
 
     // ------ emergencyExitIssuers ------

@@ -41,6 +41,9 @@ contract StateT11_TransferGasLimitChanged_Test is StateT11_TransferGasLimitChang
 
         uint128 amount = 10 ether;
 
+        uint256 lastStakedAt = paymentsController.getVerifier(verifier1).lastStakedAt;
+        vm.warp(lastStakedAt + paymentsController.VERIFIER_UNSTAKE_DELAY_PERIOD() + 1);
+
         // Record state before
         uint256 verifier1MocaStakedBefore = paymentsController.getVerifier(verifier1).mocaStaked;
         uint256 totalMocaStakedBefore = paymentsController.TOTAL_MOCA_STAKED();

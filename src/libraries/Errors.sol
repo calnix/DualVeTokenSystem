@@ -53,6 +53,7 @@ library Errors {
     error OnlyCallableByEmergencyExitHandlerOrVerifier();
     error PoolNotWhitelisted();
     error PoolWhitelistedStatusUnchanged();
+    error UnstakeDelayNotPassed();
 
 // --------- VotingEscrowMoca.sol ---------
     error LockExpired();

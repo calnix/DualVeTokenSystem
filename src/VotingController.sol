@@ -380,7 +380,7 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
 
         emit Events.DelegateRegistered(msg.sender, feePct);
 
-        // register on VotingEscrowMoca [reverts: if delegate is already registered]
+        // register on VotingEscrowMoca
         VEMOCA.delegateRegistrationStatus(msg.sender, true);
     }
 
@@ -685,16 +685,12 @@ contract VotingController is Pausable, LowLevelWMoca, AccessControlEnumerable {
                 // safety check: verifierAccruedSubsidies <= poolAccruedSubsidies [in case PC misbehaves]
                 require(verifierAccruedSubsidies <= poolAccruedSubsidies, Errors.VerifierAccruedSubsidiesGreaterThanPool());
                 
+                // Precision: 
+                // - 1e6 [USD8]: verifierAccruedSubsidies, poolAccruedSubsidies
+                // - 1e18 [esMOCA]: poolAllocatedSubsidies
 
-                // calculate ratio and rebase it to 18dp in single step [ratio is in 18dp precision]
-                uint256 ratio = (verifierAccruedSubsidies * 1E18) / poolAccruedSubsidies; 
-                
-
-                // Safe downcast: ratio ∈ [0, 1e18] since verifierAccrued ≤ poolAccrued
-                // therefore: (ratio * poolAllocatedSubsidies) / 1e18 ≤ poolAllocatedSubsidies (uint128)
-
-                // Calculate esMoca subsidy receivable [poolAllocatedSubsidies in 1e18 precision]
-                subsidyReceivable = uint128((ratio * poolAllocatedSubsidies) / 1E18);
+                // Calculate esMoca subsidy receivable
+                subsidyReceivable = uint128(uint256(verifierAccruedSubsidies * poolAllocatedSubsidies) / poolAccruedSubsidies);
             }
 
             require(subsidyReceivable > 0, Errors.NoSubsidiesToClaim());

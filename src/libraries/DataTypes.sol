@@ -31,6 +31,7 @@ library DataTypes {
 
         // MOCA | 18 dp precision
         uint128 mocaStaked;
+        uint128 lastStakedAt;
 
         // USD8 | 6dp precision
         uint128 currentBalance;

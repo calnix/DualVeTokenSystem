@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
+import {DataTypes} from "../libraries/DataTypes.sol";
+
 /**
  * @title IEscrowedMoca
  * @author Calnix
@@ -18,9 +20,10 @@ interface IEscrowedMoca {
      * @notice Redeems esMoca for Moca using a specified redemption option. 
      * Transfers native Moca or wMoca if transfer fails (redemption irreversible).
      * @param redemptionOption Redemption option index.
+     * @param expectedOption The expected redemption option struct (for front-running protection).
      * @param redemptionAmount Amount of esMoca to redeem.
      */
-    function selectRedemptionOption(uint256 redemptionOption, uint256 redemptionAmount) external payable;
+    function selectRedemptionOption(uint256 redemptionOption, DataTypes.RedemptionOption calldata expectedOption, uint256 redemptionAmount) external;
 
     /**
      * @notice Claims the redeemed MOCA tokens after the lock period has elapsed.

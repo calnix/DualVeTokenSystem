@@ -45,6 +45,9 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     // delay period before an issuer's fee increase becomes effective for a given schema
     uint256 public FEE_INCREASE_DELAY_PERIOD;            // in seconds
 
+    // verifier unstake delay
+    uint256 public VERIFIER_UNSTAKE_DELAY_PERIOD;      // in seconds
+
     // total claimed by issuers | proxy for total verification fees accrued - to reduce storage updates in deductBalance()
     uint256 public TOTAL_CLAIMED_VERIFICATION_FEES;   // expressed in USD8 terms
 
@@ -138,6 +141,9 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         require(delayPeriod >= EpochMath.EPOCH_DURATION, Errors.InvalidDelayPeriod());
         require(EpochMath.isValidEpochTime(delayPeriod), Errors.InvalidDelayPeriod());
         FEE_INCREASE_DELAY_PERIOD = delayPeriod;
+
+        // verifier unstake delay period
+        VERIFIER_UNSTAKE_DELAY_PERIOD = 1 days;
 
 
         _setupRolesAndTreasury(globalAdmin, paymentsControllerAdmin, monitorAdmin, cronJobAdmin, monitorBot, paymentsControllerTreasury, emergencyExitHandler);
@@ -436,6 +442,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     /**
      * @notice Stakes MOCA for a verifier. Accepts native MOCA via msg.value.
      * @dev Only callable by the verifier's assetManagerAddress address. Increases the verifier's moca staked.
+     *      Updates the verifier's lastStakedAt timestamp.
      * @param verifier The address of the verifier to stake MOCA for.
      */
     function stakeMoca(address verifier) external payable whenNotPaused {
@@ -448,10 +455,13 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         // caller must be verifier's asset manager address
         require(verifierPtr.assetManagerAddress == msg.sender, Errors.InvalidCaller());
 
+        // STORAGE: update last staked at
+        verifierPtr.lastStakedAt = uint128(block.timestamp);
+
         // STORAGE: update moca staked
         verifierPtr.mocaStaked += amount;
         TOTAL_MOCA_STAKED += amount;
-
+        
         emit Events.VerifierMocaStaked(verifier, msg.sender, amount);
     }
 
@@ -460,6 +470,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Unstakes MOCA for a verifier.
      * @dev Only callable by the verifier's asset manager address. Decreases the verifier's moca staked.
      *      Transfers native MOCA via msg.value; if transfer fails within gas limit, wraps to wMoca and transfers the wMoca to verifier.
+     *      Unstaking is only allowed after the unstaking delay period has passed, based on the verifier's lastStakedAt timestamp.
      * @param verifier The address of the verifier to unstake MOCA for.
      * @param amount The amount of MOCA to unstake.
      */
@@ -475,6 +486,9 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
 
         // check if verifier has enough moca staked
         require(verifierPtr.mocaStaked >= amount, Errors.InvalidAmount());
+
+        // check if unstake delay period has passed
+        require(block.timestamp > verifierPtr.lastStakedAt + VERIFIER_UNSTAKE_DELAY_PERIOD, Errors.UnstakeDelayNotPassed());
 
         // STORAGE: update moca staked
         verifierPtr.mocaStaked -= amount;
@@ -520,7 +534,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             verifierPtr.assetManagerAddress = newAssetManagerAddress;
         }
 
-        emit Events.AssetManagerAddressUpdated(msg.sender, newAssetManagerAddress);
+        emit Events.AssetManagerAddressUpdated(msg.sender, newAssetManagerAddress, isIssuer);
         return newAssetManagerAddress;
     }
 
@@ -540,41 +554,41 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         require(amount > 0, Errors.InvalidAmount());
         
         // cache schema
-        DataTypes.Schema storage schemaStorage = _schemas[schemaId];
+        DataTypes.Schema storage schemaPtr = _schemas[schemaId];
 
         // get issuer address from schema + check if schema exists
-        address issuer = schemaStorage.issuer;
+        address issuer = schemaPtr.issuer;
         require(issuer != address(0), Errors.InvalidSchema());
 
         //----- NextFee check -----
-        uint128 currentFee = _updateSchemaFeeIfNeeded(schemaStorage, schemaId);
+        uint128 currentFee = _updateSchemaFeeIfNeeded(schemaPtr, schemaId);
 
 
         // cache verifier
-        DataTypes.Verifier storage verifierStorage = _verifiers[verifier];
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifier];
 
         // ----- Verify signature + Update nonce -----
-        _verifyDeductBalanceSignature(verifierStorage, issuer, verifier, schemaId, userAddress, amount, expiry, signature, currentFee);
+        _verifyDeductBalanceSignature(verifierPtr, issuer, verifier, schemaId, userAddress, amount, expiry, signature, currentFee);
 
 
         // ----- Combined fee calculation -----
         (uint128 protocolFee, uint128 votingFee, uint128 netFee) = _calculateFees(amount);
 
         // ----- Update verifier, issuer, and schema balances and counters -----
-        _updateBalancesAndCounters(verifierStorage, schemaStorage, issuer, amount, netFee);
+        _updateBalancesAndCounters(verifierPtr, schemaPtr, issuer, amount, netFee);
         emit Events.BalanceDeducted(verifier, schemaId, issuer, amount);
 
         // ----- Book fees: pool-specific and epoch-level -----
         uint128 currentEpoch = EpochMath.getCurrentEpochNumber();
 
         {
-            uint128 poolId = schemaStorage.poolId;
+            uint128 poolId = schemaPtr.poolId;
             // book fees: pool-specific and epoch-level
             _bookFees(verifier, poolId, schemaId, amount, currentEpoch, protocolFee, votingFee);
         }        
 
         // ----- Increment verification count -----
-        ++schemaStorage.totalVerified;
+        ++schemaPtr.totalVerified;
         emit Events.SchemaVerified(schemaId);
     }
 
@@ -598,9 +612,11 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         address issuer = schemaPtr.issuer;
         require(issuer != address(0), Errors.InvalidSchema());
 
-    
-        //----- Verify schema has still has zero fee [ NextFee timestamp check ]-----
-        if (schemaPtr.nextFee > 0 && schemaPtr.nextFeeTimestamp <= block.timestamp) revert Errors.InvalidSchemaFee();
+        //----- NextFee check -----
+        uint128 currentFee = _updateSchemaFeeIfNeeded(schemaPtr, schemaId);
+
+        // sanity check: schema must have zero fee at this point
+        require(currentFee == 0, Errors.InvalidSchemaFee());
 
         // ----- Verify signature + Update nonce -----
         _verifyDeductBalanceZeroFeeSignature(verifier, issuer, schemaId, userAddress, expiry, signature);
@@ -723,22 +739,22 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     /**
      * @notice Updates schema fee if nextFee timestamp has passed.
      * @dev Internal function to reduce stack depth in deductBalance.
-     * @param schemaStorage Storage pointer to the schema.
+     * @param schemaPtr Storage pointer to the schema.
      * @param schemaId The schema identifier for event emission.
      * @return currentFee The current fee after potential update.
      */
-    function _updateSchemaFeeIfNeeded(DataTypes.Schema storage schemaStorage, bytes32 schemaId) internal returns (uint128) {
-        uint128 currentFee = schemaStorage.currentFee;
+    function _updateSchemaFeeIfNeeded(DataTypes.Schema storage schemaPtr, bytes32 schemaId) internal returns (uint128) {
+        uint128 currentFee = schemaPtr.currentFee;
 
-        if (schemaStorage.nextFee > 0 && schemaStorage.nextFeeTimestamp <= block.timestamp) {
+        if (schemaPtr.nextFee > 0 && schemaPtr.nextFeeTimestamp <= block.timestamp) {
             // cache for event emission
             uint128 oldFee = currentFee;
-            currentFee = schemaStorage.nextFee;
+            currentFee = schemaPtr.nextFee;
 
             // update schema fee
-            schemaStorage.currentFee = currentFee;
-            delete schemaStorage.nextFee;
-            delete schemaStorage.nextFeeTimestamp;
+            schemaPtr.currentFee = currentFee;
+            delete schemaPtr.nextFee;
+            delete schemaPtr.nextFeeTimestamp;
             emit Events.SchemaFeeIncreased(schemaId, oldFee, currentFee);
         }
         return currentFee;
@@ -1017,6 +1033,27 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         emit Events.MocaTransferGasLimitUpdated(oldMocaTransferGasLimit, newMocaTransferGasLimit);
     }
 
+    /**
+     * @notice Updates the verifier unstake delay period.
+     * @dev Only callable by the PaymentsController admin. The delay must be greater than 0 and less than or equal to 60 days.
+     *      60 days serves as a sanity hard cut-off; in the event of fat-fingering or malicious intent.
+     * @param newVerifierUnstakeDelayPeriod The new unstake delay period (in seconds) for verifiers.
+     */
+    function updateVerifierUnstakeDelayPeriod(uint256 newVerifierUnstakeDelayPeriod) external onlyRole(PAYMENTS_CONTROLLER_ADMIN_ROLE) whenNotPaused {
+        require(newVerifierUnstakeDelayPeriod > 0, Errors.InvalidDelayPeriod());
+        require(newVerifierUnstakeDelayPeriod <= 60 days, Errors.InvalidDelayPeriod());
+
+        // cache old 
+        uint256 oldVerifierUnstakeDelayPeriod = VERIFIER_UNSTAKE_DELAY_PERIOD;
+        require(oldVerifierUnstakeDelayPeriod != newVerifierUnstakeDelayPeriod, Errors.InvalidDelayPeriod());
+
+        // update verifier unstake delay period
+        VERIFIER_UNSTAKE_DELAY_PERIOD = newVerifierUnstakeDelayPeriod;
+
+        emit Events.VerifierUnstakeDelayPeriodUpdated(oldVerifierUnstakeDelayPeriod, newVerifierUnstakeDelayPeriod);
+    }
+
+
 //------------------------------- CronJob: withdraw functions-----------------------------------------------------
 
     //note: every 2 weeks/epoch
@@ -1163,14 +1200,17 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             // cache verifier pointer
             DataTypes.Verifier storage verifierPtr = _verifiers[verifier];
 
-            // get balance: if 0, skip
+            // get balance
             uint256 verifierUSD8Balance = verifierPtr.currentBalance;
             uint256 verifierMocaStaked = verifierPtr.mocaStaked;
-            
-            // check if total assets is 0; if so, skip
-            totalAssets += verifierUSD8Balance + verifierMocaStaked;
-            if(totalAssets == 0) continue;
 
+            // if total = 0, skip
+            uint256 verifierTotal = verifierUSD8Balance + verifierMocaStaked;
+            if(verifierTotal == 0) continue;
+
+            // increment total assets
+            totalAssets += verifierTotal;
+            
             // get asset manager address
             address verifierAssetManagerAddress = verifierPtr.assetManagerAddress;
 

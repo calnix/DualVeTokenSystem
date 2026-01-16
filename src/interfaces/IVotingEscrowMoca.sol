@@ -8,14 +8,13 @@ interface IVotingEscrowMoca {
     // =============================== User Functions ===============================
     
     /**
-     * @notice Creates a new lock with the specified expiry, esMoca, and optional delegate.
-     * @dev MOCA amount is sent via msg.value
+     * @notice Creates a new lock with the specified expiry and esMoca amount.
+     * @dev MOCA amount is sent via msg.value. Lock is created for msg.sender.
      * @param expiry The timestamp when the lock will expire (must be on epoch boundary).
      * @param esMoca The amount of esMOCA to lock.
-     * @param delegate The address to delegate voting power to (optional, address(0) for no delegation).
      * @return lockId The unique identifier of the created lock.
      */
-    function createLock(uint128 expiry, uint128 esMoca, address delegate) external payable returns (bytes32);
+    function createLock(uint128 expiry, uint128 esMoca) external payable returns (bytes32);
 
     /**
      * @notice Increases the amount of MOCA and/or esMOCA in an existing lock.
