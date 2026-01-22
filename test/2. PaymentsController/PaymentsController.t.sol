@@ -771,6 +771,52 @@ contract StateT3_Verifier1DepositUSD8_Test is StateT3_Verifier1DepositUSD8 {
             paymentsController.deductBalance(verifier1, user1, schemaId1, amount, expiry, signature);
         }
 
+        function testCannot_DeductBalance_InvalidCallerNotWhitelistedAndNotUser() public {
+            uint128 amount = issuer1SchemaFee;
+            uint256 expiry = block.timestamp + 1000;
+            uint256 nonce = getVerifierNonce(verifier1Signer, user1);
+            bytes memory signature = generateDeductBalanceSignature(
+                verifier1SignerPrivateKey,
+                issuer1,
+                verifier1,
+                schemaId1,
+                user1,
+                amount,
+                expiry,
+                nonce
+            );
+
+            address rogueCaller = makeAddr("rogueCaller");
+            vm.expectRevert(Errors.InvalidCaller.selector);
+            vm.prank(rogueCaller);
+            paymentsController.deductBalance(verifier1, user1, schemaId1, amount, expiry, signature);
+        }
+
+        function testCan_DeductBalance_WhenCalledByUserSelf_NotWhitelisted() public {
+            uint128 amount = issuer1SchemaFee;
+            uint256 expiry = block.timestamp + 1000;
+            uint256 nonce = getVerifierNonce(verifier1Signer, user1);
+            bytes memory signature = generateDeductBalanceSignature(
+                verifier1SignerPrivateKey,
+                issuer1,
+                verifier1,
+                schemaId1,
+                user1,
+                amount,
+                expiry,
+                nonce
+            );
+
+            bytes32 digest = getDeductBalanceDigest(issuer1, verifier1, schemaId1, user1, amount, expiry, nonce);
+            assertFalse(paymentsController.isSignatureUsed(verifier1Signer, digest), "signature should be unused before call");
+
+            vm.prank(user1); // not whitelisted, but userAddress == msg.sender
+            paymentsController.deductBalance(verifier1, user1, schemaId1, amount, expiry, signature);
+
+            assertTrue(paymentsController.isSignatureUsed(verifier1Signer, digest), "signature should be marked used");
+            assertEq(getVerifierNonce(verifier1Signer, user1), nonce + 1, "nonce should increment");
+        }
+
         // Use verifier2 which has no deposit
         function testCannot_DeductBalance_WhenVerifierHasNoDeposit() public {
             // Generate a valid signature for deductBalance using verifier2 which has no deposit
@@ -1374,6 +1420,9 @@ contract StateT8_IssuerIncreasedFeeIsAppliedAfterDelay_Test is StateT8_IssuerInc
 
         vm.prank(verifier1Asset);
         paymentsController.deductBalance(verifier1, user1, schemaId1, amount, expiry, signature);
+
+        bytes32 digest = getDeductBalanceDigest(issuer1, verifier1, schemaId1, user1, amount, expiry, nonce);
+        assertTrue(paymentsController.isSignatureUsed(verifier1NewSigner, digest), "Signature hash not recorded for deductBalance");
         
         // Calculate fee splits
         uint256 protocolFee = (amount * paymentsController.PROTOCOL_FEE_PERCENTAGE()) / Constants.PRECISION_BASE;
@@ -1480,6 +1529,9 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
         vm.prank(verifier2Asset);
         paymentsController.deductBalanceZeroFee(verifier2, schemaId3, user1, expiry, signature);
 
+        bytes32 digest = getDeductBalanceZeroFeeDigest(issuer3, verifier2, schemaId3, user1, expiry, nonce);
+        assertTrue(paymentsController.isSignatureUsed(verifier2Signer, digest), "Signature hash not recorded for zero fee deductBalance");
+
         // Check storage state: verifier (no changes to balance or expenditure)
         DataTypes.Verifier memory verifier = paymentsController.getVerifier(verifier2);
         assertEq(verifier.currentBalance, verifierCurrentBalanceBefore, "Verifier balance should remain unchanged for zero fee");
@@ -1558,6 +1610,37 @@ contract StateT9_Issuer3CreatesSchemaWith0Fees_Test is StateT9_Issuer3CreatesSch
         DataTypes.Schema memory schemaAfterRevert = paymentsController.getSchema(schemaId3);
         assertEq(schemaAfterRevert.currentFee, 0, "currentFee remains zero after revert");
         assertEq(schemaAfterRevert.nextFee, scheduledFee, "nextFee stays scheduled after revert");
+    }
+
+    function testCannot_DeductBalanceZeroFee_InvalidCallerNotWhitelistedAndNotUser() public {
+        uint128 scheduledFee = 1_000_000; // 1 USD8 with 6 decimals
+
+        vm.prank(issuer3);
+        paymentsController.updateSchemaFee(schemaId3, scheduledFee);
+
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier2Signer, user1);
+        bytes memory signature = generateDeductBalanceZeroFeeSignature(verifier2SignerPrivateKey, issuer3, verifier2, schemaId3, user1, expiry, nonce);
+
+        address rogueCaller = makeAddr("rogueCaller");
+        vm.expectRevert(Errors.InvalidCaller.selector);
+        vm.prank(rogueCaller);
+        paymentsController.deductBalanceZeroFee(verifier2, schemaId3, user1, expiry, signature);
+    }
+
+    function testCan_DeductBalanceZeroFee_WhenCalledByUserSelf_NotWhitelisted() public {
+        uint256 expiry = block.timestamp + 1000;
+        uint256 nonce = getVerifierNonce(verifier2Signer, user1);
+        bytes memory signature = generateDeductBalanceZeroFeeSignature(verifier2SignerPrivateKey, issuer3, verifier2, schemaId3, user1, expiry, nonce);
+
+        bytes32 digest = getDeductBalanceZeroFeeDigest(issuer3, verifier2, schemaId3, user1, expiry, nonce);
+        assertFalse(paymentsController.isSignatureUsed(verifier2Signer, digest), "signature should be unused before call");
+
+        vm.prank(user1); // not whitelisted, but userAddress == msg.sender
+        paymentsController.deductBalanceZeroFee(verifier2, schemaId3, user1, expiry, signature);
+
+        assertTrue(paymentsController.isSignatureUsed(verifier2Signer, digest), "signature should be marked used");
+        assertEq(getVerifierNonce(verifier2Signer, user1), nonce + 1, "nonce should increment");
     }
 
     //------------------------------ negative tests for deductBalanceZeroFee ------------------------------
@@ -2964,6 +3047,11 @@ contract StateT17_PaymentsControllerAdminIncreasesVerifierSubsidyPercentage_Test
 
         // Calculate expected subsidy: amount * subsidyPct / PRECISION_BASE
         uint256 expectedSubsidy = (amount * subsidyPct) / Constants.PRECISION_BASE;
+
+        // Whitelist verifier4 asset as deduct caller for this flow
+        vm.startPrank(globalAdmin);
+        paymentsController.grantRole(paymentsController.WHITELISTED_DEDUCT_CALLER_ROLE(), verifier4Asset);
+        vm.stopPrank();
         
         // Expect SubsidyBooked event with correct subsidy amount
         vm.expectEmit(true, true, true, true, address(paymentsController));

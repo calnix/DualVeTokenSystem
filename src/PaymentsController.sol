@@ -69,6 +69,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     bytes32 public constant CRON_JOB_ADMIN_ROLE = Constants.CRON_JOB_ADMIN_ROLE;
     bytes32 public constant MONITOR_ROLE = Constants.MONITOR_ROLE;
     bytes32 public constant CRON_JOB_ROLE = Constants.CRON_JOB_ROLE;
+    bytes32 public constant WHITELISTED_DEDUCT_CALLER_ROLE = Constants.WHITELISTED_DEDUCT_CALLER_ROLE;
 
     // treasury address for payments controller
     address public PAYMENTS_CONTROLLER_TREASURY;
@@ -93,6 +94,9 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     // logs nonce for salt used for deterministic schema id generation
     mapping(address issuerAdminAddress => uint256 nonce) internal _issuerSchemaNonce;
 
+    // logs used signature hashes for deductBalance() | for off-chain queries
+    mapping(address signerAddress => mapping(bytes32 signatureHash => bool usedSignature)) internal _usedSignatureHashes;
+
     // Staking tiers: determines subsidy percentage for each verifier | admin fn will setup the tiers
     DataTypes.SubsidyTier[10] internal _subsidyTiers;
 
@@ -108,6 +112,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     
     // whitelist of pools [pseudo verification that poolId actually exists in VotingController]
     mapping(uint128 poolId => bool isWhitelisted) internal _votingPools;
+
 
 //------------------------------- Constructor---------------------------------------------------------------------
 
@@ -543,6 +548,7 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
     /**
      * @notice Deducts the verifier's balance for a verification, distributing protocol and voting fees.
      * @dev Validates signature, updates schema fee if needed, and increments verifier nonce.
+     *      Caller must be whitelisted or the user themselves.
      * @param verifier The address of the verifier.
      * @param schemaId The unique identifier of the schema.
      * @param amount The fee amount to deduct (must match current schema fee).
@@ -550,6 +556,11 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
     function deductBalance(address verifier, address userAddress, bytes32 schemaId, uint128 amount, uint256 expiry, bytes calldata signature) external whenNotPaused {
+        // if caller is not whitelisted, they must be the user themselves
+        if (!hasRole(Constants.WHITELISTED_DEDUCT_CALLER_ROLE, msg.sender)) {
+            require(userAddress == msg.sender, Errors.InvalidCaller());
+        }
+
         require(expiry > block.timestamp, Errors.SignatureExpired()); 
         require(amount > 0, Errors.InvalidAmount());
         
@@ -597,12 +608,18 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      * @notice Deducts a verifier's balance for a zero-fee schema verification, updating relevant counters.
      * @dev Requires the schema to have zero fee. Verifies the signature for the operation.
      *      Increments verification counters for the schema and issuer. Emits SchemaVerifiedZeroFee event.
+     *      Caller must be whitelisted or the user themselves.
      * @param verifier The address of the verifier.
      * @param schemaId The unique identifier of the schema.
      * @param expiry The timestamp after which the signature is invalid.
      * @param signature The EIP-712 signature from the verifier's signer address.
      */
     function deductBalanceZeroFee(address verifier, bytes32 schemaId, address userAddress, uint256 expiry, bytes calldata signature) external whenNotPaused {
+        // if caller is not whitelisted, they must be the user themselves
+        if (!hasRole(Constants.WHITELISTED_DEDUCT_CALLER_ROLE, msg.sender)) {
+            require(userAddress == msg.sender, Errors.InvalidCaller());
+        }
+
         require(expiry > block.timestamp, Errors.SignatureExpired());
         
         // get pointer
@@ -628,46 +645,6 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
         emit Events.SchemaVerifiedZeroFee(schemaId);
     }
 
-    
-    /**
-     * @notice Verifies the EIP-712 signature for deductBalanceZeroFee and updates nonce.
-     * @dev Internal function to reduce stack depth in deductBalanceZeroFee.
-     * @param verifierAdminAddress The verifier admin address.
-     * @param issuerAdminAddress The issuer admin address.
-     * @param schemaId The schema identifier.
-     * @param userAddress The user address.
-     * @param expiry The signature expiry timestamp.
-     * @param signature The EIP-712 signature.
-     */
-    function _verifyDeductBalanceZeroFeeSignature(
-        address verifierAdminAddress,
-        address issuerAdminAddress,
-        bytes32 schemaId,
-        address userAddress,
-        uint256 expiry,
-        bytes calldata signature
-    ) internal {
-        // cache verifier to get signer address
-        DataTypes.Verifier storage verifierPtr = _verifiers[verifierAdminAddress];
-        address signerAddress = verifierPtr.signerAddress;
-        
-        // hash the signature
-        bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(
-            Constants.DEDUCT_BALANCE_ZERO_FEE_TYPEHASH,
-            issuerAdminAddress,
-            verifierAdminAddress,
-            schemaId,
-            userAddress,
-            expiry,
-            _verifierNonces[signerAddress][userAddress]
-        )));
-        
-        // handles both EOA and contract signatures | returns true if signature is valid
-        require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
-        
-        // increment verifier nonce
-        ++_verifierNonces[signerAddress][userAddress];
-    }
 
 //------------------------------- Internal functions--------------------------------------------------------------
 
@@ -803,13 +780,60 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
             expiry,
             _verifierNonces[signerAddress][userAddress]
         )));
-        
+
         // handles both EOA and contract signatures | returns true if signature is valid
         require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature()); 
+
+        // log signature hash as used for off-chain querying
+        _usedSignatureHashes[signerAddress][hash] = true;
 
         // increment verifier nonce
         ++_verifierNonces[signerAddress][userAddress];
     }
+
+    /**
+     * @notice Verifies the EIP-712 signature for deductBalanceZeroFee and updates nonce.
+     * @dev Internal function to reduce stack depth in deductBalanceZeroFee.
+     * @param verifierAdminAddress The verifier admin address.
+     * @param issuerAdminAddress The issuer admin address.
+     * @param schemaId The schema identifier.
+     * @param userAddress The user address.
+     * @param expiry The signature expiry timestamp.
+     * @param signature The EIP-712 signature.
+     */
+    function _verifyDeductBalanceZeroFeeSignature(
+        address verifierAdminAddress,
+        address issuerAdminAddress,
+        bytes32 schemaId,
+        address userAddress,
+        uint256 expiry,
+        bytes calldata signature
+    ) internal {
+        // cache verifier to get signer address
+        DataTypes.Verifier storage verifierPtr = _verifiers[verifierAdminAddress];
+        address signerAddress = verifierPtr.signerAddress;
+        
+        // hash the signature
+        bytes32 hash = _hashTypedDataV4(keccak256(abi.encode(
+            Constants.DEDUCT_BALANCE_ZERO_FEE_TYPEHASH,
+            issuerAdminAddress,
+            verifierAdminAddress,
+            schemaId,
+            userAddress,
+            expiry,
+            _verifierNonces[signerAddress][userAddress]
+        )));
+
+        // handles both EOA and contract signatures | returns true if signature is valid
+        require(SignatureChecker.isValidSignatureNowCalldata(signerAddress, hash, signature), Errors.InvalidSignature());
+        
+        // log signature hash as used for off-chain querying
+        _usedSignatureHashes[signerAddress][hash] = true;
+
+        // increment verifier nonce
+        ++_verifierNonces[signerAddress][userAddress];
+    }
+
 
 
     /**
@@ -1452,6 +1476,15 @@ contract PaymentsController is EIP712, LowLevelWMoca, Pausable, AccessControlEnu
      */
     function checkIfPoolIsWhitelisted(uint128 poolId) external view returns (bool) {
         return _votingPools[poolId];
+    }
+
+    /**
+     * @notice Returns true if the signature has been used, false otherwise.
+     * @param signerAddress The verifier signer address.
+     * @param hash The hash of the signature.
+     */ 
+    function isSignatureUsed(address signerAddress, bytes32 hash) external view returns (bool) {
+        return _usedSignatureHashes[signerAddress][hash];
     }
 
 }

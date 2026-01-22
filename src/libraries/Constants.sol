@@ -30,6 +30,8 @@ library Constants {
     bytes32 internal constant MONITOR_ROLE = keccak256("MONITOR_ROLE");      // Pause only
     bytes32 internal constant CRON_JOB_ROLE = keccak256("CRON_JOB_ROLE");    // Automated tasks: createLockFor, finalizeEpoch, depositSubsidies
     
+    bytes32 internal constant WHITELISTED_DEDUCT_CALLER_ROLE = keccak256("WHITELISTED_DEDUCT_CALLER_ROLE"); // only for PaymentsController
+        
     // Role admins for operational roles [Dedicated role admins for operational efficiency]
     bytes32 internal constant MONITOR_ADMIN_ROLE = keccak256("MONITOR_ADMIN_ROLE"); 
     bytes32 internal constant CRON_JOB_ADMIN_ROLE = keccak256("CRON_JOB_ADMIN_ROLE");

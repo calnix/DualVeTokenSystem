@@ -183,6 +183,12 @@ abstract contract TestingHarness is Test {
         vm.deal(verifier2Asset, 100 ether);
         vm.deal(verifier3Asset, 100 ether);
 
+        vm.startPrank(globalAdmin);
+            paymentsController.grantRole(paymentsController.WHITELISTED_DEDUCT_CALLER_ROLE(), verifier1Asset);
+            paymentsController.grantRole(paymentsController.WHITELISTED_DEDUCT_CALLER_ROLE(), verifier2Asset);
+            paymentsController.grantRole(paymentsController.WHITELISTED_DEDUCT_CALLER_ROLE(), verifier3Asset);
+        vm.stopPrank();
+
 
     }
 
@@ -217,33 +223,7 @@ abstract contract TestingHarness is Test {
         uint256 expiry,
         uint256 nonce
     ) public view returns (bytes memory) {
-        // EIP-712 domain separator
-        bytes32 domainSeparator = keccak256(
-            abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256(bytes("PaymentsController")),
-                keccak256(bytes("1")),
-                block.chainid,
-                address(paymentsController)
-            )
-        );
-
-        // Struct hash
-        bytes32 structHash = keccak256(
-            abi.encode(
-                Constants.DEDUCT_BALANCE_TYPEHASH,
-                issuerId,
-                verifierId,
-                schemaId,
-                userAddress,
-                amount,
-                expiry,
-                nonce
-            )
-        );
-
-        // EIP-712 typed data hash
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+        bytes32 digest = getDeductBalanceDigest(issuerId, verifierId, schemaId, userAddress, amount, expiry, nonce);
 
         // Sign the digest
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
@@ -270,7 +250,22 @@ abstract contract TestingHarness is Test {
         uint256 expiry,
         uint256 nonce
     ) public view returns (bytes memory) {
-        // EIP-712 domain separator
+        bytes32 digest = getDeductBalanceZeroFeeDigest(issuerId, verifierId, schemaId, userAddress, expiry, nonce);
+
+        // Sign the digest
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function getDeductBalanceDigest(
+        address issuerId,       
+        address verifierId,     
+        bytes32 schemaId,
+        address userAddress,
+        uint128 amount,
+        uint256 expiry,
+        uint256 nonce
+    ) public view returns (bytes32) {
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -281,7 +276,40 @@ abstract contract TestingHarness is Test {
             )
         );
 
-        // Struct hash
+        bytes32 structHash = keccak256(
+            abi.encode(
+                Constants.DEDUCT_BALANCE_TYPEHASH,
+                issuerId,
+                verifierId,
+                schemaId,
+                userAddress,
+                amount,
+                expiry,
+                nonce
+            )
+        );
+
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+    }
+
+    function getDeductBalanceZeroFeeDigest(
+        address issuerId,
+        address verifierId,
+        bytes32 schemaId,
+        address userAddress,
+        uint256 expiry,
+        uint256 nonce
+    ) public view returns (bytes32) {
+        bytes32 domainSeparator = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("PaymentsController")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(paymentsController)
+            )
+        );
+
         bytes32 structHash = keccak256(
             abi.encode(
                 Constants.DEDUCT_BALANCE_ZERO_FEE_TYPEHASH,
@@ -294,12 +322,7 @@ abstract contract TestingHarness is Test {
             )
         );
 
-        // EIP-712 typed data hash
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
-
-        // Sign the digest
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
-        return abi.encodePacked(r, s, v);
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
     }
 
     /**
